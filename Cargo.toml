@@ -1,0 +1,17 @@
+[package]
+name = "ofl"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+default-members = ["."]
+members = [".", "doki"]
+
+[dependencies]
+clap = { version = "4.2.7", features = ["derive"] }
+chumsky = { git = "https://github.com/zesterer/chumsky" }
+doki = { path = "doki" }
+rustc-hash = "1.1.0"
+tempfile = "3.5.0"
+easy-ext = "1.0.1"
+ariadne = "0.2.0"

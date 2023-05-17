@@ -1,0 +1,3 @@
+println = a: print_str(append_str(a)("\n"))
+
+main = a: println("Hello, world.")
