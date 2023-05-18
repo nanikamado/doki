@@ -13,6 +13,9 @@ use std::process::exit;
 struct Args {
     /// File name
     file: String,
+    #[arg(short('c'), long)]
+    /// Output generated c code
+    emit_c: bool,
 }
 
 fn main() {
@@ -20,7 +23,9 @@ fn main() {
     let s = fs::read_to_string(args.file).unwrap();
     let ast = parse::parse(&s);
     let c_src = gen_c::gen_c(ast);
-    if run_c::run(&c_src).is_err() {
+    if args.emit_c {
+        println!("{c_src}");
+    } else if run_c::run(&c_src).is_err() {
         exit(1);
     }
 }
