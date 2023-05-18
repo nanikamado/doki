@@ -2,16 +2,14 @@ data True 0
 data False 0
 
 println = a:
-    intrinsic_print_str(intrinsic_append_str(a)("\n"))
+    intrinsic_print_str (intrinsic_append_str a "\n")
 
-eq = a: b:
-    match intrinsic_eq(a)(b) with
-        1 => True
-        0 => False
+eq = a: b: match intrinsic_eq a b with
+        1 => True,
+        0 => False,
     end
 
-main = a:
-    match eq(0)(0) with
-        True => println("True")
-        False => println("False")
+main = a: match eq 0 0 with
+        True => println "True",
+        False => println "False",
     end

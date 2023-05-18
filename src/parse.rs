@@ -89,32 +89,32 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
 
     use Expr::*;
     let pattern = recursive(|pattern| {
-        let constructor = ident
-            .then(
-                pattern
-                    .delimited_by(just('('), just(')'))
-                    .repeated()
-                    .collect(),
-            )
-            .map(|(name, fields)| Pattern::Constructor { name, fields });
         let p = choice((
+            pattern.delimited_by(just('('), just(')')),
             just("_").to(Pattern::Wildcard),
-            constructor,
             int(10).map(Pattern::Num),
             string.map(Pattern::Str),
+            ident.map(|name| Pattern::Constructor {
+                name,
+                fields: Vec::new(),
+            }),
         ))
         .padded();
+        let p = ident
+            .then(p.clone().repeated().collect())
+            .map(|(name, fields)| Pattern::Constructor { name, fields })
+            .or(p);
         p.clone()
             .foldl(just('|').ignore_then(p).repeated(), |a, b| {
                 Pattern::Or(Box::new(a), Box::new(b))
             })
     });
     let expr = recursive(|expr| {
-        let lambda = ident.then_ignore(just(":")).then(expr.clone());
         let branches = pattern
             .then_ignore(just("=>"))
             .then(expr.clone())
-            .repeated()
+            .separated_by(just(','))
+            .allow_trailing()
             .collect::<Vec<_>>();
         let match_expr = expr
             .clone()
@@ -126,20 +126,23 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
                 branches,
             });
         let e = choice((
+            expr.delimited_by(just('('), just(')')),
             match_expr,
-            lambda.map(|(param, e)| Lambda {
-                param,
-                expr: Box::new(e),
-            }),
             int(10).map(Num),
             string.map(Str),
-            ident.map(Ident),
+            ident.then_ignore(none_of("=").rewind()).map(Ident),
         ))
         .padded();
-        e.clone().foldl(
-            expr.delimited_by(just('('), just(')')).padded().repeated(),
-            |a, b| Call(Box::new(a), Box::new(b)),
-        )
+        let e = e
+            .clone()
+            .foldl(e.repeated(), |a, b| Call(Box::new(a), Box::new(b)));
+        ident
+            .then_ignore(just(":"))
+            .repeated()
+            .foldr(e, |param, acc| Lambda {
+                param,
+                expr: Box::new(acc),
+            })
     });
     let variable_decl = ident
         .then_ignore(just("="))
