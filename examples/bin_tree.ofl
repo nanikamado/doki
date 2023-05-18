@@ -1,0 +1,40 @@
+data True 0
+data False 0
+data E 0
+data T 3
+data Pair 2
+
+lt = a: b: match intrinsic_lt(a)(b) with
+        0 => False
+        _ => True
+    end
+
+println = a: intrinsic_print_str(intrinsic_append_str(a)("\n"))
+
+bool_to_string = a: match a with
+        True => "True"
+        False => "False"
+    end
+
+insert = t: x: match t with
+        E => T(x)(E)(E)
+        T(v)(l)(r) => match Pair(lt(x)(v))(lt(v)(x)) with
+                Pair(True)(_) => T(v)(insert(l)(x))(r)
+                Pair(_)(True) => T(v)(l)(insert(r)(x))
+                _ => T(v)(l)(r)
+            end
+    end
+
+contains = t: x: match t with
+        E => False
+        T(v)(l)(r) => match Pair(lt(x)(v))(lt(v)(x)) with
+                Pair(True)(_) => contains(l)(x)
+                Pair(_)(True) => contains(r)(x)
+                _ => True
+            end
+    end
+
+main = a: println(match contains(E)(0) with
+        False => "ok"
+        True => "ng"
+    end)
