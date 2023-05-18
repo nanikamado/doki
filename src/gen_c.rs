@@ -189,7 +189,7 @@ impl<'a> Env<'a> {
                         let mut binds_in_g = FxHashMap::default();
                         self.binds_in_pattern(g, &mut binds_in_g);
                         shadowed_variables.extend(&binds_in_g);
-                        for (f, _) in &binds_in_f {
+                        for f in binds_in_f.keys() {
                             if binds_in_g.contains_key(f) {
                                 panic!("variable {f} is defined twice");
                             }
@@ -227,9 +227,9 @@ impl<'a> Env<'a> {
             }
             Pattern::Or(a, b) => {
                 let mut a_block = Block::default();
-                self.pattern(&**a, operand, &mut a_block);
+                self.pattern(a, operand, &mut a_block);
                 let mut b_block = Block::default();
-                self.pattern(&**b, operand, &mut b_block);
+                self.pattern(b, operand, &mut b_block);
                 block.append(a_block.try_catch(b_block));
             }
             Pattern::Num(a) => {
