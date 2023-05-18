@@ -7,9 +7,8 @@ use clap::Parser;
 use std::fs;
 use std::process::exit;
 
-/// Simple program to greet a person
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(version, about, long_about = None)]
 struct Args {
     /// File name
     file: String,
