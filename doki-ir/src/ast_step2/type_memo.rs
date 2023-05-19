@@ -411,7 +411,6 @@ pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
 
 impl TypeInner {
     pub fn replace_index(self, to: &Type, depth: u32) -> Self {
-        debug_assert!(to.reference);
         match self {
             TypeInner::RecursionPoint(a) if a == depth => TypeInner::Type(to.clone()),
             TypeInner::RecursionPoint(a) => TypeInner::RecursionPoint(a),
@@ -433,7 +432,6 @@ impl TypeInner {
 
 impl TypeUnit {
     pub fn replace_index(self, to: &Type, depth: u32) -> Self {
-        debug_assert!(to.reference);
         match self {
             TypeUnit::Normal { id, args } => TypeUnit::Normal {
                 id,

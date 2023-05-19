@@ -484,16 +484,17 @@ impl Env {
                     id: fx_lambda_id,
                     ..f
                 });
-                if possible_functions.len() == 1 {
+                if possible_functions.len() == 1 && possible_functions[0].0 == 0 {
                     Lambda {
                         context,
-                        lambda_id: possible_functions[0].0,
+                        lambda_id: possible_functions[0].1,
                     }
                 } else {
-                    let tag = possible_functions
-                        .binary_search_by_key(&fx_lambda_id, |(l, _)| *l)
+                    let i = possible_functions
+                        .binary_search_by_key(&fx_lambda_id, |(_, l, _)| *l)
                         .unwrap();
-                    let d = self.new_variable(possible_functions[tag].1.clone());
+                    let f = &possible_functions[i];
+                    let d = self.new_variable(f.2.clone());
                     instructions.push(Instruction::Assign(
                         d,
                         Lambda {
@@ -502,7 +503,7 @@ impl Env {
                         },
                     ));
                     Upcast {
-                        tag: tag as u32,
+                        tag: f.0 as u32,
                         value: VariableId::Local(d),
                     }
                 }
@@ -529,18 +530,18 @@ impl Env {
                 if possible_functions.is_empty() {
                     return Err("not a function".to_string());
                 }
-                if possible_functions.len() == 1 {
+                if possible_functions.len() == 1 && possible_functions[0].0 == 0 {
                     Call {
                         f,
                         a,
-                        real_function: possible_functions[0].0,
+                        real_function: possible_functions[0].1,
                     }
                 } else {
                     let ret_v = self.new_variable(t);
                     let mut b = vec![Instruction::Panic {
                         msg: "not a function".to_string(),
                     }];
-                    for (tag, (id, casted_t)) in possible_functions.into_iter().enumerate() {
+                    for (tag, id, casted_t) in possible_functions {
                         let mut b2 = vec![Instruction::Test(Tester::Tag { tag: tag as u32 }, f)];
                         let new_f = self.new_variable(casted_t);
                         b2.push(Instruction::Assign(
@@ -643,38 +644,77 @@ impl Env {
         Ok(e)
     }
 
-    fn get_possible_functions(&mut self, p: TypePointer) -> Vec<(FxLambdaId, Type)> {
-        let n_len = match self.map.dereference_without_find(p) {
-            ast_step1::Terminal::TypeMap(t) => t.normals.len(),
-            ast_step1::Terminal::LambdaId(_) => panic!(),
-        };
-        assert_eq!(n_len, 1);
-        let (arg_t, ret_t, fn_id) = self.map.get_fn(p);
-        self.map
-            .get_lambda_id_with_replace_map(fn_id)
-            .clone()
-            .into_iter()
-            .map(|id| {
-                let len = self.functions.len() as u32;
-                let id_t = id.map_type(|t| self.get_type_for_hash(t));
-                let e = self
-                    .functions
-                    .entry(id_t.clone())
-                    .or_insert(FunctionEntry::Placeholder(FxLambdaId(len)));
-                let id = match e {
-                    FunctionEntry::Placeholder(id) => *id,
-                    FunctionEntry::Function(f) => f.id,
-                };
-                (
-                    id,
-                    Type::from(TypeUnit::Fn(
-                        [id_t.map_type(TypeInner::Type)].into(),
-                        TypeInner::Type(self.get_type(arg_t)),
-                        TypeInner::Type(self.get_type(ret_t)),
-                    )),
-                )
-            })
-            .collect()
+    // fn get_possible_functions(&mut self, p: TypePointer) -> Vec<(FxLambdaId, Type)> {
+    //     let (arg_t, ret_t, fn_id) = self.map.get_fn(p);
+    //     self.map
+    //         .get_lambda_id(fn_id)
+    //         .clone()
+    //         .into_iter()
+    //         .map(|id| {
+    //             let len = self.functions.len() as u32;
+    //             let id_t = id.map_type(|t| self.get_type_for_hash(t));
+    //             let e = self
+    //                 .functions
+    //                 .entry(id_t.clone())
+    //                 .or_insert(FunctionEntry::Placeholder(FxLambdaId(len)));
+    //             let id = match e {
+    //                 FunctionEntry::Placeholder(id) => *id,
+    //                 FunctionEntry::Function(f) => f.id,
+    //             };
+    //             (
+    //                 id,
+    //                 Type::from(TypeUnit::Fn(
+    //                     [id_t.map_type(TypeInner::Type)].into(),
+    //                     TypeInner::Type(self.get_type(arg_t)),
+    //                     TypeInner::Type(self.get_type(ret_t)),
+    //                 )),
+    //             )
+    //         })
+    //         .collect()
+    // }
+
+    fn get_possible_functions(&mut self, p: TypePointer) -> Vec<(i32, FxLambdaId, Type)> {
+        let mut fs = Vec::new();
+        let mut tag = 0;
+        let ot = self.get_type(p);
+        for t in ot.iter() {
+            match t {
+                TypeUnit::Normal { .. } => {
+                    tag += 1;
+                }
+                TypeUnit::Fn(fn_id, arg_t, ret_t) => {
+                    for id_type_inner in fn_id {
+                        let len = self.functions.len() as u32;
+                        let e = self
+                            .functions
+                            .entry(id_type_inner.clone().map_type(|t| {
+                                if let TypeInner::Type(t) = t.replace_index(&ot, 0) {
+                                    t
+                                } else {
+                                    panic!()
+                                }
+                            }))
+                            .or_insert(FunctionEntry::Placeholder(FxLambdaId(len)));
+                        let id = match e {
+                            FunctionEntry::Placeholder(id) => *id,
+                            FunctionEntry::Function(f) => f.id,
+                        };
+                        fs.push((
+                            tag,
+                            id,
+                            TypeUnit::Fn(
+                                [id_type_inner.clone()].into(),
+                                arg_t.clone().replace_index(&ot, 0),
+                                ret_t.clone().replace_index(&ot, 0),
+                            )
+                            .into(),
+                        ));
+                        tag += 1;
+                    }
+                }
+            }
+        }
+        fs
     }
 
     fn get_type(&mut self, p: TypePointer) -> Type {

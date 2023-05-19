@@ -129,10 +129,7 @@ impl PaddedTypeMap {
         t.insert(id);
     }
 
-    pub fn get_lambda_id_with_replace_map(
-        &mut self,
-        p: TypePointer,
-    ) -> &BTreeSet<LambdaId<TypePointer>> {
+    pub fn get_lambda_id(&mut self, p: TypePointer) -> &BTreeSet<LambdaId<TypePointer>> {
         let t = self.dereference(p);
         let Terminal::LambdaId(t) = t else {
             panic!()
@@ -170,7 +167,7 @@ impl PaddedTypeMap {
 
     pub fn get_fn(&mut self, p: TypePointer) -> (TypePointer, TypePointer, TypePointer) {
         let p = self.find(p);
-        if let Node::Terminal(Terminal::TypeMap(t)) = &self.map[p.0] {
+        if let Terminal::TypeMap(t) = &self.dereference_without_find(p) {
             t.normals
                 .get(&TypeId::Intrinsic(IntrinsicType::Fn))
                 .map(|f| (f[0], f[1], f[2]))
