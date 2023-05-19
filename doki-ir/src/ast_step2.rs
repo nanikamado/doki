@@ -644,35 +644,6 @@ impl Env {
         Ok(e)
     }
 
-    // fn get_possible_functions(&mut self, p: TypePointer) -> Vec<(FxLambdaId, Type)> {
-    //     let (arg_t, ret_t, fn_id) = self.map.get_fn(p);
-    //     self.map
-    //         .get_lambda_id(fn_id)
-    //         .clone()
-    //         .into_iter()
-    //         .map(|id| {
-    //             let len = self.functions.len() as u32;
-    //             let id_t = id.map_type(|t| self.get_type_for_hash(t));
-    //             let e = self
-    //                 .functions
-    //                 .entry(id_t.clone())
-    //                 .or_insert(FunctionEntry::Placeholder(FxLambdaId(len)));
-    //             let id = match e {
-    //                 FunctionEntry::Placeholder(id) => *id,
-    //                 FunctionEntry::Function(f) => f.id,
-    //             };
-    //             (
-    //                 id,
-    //                 Type::from(TypeUnit::Fn(
-    //                     [id_t.map_type(TypeInner::Type)].into(),
-    //                     TypeInner::Type(self.get_type(arg_t)),
-    //                     TypeInner::Type(self.get_type(ret_t)),
-    //                 )),
-    //             )
-    //         })
-    //         .collect()
-    // }
-
     fn get_possible_functions(&mut self, p: TypePointer) -> Vec<(i32, FxLambdaId, Type)> {
         let mut fs = Vec::new();
         let mut tag = 0;
