@@ -55,7 +55,7 @@ pub enum Instruction {
     Assign(LocalVariable, Expr),
     Test(Tester, VariableId),
     FailTest,
-    ImpossibleTypeError,
+    ImpossibleTypeError { msg: String },
     TryCatch(Block, Block),
 }
 
@@ -106,7 +106,12 @@ pub struct Function {
 
 impl Ast {
     pub fn from(ast: ast_step1::Ast) -> Self {
-        let mut memo = Env::new(ast.variable_decls, ast.local_variable_types, ast.type_map);
+        let mut memo = Env::new(
+            ast.variable_decls,
+            ast.local_variable_types,
+            ast.type_map,
+            ast.constructor_names,
+        );
         memo.monomorphize_decl_rec(
             ast.entry_point,
             ast.type_of_entry_point,
@@ -139,7 +144,7 @@ impl Ast {
                     type_map: memo.map,
                     variable_types: memo.local_variable_collector,
                     fx_type_map,
-                    constructor_names: ast.constructor_names,
+                    constructor_names: memo.constructor_names,
                 }
             }
             _ => panic!(),
@@ -167,6 +172,7 @@ pub struct Env {
     used_local_variables: FxHashSet<LocalVariable>,
     defined_local_variables: FxHashSet<LocalVariable>,
     global_variable_count: usize,
+    constructor_names: ConstructorNames,
 }
 
 #[derive(Debug)]
@@ -183,6 +189,7 @@ impl Env {
         variable_decls: Vec<ast_step1::VariableDecl>,
         local_variable_types: LocalVariableTypes,
         map: PaddedTypeMap,
+        constructor_names: ConstructorNames,
     ) -> Self {
         Env {
             variable_decls: variable_decls.into_iter().map(|d| (d.decl_id, d)).collect(),
@@ -197,6 +204,7 @@ impl Env {
             used_local_variables: Default::default(),
             defined_local_variables: Default::default(),
             global_variable_count: 0,
+            constructor_names,
         }
     }
 
@@ -320,7 +328,7 @@ impl Env {
                     .clone_pointer(self.local_variable_types_old.get(v), replace_map);
                 let e = self.expr(e, t, root_t, replace_map, instructions);
                 match e {
-                    Some(e) => {
+                    Ok(e) => {
                         let t = self.get_type(t);
                         let new_v = if let Some(v) = self.local_variable_replace_map.get(&v) {
                             *v
@@ -332,18 +340,18 @@ impl Env {
                         instructions.push(Instruction::Assign(new_v, e));
                         false
                     }
-                    None => {
-                        instructions.push(Instruction::ImpossibleTypeError);
+                    Err(msg) => {
+                        instructions.push(Instruction::ImpossibleTypeError { msg });
                         true
                     }
                 }
             }
-            ast_step1::Instruction::Test(ast_step1::Tester::I64 { value }, a) => {
+            ast_step1::Instruction::Test(ast_step1::Tester::I64 { value }, l) => {
                 let type_id = TypeId::Intrinsic(IntrinsicType::I64);
-                let a = self.downcast(a, type_id, replace_map, instructions);
+                let a = self.downcast(l, type_id, replace_map, instructions);
                 match a {
-                    Some(a) => instructions.push(Instruction::Test(Tester::I64 { value }, a)),
-                    None => {
+                    Ok(a) => instructions.push(Instruction::Test(Tester::I64 { value }, a)),
+                    Err(_) => {
                         instructions.push(Instruction::FailTest);
                     }
                 }
@@ -353,8 +361,8 @@ impl Env {
                 let type_id = TypeId::Intrinsic(IntrinsicType::String);
                 let a = self.downcast(a, type_id, replace_map, instructions);
                 match a {
-                    Some(a) => instructions.push(Instruction::Test(Tester::Str { value }, a)),
-                    None => {
+                    Ok(a) => instructions.push(Instruction::Test(Tester::Str { value }, a)),
+                    Err(_) => {
                         instructions.push(Instruction::FailTest);
                     }
                 }
@@ -397,7 +405,7 @@ impl Env {
         type_id: TypeId,
         replace_map: &mut ReplaceMap,
         instructions: &mut Vec<Instruction>,
-    ) -> Option<VariableId> {
+    ) -> Result<VariableId, String> {
         let t = self
             .map
             .clone_pointer(self.local_variable_types_old.get(a), replace_map);
@@ -405,13 +413,16 @@ impl Env {
         let a = self.get_defined_local_variable(a, replace_map);
         let a = self.deref(a, &t, instructions);
         match get_tag_normal(&t, type_id) {
-            GetTagNormalResult::Tagged(tag, casted_t) => Some(self.expr_to_variable(
+            GetTagNormalResult::Tagged(tag, casted_t) => Ok(self.expr_to_variable(
                 Expr::Downcast { tag, value: a },
                 casted_t.into(),
                 instructions,
             )),
-            GetTagNormalResult::NotTagged => Some(a),
-            GetTagNormalResult::Impossible => None,
+            GetTagNormalResult::NotTagged => Ok(a),
+            GetTagNormalResult::Impossible => Err(format!(
+                "expected {type_id} but found {}. cannot downcast.",
+                DisplayTypeWithEnv(&t, &self.constructor_names)
+            )),
         }
     }
 
@@ -423,7 +434,7 @@ impl Env {
         root_t: &Type,
         replace_map: &mut ReplaceMap,
         instructions: &mut Vec<Instruction>,
-    ) -> Option<Expr> {
+    ) -> Result<Expr, String> {
         use Expr::*;
         let p = self.map.clone_pointer(p, replace_map);
         let t = self.get_type(p);
@@ -512,8 +523,7 @@ impl Env {
                 let f = self.get_defined_local_variable(f, replace_map);
                 let a = self.get_defined_local_variable(a, replace_map);
                 if possible_functions.is_empty() {
-                    instructions.push(Instruction::ImpossibleTypeError);
-                    return None;
+                    return Err("not a function".to_string());
                 }
                 if possible_functions.len() == 1 {
                     Call {
@@ -523,7 +533,9 @@ impl Env {
                     }
                 } else {
                     let ret_v = self.new_variable(t);
-                    let mut b = vec![Instruction::ImpossibleTypeError];
+                    let mut b = vec![Instruction::ImpossibleTypeError {
+                        msg: "not a function".to_string(),
+                    }];
                     for (tag, (id, casted_t)) in possible_functions.into_iter().enumerate() {
                         let mut b2 = vec![Instruction::Test(Tester::Tag { tag: tag as u32 }, f)];
                         let new_f = self.new_variable(casted_t);
@@ -612,7 +624,7 @@ impl Env {
                     .into_iter()
                     .zip_eq(arg_ts)
                     .map(|(a, param_t)| self.downcast(a, param_t, replace_map, instructions))
-                    .collect::<Option<_>>()?;
+                    .collect::<Result<_, _>>()?;
                 self.add_tags_to_expr(
                     BasicCall {
                         args,
@@ -624,7 +636,7 @@ impl Env {
                 )
             }
         };
-        Some(e)
+        Ok(e)
     }
 
     fn get_possible_functions(&mut self, p: TypePointer) -> Vec<(FxLambdaId, Type)> {

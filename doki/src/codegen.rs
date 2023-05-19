@@ -66,8 +66,8 @@ pub fn codegen(ast: Ast) -> String {
         {1}{2}{3}",
         c_type_env.c_type(&unit_t, None),
         r#"
-        |int __unexpected(){
-        |    puts("unexpected");
+        |int panic(char* msg){
+        |    printf("error: %s\n", msg);
         |    exit(1);
         |}
         |"#
@@ -348,7 +348,7 @@ impl DisplayWithEnv for VariableDecl {
         let ct = &env.global_variable_types[&self.decl_id];
         write!(
             f,
-            "{} {}/*{}*/=(()=>({{{}||__unexpected();{}}}))();",
+            "{} {}/*{}*/=(()=>({{{}||panic(\"pattern is not exhaustive\");{}}}))();",
             ct,
             Dis(&VariableId::Global(self.decl_id), env),
             ast_step2::DisplayTypeWithEnv(&self.t, env.constructor_names),
@@ -370,14 +370,14 @@ impl DisplayWithEnv for TerminalBlock<'_> {
         if vs.is_empty() {
             write!(
                 f,
-                "{{{}||__unexpected();return {};}}",
+                "{{{}||panic(\"pattern is not exhaustive\");return {};}}",
                 Dis(self.0, env),
                 Dis(&self.1, env)
             )
         } else {
             write!(
                 f,
-                "{{{}{}||__unexpected();return {};}}",
+                "{{{}{}||panic(\"pattern is not exhaustive\");return {};}}",
                 vs.iter().format_with("", |v, f| {
                     let (t, ct) = env.local_variable_types.get_type(*v);
                     f(&format_args!(
@@ -442,8 +442,8 @@ impl DisplayWithEnv for Instruction {
             Instruction::FailTest => {
                 write!(f, "0")
             }
-            Instruction::ImpossibleTypeError => {
-                write!(f, "__unexpected()")
+            Instruction::ImpossibleTypeError { msg } => {
+                write!(f, "panic({msg:?})")
             }
             Instruction::TryCatch(a, b) => {
                 write!(f, "({}||{})", Dis(a, env), Dis(b, env))
@@ -523,7 +523,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
             Expr::Downcast { tag, value } => {
                 write!(
                     f,
-                    "({0}.tag=={tag}||__unexpected(),{0}.value._{tag})",
+                    "({0}.tag=={tag}||panic(\"failed to downcast\"),{0}.value._{tag})",
                     Dis(value, env)
                 )
             }
