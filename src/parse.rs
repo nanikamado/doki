@@ -35,6 +35,7 @@ pub enum Expr<'a> {
         operand: Box<Expr<'a>>,
         branches: Vec<(Pattern<'a>, Expr<'a>)>,
     },
+    Let(&'a str, Box<Expr<'a>>, Box<Expr<'a>>),
 }
 
 #[derive(Clone, Debug)]
@@ -57,7 +58,7 @@ enum Decl<'a> {
 
 fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, char>>> {
     let ident = ident()
-        .filter(|s| !["match", "with", "end"].contains(s))
+        .filter(|s| !["match", "with", "end", "let", "in"].contains(s))
         .padded();
 
     // This `escape` is a modified version of https://github.com/zesterer/chumsky/blob/7e8d01f647640428871944885a1bb02e8a865895/examples/json.rs#L39
@@ -125,9 +126,17 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
                 operand: Box::new(operand),
                 branches,
             });
+        let let_expr = just("let")
+            .ignore_then(ident)
+            .then_ignore(just("="))
+            .then(expr.clone())
+            .then_ignore(just("in"))
+            .then(expr.clone())
+            .map(|((v, e1), e2)| Let(v, Box::new(e1), Box::new(e2)));
         let e = choice((
             expr.delimited_by(just('('), just(')')),
             match_expr,
+            let_expr,
             int(10).map(Num),
             string.map(Str),
             ident.then_ignore(none_of("=").rewind()).map(Ident),

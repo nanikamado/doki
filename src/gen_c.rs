@@ -139,6 +139,15 @@ impl<'a> Env<'a> {
                 }
                 block.append(b);
             }
+            Expr::Let(v, e1, e2) => {
+                let l = self.build_env.new_local_variable();
+                self.expr(*e1, l, block);
+                let shadowed = self.local_variable_map.insert(v, l);
+                self.expr(*e2, ret, block);
+                if let Some(s) = shadowed {
+                    self.local_variable_map.insert(v, s);
+                }
+            }
         }
     }
 
