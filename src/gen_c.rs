@@ -98,12 +98,7 @@ impl<'a> Env<'a> {
             }
             Expr::Lambda { param, expr } => {
                 let l = self.build_env.lambda(block, ret);
-                let shadowed = self.local_variable_map.get(param).copied();
-                self.local_variable_map.insert(param, l.parameter);
-                self.expr(*expr, l.ret, l.body);
-                if let Some(s) = shadowed {
-                    self.local_variable_map.insert(param, s);
-                }
+                self.let_in(l.ret, param, l.parameter, *expr, l.body);
             }
             Expr::Call(f, a) => {
                 let fv = self.build_env.new_local_variable();
@@ -123,30 +118,37 @@ impl<'a> Env<'a> {
                 self.expr(*operand, operand_v, block);
                 let mut b = Block::default();
                 b.panic("match is not exhaustive".to_string());
-                for (mut p, e) in branches.into_iter().rev() {
-                    self.find_field_less_constructor(&mut p);
+                for (p, e) in branches.into_iter().rev() {
                     let mut b2 = Block::default();
-                    let mut shadowed_variables = FxHashMap::default();
-                    self.binds_in_pattern(&p, &mut shadowed_variables);
-                    self.pattern(&p, operand_v, &mut b2);
-                    self.expr(e, ret, &mut b2);
-                    for (name, v) in shadowed_variables {
-                        if let Some(v) = v {
-                            self.local_variable_map.insert(name, v);
-                        }
-                    }
+                    self.let_in(ret, p, operand_v, e, &mut b2);
                     b = b2.try_catch(b);
                 }
                 block.append(b);
             }
-            Expr::Let(v, e1, e2) => {
+            Expr::Let(p, e1, e2) => {
                 let l = self.build_env.new_local_variable();
                 self.expr(*e1, l, block);
-                let shadowed = self.local_variable_map.insert(v, l);
-                self.expr(*e2, ret, block);
-                if let Some(s) = shadowed {
-                    self.local_variable_map.insert(v, s);
-                }
+                self.let_in(ret, p, l, *e2, block);
+            }
+        }
+    }
+
+    fn let_in(
+        &mut self,
+        ret: LocalVariable,
+        mut p: Pattern<'a>,
+        v: LocalVariable,
+        e: Expr<'a>,
+        block: &mut Block,
+    ) {
+        self.find_field_less_constructor(&mut p);
+        let mut shadowed_variables = FxHashMap::default();
+        self.binds_in_pattern(&p, &mut shadowed_variables);
+        self.pattern(&p, v, block);
+        self.expr(e, ret, block);
+        for (name, v) in shadowed_variables {
+            if let Some(v) = v {
+                self.local_variable_map.insert(name, v);
             }
         }
     }

@@ -25,7 +25,7 @@ pub struct VariableDecl<'a> {
 pub enum Expr<'a> {
     Ident(&'a str),
     Lambda {
-        param: &'a str,
+        param: Pattern<'a>,
         expr: Box<Expr<'a>>,
     },
     Call(Box<Expr<'a>>, Box<Expr<'a>>),
@@ -35,7 +35,7 @@ pub enum Expr<'a> {
         operand: Box<Expr<'a>>,
         branches: Vec<(Pattern<'a>, Expr<'a>)>,
     },
-    Let(&'a str, Box<Expr<'a>>, Box<Expr<'a>>),
+    Let(Pattern<'a>, Box<Expr<'a>>, Box<Expr<'a>>),
 }
 
 #[derive(Clone, Debug)]
@@ -112,6 +112,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
     });
     let expr = recursive(|expr| {
         let branches = pattern
+            .clone()
             .then_ignore(just("=>"))
             .then(expr.clone())
             .separated_by(just(','))
@@ -127,7 +128,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
                 branches,
             });
         let let_expr = just("let")
-            .ignore_then(ident)
+            .ignore_then(pattern.clone())
             .then_ignore(just("="))
             .then(expr.clone())
             .then_ignore(just("in"))
@@ -145,7 +146,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
         let e = e
             .clone()
             .foldl(e.repeated(), |a, b| Call(Box::new(a), Box::new(b)));
-        ident
+        pattern
             .then_ignore(just(":"))
             .repeated()
             .foldr(e, |param, acc| Lambda {
