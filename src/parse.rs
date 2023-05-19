@@ -1,6 +1,6 @@
 use ariadne::{sources, Color, Label, Report, ReportKind};
 use chumsky::prelude::*;
-use chumsky::text::{ident, int};
+use chumsky::text::{ident, int, keyword};
 use std::process::exit;
 
 #[derive(Clone, Debug)]
@@ -129,18 +129,18 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
             .padded_by(whitespace);
         let match_expr = expr
             .clone()
-            .delimited_by(just("match"), just("with"))
+            .delimited_by(keyword("match"), keyword("with"))
             .then(branches)
-            .then_ignore(just("end"))
+            .then_ignore(keyword("end"))
             .map(|(operand, branches)| Match {
                 operand: Box::new(operand),
                 branches,
             });
-        let let_expr = just("let")
+        let let_expr = keyword("let")
             .ignore_then(pattern.clone())
             .then_ignore(just("="))
             .then(expr.clone())
-            .then_ignore(just("in"))
+            .then_ignore(keyword("in"))
             .then(expr.clone())
             .map(|((v, e1), e2)| Let(v, Box::new(e1), Box::new(e2)));
         let e = choice((
@@ -167,8 +167,8 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
         .then_ignore(just("="))
         .then(expr)
         .map(|(i, e)| Decl::Variable(VariableDecl { name: i, expr: e }));
-    let data_decl = just("data")
-        .then(whitespace.at_least(1))
+    let data_decl = keyword("data")
+        .then(whitespace)
         .ignore_then(ident)
         .then(int(10))
         .padded_by(whitespace)
