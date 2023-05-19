@@ -1,6 +1,6 @@
 use ariadne::{sources, Color, Label, Report, ReportKind};
 use chumsky::prelude::*;
-use chumsky::text::{ident, int, whitespace};
+use chumsky::text::{ident, int};
 use std::process::exit;
 
 #[derive(Clone, Debug)]
@@ -57,9 +57,17 @@ enum Decl<'a> {
 }
 
 fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, char>>> {
+    let comment = just("//")
+        .then(any().and_is(just('\n').not()).repeated())
+        .ignored();
+    let whitespace = any()
+        .filter(|c: &char| c.is_whitespace())
+        .ignored()
+        .or(comment)
+        .repeated();
     let ident = ident()
         .filter(|s| !["match", "with", "end", "let", "in", "data"].contains(s))
-        .padded();
+        .padded_by(whitespace);
 
     // This `escape` is a modified version of https://github.com/zesterer/chumsky/blob/7e8d01f647640428871944885a1bb02e8a865895/examples/json.rs#L39
     // MIT License: https://github.com/zesterer/chumsky/blob/7e8d01f647640428871944885a1bb02e8a865895/LICENSE
@@ -100,7 +108,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
                 fields: Vec::new(),
             }),
         ))
-        .padded();
+        .padded_by(whitespace);
         let p = ident
             .then(p.clone().repeated().collect())
             .map(|(name, fields)| Pattern::Constructor { name, fields })
@@ -117,12 +125,13 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
             .then(expr.clone())
             .separated_by(just(','))
             .allow_trailing()
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+            .padded_by(whitespace);
         let match_expr = expr
             .clone()
             .delimited_by(just("match"), just("with"))
             .then(branches)
-            .then_ignore(just("end").padded())
+            .then_ignore(just("end"))
             .map(|(operand, branches)| Match {
                 operand: Box::new(operand),
                 branches,
@@ -142,7 +151,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
             string.map(Str),
             ident.then_ignore(none_of("=").rewind()).map(Ident),
         ))
-        .padded();
+        .padded_by(whitespace);
         let e = e
             .clone()
             .foldl(e.repeated(), |a, b| Call(Box::new(a), Box::new(b)));
@@ -159,10 +168,10 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
         .then(expr)
         .map(|(i, e)| Decl::Variable(VariableDecl { name: i, expr: e }));
     let data_decl = just("data")
-        .then(whitespace().at_least(1))
+        .then(whitespace.at_least(1))
         .ignore_then(ident)
         .then(int(10))
-        .padded()
+        .padded_by(whitespace)
         .map(|(name, len): (&str, &str)| {
             Decl::Data(DataDecl {
                 name,
