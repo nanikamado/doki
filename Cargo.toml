@@ -15,3 +15,6 @@ rustc-hash = "1.1.0"
 tempfile = "3.5.0"
 easy-ext = "1.0.1"
 ariadne = "0.2.0"
+
+[dev-dependencies]
+assert_cmd = "2.0.4"
