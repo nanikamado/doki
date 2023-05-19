@@ -492,8 +492,18 @@ impl Env {
                     }
                 }
             }
-            ast_step1::Expr::I64(s) => I64(s),
-            ast_step1::Expr::Str(s) => Str(s),
+            ast_step1::Expr::I64(s) => self.add_tags_to_expr(
+                I64(s),
+                &t,
+                TypeId::Intrinsic(IntrinsicType::I64),
+                instructions,
+            ),
+            ast_step1::Expr::Str(s) => self.add_tags_to_expr(
+                Str(s),
+                &t,
+                TypeId::Intrinsic(IntrinsicType::String),
+                instructions,
+            ),
             ast_step1::Expr::Ident(v) => Ident(self.get_defined_variable_id(v, replace_map)),
             ast_step1::Expr::Call { f, a } => {
                 let f_t = self.local_variable_types_old.get(f);
