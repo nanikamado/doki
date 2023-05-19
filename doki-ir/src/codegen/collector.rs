@@ -8,9 +8,15 @@ pub struct Collector<T: Eq + Hash> {
 }
 
 impl<T: Eq + Hash> Collector<T> {
-    pub fn get(&mut self, t: T) -> usize {
-        self.len += 1;
-        *self.map.entry(t).or_insert(self.len - 1)
+    pub fn get(&self, t: T) -> usize {
+        self.map[&t]
+    }
+
+    pub fn get_or_insert(&mut self, t: T) -> usize {
+        *self.map.entry(t).or_insert_with(|| {
+            self.len += 1;
+            self.len - 1
+        })
     }
 
     pub fn get_empty_id(&mut self) -> usize {
@@ -23,8 +29,8 @@ impl<T: Eq + Hash> Collector<T> {
         debug_assert!(o.is_none());
     }
 
-    pub fn into_raw(self) -> FxHashMap<T, usize> {
-        self.map
+    pub fn as_raw(&self) -> &FxHashMap<T, usize> {
+        &self.map
     }
 }
 

@@ -98,10 +98,10 @@ impl Env {
                                     self.aggregate_types.insert_with_id(t, i);
                                     CType::Aggregate(i)
                                 }
-                                None => CType::Aggregate(self.aggregate_types.get(t)),
+                                None => CType::Aggregate(self.aggregate_types.get_or_insert(t)),
                             };
                         }
-                        ts.push(CType::Aggregate(self.aggregate_types.get(t)));
+                        ts.push(CType::Aggregate(self.aggregate_types.get_or_insert(t)));
                     }
                 },
                 Fn(lambda_id, _, _) => {
@@ -129,7 +129,7 @@ impl Env {
                             }
                             _ => (),
                         }
-                        ts.push(CType::Aggregate(self.aggregate_types.get(c_t)))
+                        ts.push(CType::Aggregate(self.aggregate_types.get_or_insert(c_t)))
                     }
                 }
             }
@@ -142,7 +142,10 @@ impl Env {
         } else if ts.len() == 1 {
             ts.into_iter().next().unwrap()
         } else {
-            CType::Aggregate(self.aggregate_types.get(CAggregateType::Union(ts)))
+            CType::Aggregate(
+                self.aggregate_types
+                    .get_or_insert(CAggregateType::Union(ts)),
+            )
         }
     }
 

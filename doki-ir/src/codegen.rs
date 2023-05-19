@@ -10,12 +10,13 @@ use crate::ast_step2::{
 use crate::intrinsics::{IntrinsicType, IntrinsicVariable};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::fmt::{Display, Write};
+use std::fmt::Display;
+use std::io::Write;
 use stripmargin::StripMargin;
 use strum::IntoEnumIterator;
 use unic_ucd_category::GeneralCategory;
 
-pub fn codegen(ast: Ast) -> String {
+pub fn codegen(ast: Ast, w: &mut impl Write) {
     let function_context = ast
         .functions
         .iter()
@@ -52,80 +53,37 @@ pub fn codegen(ast: Ast) -> String {
         global_variable_types: &global_variable_types,
         constructor_names: &ast.constructor_names,
     };
-    let mut s = String::new();
+    collect_c_type(&ast.functions, &mut c_type_env, &env);
+    let intrinsic_variables = IntrinsicVariable::iter()
+        .map(|v| {
+            (
+                v,
+                primitive_ret_type(v, &mut c_type_env),
+                primitive_arg_types(v, &mut c_type_env),
+            )
+        })
+        .collect_vec();
     let unit_t: Type = TypeUnit::Normal {
         id: TypeId::Intrinsic(IntrinsicType::Unit),
         args: Vec::new(),
     }
     .into();
-    write!(
-        &mut s,
-        "{0} __unit(){{
-            return ({0}){{}};
-        }}
-        {1}{2}{3}",
-        c_type_env.c_type(&unit_t, None),
-        r#"
-        |int panic(char* msg){
-        |    printf("error: %s\n", msg);
-        |    exit(1);
-        |}
-        |"#
-        .strip_margin(),
-        IntrinsicVariable::iter()
-            .map(|v| format!(
-                "{} intrinsic_{v}({}){}",
-                primitive_ret_type(v, &mut c_type_env),
-                primitive_arg_types(v, &mut c_type_env)
-                    .iter()
-                    .enumerate()
-                    .format_with(", ", |(i, t), f| f(&format_args!("{t} _{i}"))),
-                primitive_def(v)
-            ))
-            .format(""),
-        ast.variable_decls
-            .iter()
-            .format_with("", |d, f| f(&format_args!(
-                "{} g_{}_{}(){}",
-                env.global_variable_types[&d.decl_id],
-                d.decl_id,
-                convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
-                Dis(&TerminalBlock(&d.value, d.ret), &env)
-            ))),
-    )
-    .unwrap();
-    write_fns(&mut s, &ast.functions, &mut c_type_env, &env, true);
-    let mut fn_headers = String::new();
-    write_fns(
-        &mut fn_headers,
-        &ast.functions,
-        &mut c_type_env,
-        &env,
-        false,
-    );
-    write!(
-        &mut s,
-        "int main() {{
-            {}((struct t0){{}},(struct t0){{}});
-        }}",
-        ast.entry_point
-    )
-    .unwrap();
-    let mut s2 = String::new();
+    let unit_t = c_type_env.c_type(&unit_t, None);
+    let c_type_env = c_type_env;
     let aggregates: FxHashMap<_, _> = c_type_env
         .aggregate_types
-        .into_raw()
-        .into_iter()
-        .map(|(a, b)| (b, a))
+        .as_raw()
+        .iter()
+        .map(|(a, b)| (*b, a))
         .collect();
     let sorted = sort_aggregates(&aggregates);
     write!(
-        &mut s2,
+        w,
         "
         #include <stdio.h>
         #include <stdlib.h>
         #include <string.h>
-        {}{}{fn_headers}{}{s}",
+        {}{}",
         sorted.iter().format_with("", |(i, t), f| {
             match t {
                 CAggregateType::Struct(fields) => f(&format_args!(
@@ -156,6 +114,12 @@ pub fn codegen(ast: Ast) -> String {
                 }}"
             ))
         }),
+    )
+    .unwrap();
+    write_fns(w, &ast.functions, &c_type_env, &env, false);
+    write!(
+        w,
+        "{}",
         ast.variable_decls
             .iter()
             .format_with("", |d, f| f(&format_args!(
@@ -166,7 +130,52 @@ pub fn codegen(ast: Ast) -> String {
             )))
     )
     .unwrap();
-    s2
+    write!(
+        w,
+        "{0} __unit(){{
+            return ({0}){{}};
+        }}
+        {1}{2}{3}",
+        unit_t,
+        r#"
+        |int panic(char* msg){
+        |    printf("error: %s\n", msg);
+        |    exit(1);
+        |}
+        |"#
+        .strip_margin(),
+        intrinsic_variables
+            .into_iter()
+            .map(|(v, ret_t, arg_ts)| format!(
+                "{} intrinsic_{v}({}){}",
+                ret_t,
+                arg_ts
+                    .iter()
+                    .enumerate()
+                    .format_with(", ", |(i, t), f| f(&format_args!("{t} _{i}"))),
+                primitive_def(v)
+            ))
+            .format(""),
+        ast.variable_decls
+            .iter()
+            .format_with("", |d, f| f(&format_args!(
+                "{} g_{}_{}(){}",
+                env.global_variable_types[&d.decl_id],
+                d.decl_id,
+                convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
+                Dis(&TerminalBlock(&d.value, d.ret), &env)
+            ))),
+    )
+    .unwrap();
+    write_fns(w, &ast.functions, &c_type_env, &env, true);
+    write!(
+        w,
+        "int main(void) {{
+            {}((struct t0){{}},(struct t0){{}});
+        }}",
+        ast.entry_point
+    )
+    .unwrap();
 }
 
 fn primitive_def(i: IntrinsicVariable) -> &'static str {
@@ -214,7 +223,9 @@ fn primitive_ret_type(i: IntrinsicVariable, env: &mut c_type::Env) -> CType {
     env.c_type(&t, None)
 }
 
-fn sort_aggregates(aggregates: &FxHashMap<usize, CAggregateType>) -> Vec<(usize, &CAggregateType)> {
+fn sort_aggregates<'a>(
+    aggregates: &'a FxHashMap<usize, &'a CAggregateType>,
+) -> Vec<(usize, &'a CAggregateType)> {
     let mut done = FxHashSet::default();
     let mut sorted = Vec::with_capacity(aggregates.len());
     for i in aggregates.keys() {
@@ -224,7 +235,7 @@ fn sort_aggregates(aggregates: &FxHashMap<usize, CAggregateType>) -> Vec<(usize,
 }
 fn sort_aggregates_rec<'a>(
     i: usize,
-    h: &'a FxHashMap<usize, CAggregateType>,
+    h: &'a FxHashMap<usize, &CAggregateType>,
     done: &mut FxHashSet<usize>,
     sorted: &mut Vec<(usize, &'a CAggregateType)>,
 ) {
@@ -244,10 +255,23 @@ fn sort_aggregates_rec<'a>(
     }
 }
 
+fn collect_c_type(functions: &[Function], c_type_env: &mut c_type::Env, env: &Env) {
+    for f in functions {
+        c_type_env
+            .aggregate_types
+            .get_or_insert(CAggregateType::Struct(
+                f.context
+                    .iter()
+                    .map(|l| env.local_variable_types.get_type(*l).1.clone())
+                    .collect(),
+            ));
+    }
+}
+
 fn write_fns(
-    s: &mut String,
+    s: &mut impl Write,
     functions: &[Function],
-    c_type_env: &mut c_type::Env,
+    c_type_env: &c_type::Env,
     env: &Env,
     write_body: bool,
 ) {

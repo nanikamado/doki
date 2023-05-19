@@ -3,6 +3,7 @@ use doki_ir::intrinsics::IntoEnumIterator;
 use doki_ir::{Block, GlobalVariable, LocalVariable};
 use parser::{Ast, Expr, Pattern};
 use rustc_hash::FxHashMap;
+use std::io::Write;
 
 #[derive(Debug, Default)]
 struct Env<'a> {
@@ -12,7 +13,7 @@ struct Env<'a> {
     build_env: doki_ir::Env,
 }
 
-pub fn gen_c(ast: Ast) -> String {
+pub fn gen_c(ast: Ast, w: &mut impl Write) {
     let mut env = Env::default();
     for d in ast.data_decls {
         let constructor_id = env
@@ -81,7 +82,7 @@ pub fn gen_c(ast: Ast) -> String {
         env.build_env.set_global_variable(d);
     }
     let entry_point = env.global_variable_map["main"];
-    env.build_env.gen_c(entry_point)
+    env.build_env.gen_c(entry_point, w)
 }
 
 impl<'a> Env<'a> {
