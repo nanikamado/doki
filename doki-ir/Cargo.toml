@@ -10,3 +10,7 @@ stripmargin = "*"
 strum = { version = "0.24", features = ["derive"] }
 once_cell = "1.8.0"
 unic-ucd-category = "0.9.0"
+
+[features]
+default = []
+display-fn-id = []

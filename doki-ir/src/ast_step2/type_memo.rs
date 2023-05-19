@@ -519,16 +519,26 @@ impl<R: fmt::Debug> Display for DisplayTypeWithEnv<'_, TypeUnit<R>> {
                 };
                 Ok(())
             }
-            Fn(id, a, b) => {
-                let id_paren = id.len() >= 2;
+            Fn(_id, a, b) => {
+                #[cfg(feature = "display-fn-id")]
+                {
+                    let id_paren = _id.len() >= 2;
+                    write!(
+                        f,
+                        "({}) -{}{}{}-> {}",
+                        DisplayTypeWithEnv(a, self.1),
+                        if id_paren { "(" } else { "" },
+                        _id.iter()
+                            .format_with(" | ", |a, f| f(&DisplayTypeWithEnv(a, self.1))),
+                        if id_paren { ")" } else { "" },
+                        DisplayTypeWithEnv(b, self.1)
+                    )
+                }
+                #[cfg(not(feature = "display-fn-id"))]
                 write!(
                     f,
-                    "({}) -{}{}{}-> {}",
+                    "({}) -> {}",
                     DisplayTypeWithEnv(a, self.1),
-                    if id_paren { "(" } else { "" },
-                    id.iter()
-                        .format_with(" | ", |a, f| f(&DisplayTypeWithEnv(a, self.1))),
-                    if id_paren { ")" } else { "" },
                     DisplayTypeWithEnv(b, self.1)
                 )
             }
