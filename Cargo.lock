@@ -190,6 +190,20 @@ checksum = "fea41bba32d969b513997752735605054bc0dfa92b4c56bf1189f2e174be7a10"
 name = "doki"
 version = "0.1.0"
 dependencies = [
+ "ariadne",
+ "assert_cmd",
+ "chumsky",
+ "clap",
+ "doki-ir",
+ "easy-ext",
+ "rustc-hash",
+ "tempfile",
+]
+
+[[package]]
+name = "doki-ir"
+version = "0.1.0"
+dependencies = [
  "itertools",
  "once_cell",
  "rustc-hash",
@@ -325,20 +339,6 @@ name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
-
-[[package]]
-name = "ofl"
-version = "0.1.0"
-dependencies = [
- "ariadne",
- "assert_cmd",
- "chumsky",
- "clap",
- "doki",
- "easy-ext",
- "rustc-hash",
- "tempfile",
-]
 
 [[package]]
 name = "once_cell"

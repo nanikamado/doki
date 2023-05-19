@@ -1,15 +1,15 @@
 use crate::intrinsics::IntrinsicVariableExt;
 use crate::parse::{Ast, Expr, Pattern};
-use doki::intrinsics::IntoEnumIterator;
-use doki::{Block, GlobalVariable, LocalVariable};
+use doki_ir::intrinsics::IntoEnumIterator;
+use doki_ir::{Block, GlobalVariable, LocalVariable};
 use rustc_hash::FxHashMap;
 
 #[derive(Debug, Default)]
 struct Env<'a> {
     local_variable_map: FxHashMap<&'a str, LocalVariable>,
     global_variable_map: FxHashMap<&'a str, GlobalVariable>,
-    data_decl_map: FxHashMap<&'a str, doki::ConstructorId>,
-    build_env: doki::Env,
+    data_decl_map: FxHashMap<&'a str, doki_ir::ConstructorId>,
+    build_env: doki_ir::Env,
 }
 
 pub fn gen_c(ast: Ast) -> String {
@@ -33,7 +33,7 @@ pub fn gen_c(ast: Ast) -> String {
             args.push(l.parameter);
         }
         env.build_env.construction(ret, args, constructor_id, b);
-        let d = doki::VariableDecl {
+        let d = doki_ir::VariableDecl {
             value: block,
             ret: ret_global,
             decl_id,
@@ -41,7 +41,7 @@ pub fn gen_c(ast: Ast) -> String {
         };
         env.build_env.set_global_variable(d);
     }
-    for d in doki::intrinsics::IntrinsicVariable::iter() {
+    for d in doki_ir::intrinsics::IntrinsicVariable::iter() {
         let decl_id = env.build_env.new_global_variable();
         env.global_variable_map.insert(d.to_str(), decl_id);
         let ret_global = env.build_env.new_local_variable();
@@ -56,7 +56,7 @@ pub fn gen_c(ast: Ast) -> String {
             args.push(l.parameter);
         }
         env.build_env.intrinsic_call(ret, args, d, b);
-        let d = doki::VariableDecl {
+        let d = doki_ir::VariableDecl {
             value: block,
             ret: ret_global,
             decl_id,
@@ -72,7 +72,7 @@ pub fn gen_c(ast: Ast) -> String {
         let ret = env.build_env.new_local_variable();
         let mut block = env.build_env.new_block();
         env.expr(d.expr, ret, &mut block);
-        let d = doki::VariableDecl {
+        let d = doki_ir::VariableDecl {
             value: block,
             ret,
             decl_id: env.global_variable_map[d.name],
@@ -237,7 +237,7 @@ impl<'a> Env<'a> {
             Pattern::Wildcard => (),
             Pattern::Constructor { name, fields } => {
                 let d = self.data_decl_map[name];
-                block.test_constructor(operand, doki::TypeId::UserDefined(d));
+                block.test_constructor(operand, doki_ir::TypeId::UserDefined(d));
                 for (i, f) in fields.iter().enumerate() {
                     let ret = self.build_env.new_local_variable();
                     self.build_env.field_access(ret, operand, d, i, block);

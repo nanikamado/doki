@@ -1,4 +1,4 @@
-use doki::intrinsics::IntrinsicVariable;
+use doki_ir::intrinsics::IntrinsicVariable;
 use easy_ext::ext;
 
 #[ext(IntrinsicVariableExt)]
