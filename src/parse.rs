@@ -149,7 +149,9 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
             let_expr,
             int(10).map(Num),
             string.map(Str),
-            ident.then_ignore(none_of("=").rewind()).map(Ident),
+            ident
+                .then_ignore(none_of("=").ignored().or(end().ignored()).rewind())
+                .map(Ident),
         ))
         .padded_by(whitespace);
         let e = e
