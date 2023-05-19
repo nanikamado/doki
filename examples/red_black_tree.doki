@@ -50,7 +50,7 @@ contains = x: t: match t with
             end,
     end
 
-main = a: let test0 = contains 0 E
+main = _: let test0 = contains 0 E
     in let t = insert 100 (insert 0 (insert 0 (insert 4 (insert 2 E))))
     in let test1 = contains 0 t
     in let test2 = contains 3 t

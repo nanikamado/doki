@@ -98,7 +98,11 @@ impl<'a> Env<'a> {
             }
             Expr::Lambda { param, expr } => {
                 let l = self.build_env.lambda(block, ret);
-                self.let_in(l.ret, param, l.parameter, *expr, l.body);
+                let mut b = self.build_env.new_block();
+                b.panic("pattern is not exhaustive".to_string());
+                let mut b2 = self.build_env.new_block();
+                self.let_in(l.ret, param, l.parameter, *expr, &mut b2);
+                l.body.append(b2.try_catch(b));
             }
             Expr::Call(f, a) => {
                 let fv = self.build_env.new_local_variable();
@@ -128,7 +132,11 @@ impl<'a> Env<'a> {
             Expr::Let(p, e1, e2) => {
                 let l = self.build_env.new_local_variable();
                 self.expr(*e1, l, block);
-                self.let_in(ret, p, l, *e2, block);
+                let mut b = self.build_env.new_block();
+                b.panic("pattern is not exhaustive".to_string());
+                let mut b2 = self.build_env.new_block();
+                self.let_in(ret, p, l, *e2, &mut b2);
+                block.append(b2.try_catch(b));
             }
         }
     }
