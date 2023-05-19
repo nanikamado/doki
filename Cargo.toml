@@ -7,6 +7,9 @@ edition = "2021"
 default-members = ["."]
 members = [".", "doki-ir", "parser"]
 
+[profile.release]
+debug = true
+
 [dependencies]
 clap = { version = "4.2.7", features = ["derive"] }
 doki-ir = { path = "doki-ir" }
