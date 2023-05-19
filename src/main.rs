@@ -24,7 +24,9 @@ fn main() {
     let c_src = gen_c::gen_c(ast);
     if args.emit_c {
         println!("{c_src}");
-    } else if run_c::run(&c_src).is_err() {
+    } else if let Ok(exit_status) = run_c::run(&c_src) {
+        exit(exit_status.code().unwrap());
+    } else {
         exit(1);
     }
 }

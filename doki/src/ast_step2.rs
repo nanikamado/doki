@@ -55,7 +55,7 @@ pub enum Instruction {
     Assign(LocalVariable, Expr),
     Test(Tester, VariableId),
     FailTest,
-    ImpossibleTypeError { msg: String },
+    Panic { msg: String },
     TryCatch(Block, Block),
 }
 
@@ -313,7 +313,7 @@ impl Env {
         (Block { instructions }, unreachable_block)
     }
 
-    // Returns true if the block is unreachable
+    // Returns true if exited with a error
     fn instruction(
         &mut self,
         instruction: ast_step1::Instruction,
@@ -341,7 +341,7 @@ impl Env {
                         false
                     }
                     Err(msg) => {
-                        instructions.push(Instruction::ImpossibleTypeError { msg });
+                        instructions.push(Instruction::Panic { msg });
                         true
                     }
                 }
@@ -395,6 +395,10 @@ impl Env {
             ast_step1::Instruction::FailTest => {
                 instructions.push(Instruction::FailTest);
                 false
+            }
+            ast_step1::Instruction::Panic { msg } => {
+                instructions.push(Instruction::Panic { msg });
+                true
             }
         }
     }
@@ -533,7 +537,7 @@ impl Env {
                     }
                 } else {
                     let ret_v = self.new_variable(t);
-                    let mut b = vec![Instruction::ImpossibleTypeError {
+                    let mut b = vec![Instruction::Panic {
                         msg: "not a function".to_string(),
                     }];
                     for (tag, (id, casted_t)) in possible_functions.into_iter().enumerate() {

@@ -62,6 +62,7 @@ pub enum Instruction {
     Assign(LocalVariable, Expr),
     Test(Tester, LocalVariable),
     FailTest,
+    Panic { msg: String },
     TryCatch(Block, Block),
 }
 
@@ -245,7 +246,7 @@ impl TypeInfEnv {
                         }
                     }
                 }
-                Instruction::Test(_, _) | Instruction::FailTest => (),
+                Instruction::Test(_, _) | Instruction::FailTest | Instruction::Panic { .. } => (),
                 Instruction::TryCatch(a, b) => {
                     self.block(a, root_t);
                     self.block(b, root_t);
@@ -504,6 +505,10 @@ impl Block {
 
     pub fn test_fail(&mut self) {
         self.instructions.push(Instruction::FailTest);
+    }
+
+    pub fn panic(&mut self, msg: String) {
+        self.instructions.push(Instruction::Panic { msg });
     }
 
     pub fn try_catch(self, other: Block) -> Block {

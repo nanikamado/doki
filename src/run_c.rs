@@ -1,9 +1,9 @@
 use std::fs;
 use std::io::{ErrorKind, Write};
-use std::process::{self, Stdio};
+use std::process::{self, ExitStatus, Stdio};
 use tempfile::NamedTempFile;
 
-pub fn run(c_src: &str) -> Result<(), ()> {
+pub fn run(c_src: &str) -> Result<ExitStatus, ()> {
     let tmp = NamedTempFile::new().unwrap();
     let tmp_path = tmp.path().to_str().unwrap().to_string();
     tmp.close().unwrap();
@@ -20,13 +20,13 @@ pub fn run(c_src: &str) -> Result<(), ()> {
                 .write_all(c_src.as_bytes())
                 .unwrap();
             assert!(child.wait().unwrap().success());
-            process::Command::new(&tmp_path)
+            let e = process::Command::new(&tmp_path)
                 .spawn()
                 .unwrap()
                 .wait()
                 .unwrap();
             fs::remove_file(tmp_path).unwrap();
-            Ok(())
+            Ok(e)
         }
         Err(e) => {
             match e.kind() {

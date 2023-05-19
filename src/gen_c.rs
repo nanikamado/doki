@@ -122,7 +122,7 @@ impl<'a> Env<'a> {
                 let operand_v = self.build_env.new_local_variable();
                 self.expr(*operand, operand_v, block);
                 let mut b = Block::default();
-                b.test_fail();
+                b.panic("match is not exhaustive".to_string());
                 for (mut p, e) in branches.into_iter().rev() {
                     self.find_field_less_constructor(&mut p);
                     let mut b2 = Block::default();

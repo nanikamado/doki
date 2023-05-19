@@ -442,7 +442,7 @@ impl DisplayWithEnv for Instruction {
             Instruction::FailTest => {
                 write!(f, "0")
             }
-            Instruction::ImpossibleTypeError { msg } => {
+            Instruction::Panic { msg } => {
                 write!(f, "panic({msg:?})")
             }
             Instruction::TryCatch(a, b) => {
