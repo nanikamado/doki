@@ -371,16 +371,16 @@ pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
     let mut tag = 0;
     if ot.len() == 1 {
         let t = ot.ts.first().unwrap();
-        match t {
+        return match t {
             TypeUnit::Normal { id, .. } => {
-                return if *id == type_id {
+                if *id == type_id {
                     GetTagNormalResult::NotTagged
                 } else {
                     GetTagNormalResult::Impossible
-                };
+                }
             }
-            TypeUnit::Fn(_, _, _) => panic!(),
-        }
+            TypeUnit::Fn(_, _, _) => GetTagNormalResult::Impossible,
+        };
     }
     for t in &ot.ts {
         match t {
