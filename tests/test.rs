@@ -47,3 +47,8 @@ fn r#match() {
 fn fail_inexhaustive_match() {
     test_test_fail("inexhaustive_match.doki");
 }
+
+#[test]
+fn fn_union() {
+    test_examples("fn_union.doki", "Hello\n");
+}

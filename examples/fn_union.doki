@@ -1,0 +1,31 @@
+data Unit 0
+
+println = a: intrinsic_print_str (intrinsic_append_str a "\n")
+
+data A 0
+data B 0
+data Cons 2
+data Nil 0
+
+p = s: _: intrinsic_print_str s
+
+call_functions = l: match l with
+        Nil => Unit,
+        Cons (A | B) t => call_functions t,
+        Cons f t => let _ = call_functions t
+            in f Unit,
+    end
+
+main = _: let l = Nil
+    in let l = Cons A l
+    in let l = Cons A l
+    in let l = Cons (p "H") l
+    in let l = Cons (p "e") l
+    in let l = Cons (p "l") l
+    in let l = Cons (p "l") l
+    in let l = Cons B l
+    in let l = Cons A l
+    in let l = Cons (p "o") l
+    in let l = Cons B l
+    in let l = Cons (p "\n") l
+    in call_functions l
