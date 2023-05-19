@@ -190,12 +190,11 @@ checksum = "fea41bba32d969b513997752735605054bc0dfa92b4c56bf1189f2e174be7a10"
 name = "doki"
 version = "0.1.0"
 dependencies = [
- "ariadne",
  "assert_cmd",
- "chumsky",
  "clap",
  "doki-ir",
  "easy-ext",
+ "parser",
  "rustc-hash",
  "tempfile",
 ]
@@ -345,6 +344,14 @@ name = "once_cell"
 version = "1.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7e5500299e16ebb147ae15a00a942af264cf3688f47923b8fc2cd5858f23ad3"
+
+[[package]]
+name = "parser"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
+ "chumsky",
+]
 
 [[package]]
 name = "predicates"

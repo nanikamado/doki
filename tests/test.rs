@@ -34,6 +34,11 @@ fn helloworld() {
 }
 
 #[test]
+fn closure() {
+    test_examples("closure.doki", "a\n");
+}
+
+#[test]
 fn r#match() {
     test_examples("match.doki", "True\n");
 }

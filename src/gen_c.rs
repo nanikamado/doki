@@ -1,7 +1,7 @@
 use crate::intrinsics::IntrinsicVariableExt;
-use crate::parse::{Ast, Expr, Pattern};
 use doki_ir::intrinsics::IntoEnumIterator;
 use doki_ir::{Block, GlobalVariable, LocalVariable};
+use parser::{Ast, Expr, Pattern};
 use rustc_hash::FxHashMap;
 
 #[derive(Debug, Default)]

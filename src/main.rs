@@ -1,6 +1,5 @@
 mod gen_c;
 mod intrinsics;
-mod parse;
 mod run_c;
 
 use clap::Parser;
@@ -20,7 +19,7 @@ struct Args {
 fn main() {
     let args = Args::parse();
     let s = fs::read_to_string(&args.file).unwrap();
-    let ast = parse::parse(&s, &args.file);
+    let ast = parser::parse(&s, &args.file);
     let c_src = gen_c::gen_c(ast);
     if args.emit_c {
         println!("{c_src}");
