@@ -1,7 +1,5 @@
 data True 0
 data False 0
-data E 0
-data T 3
 data Pair 2
 
 lt = a: b: match intrinsic_lt a b with
@@ -16,18 +14,36 @@ bool_to_string = a: match a with
         False => "False",
     end
 
-insert = x: t: match t with
-        E => T x E E,
-        T v l r => match Pair (lt x v) (lt v x) with
-                Pair True _ => T v (insert x l) r,
-                Pair _ True => T v l (insert x r),
-                _ => T v l r,
+data E 0
+data T 4
+data R 0
+data B 0
+
+insert = x: t: match insert_rec x t with
+        T c x a b => T B x a b,
+    end
+
+insert_rec = x: t: match t with
+        E => T R x E E,
+        T color y a b => match Pair (lt x y) (lt y x) with
+                Pair True _ => balance (T color y (insert_rec x a) b),
+                Pair _ True => balance (T color y a (insert_rec x b)),
+                _ => T B y a b,
             end,
+    end
+
+balance = t: match t with
+        T B w (T R u (T R v t1 t2) t3) t4
+        | T B w (T R v t1 (T R u t2 t3)) t4
+        | T B v t1 (T R w (T R u t2 t3) t4)
+        | T B v t1 (T R u t2 (T R w t3 t4)) =>
+            T R u (T B v t1 t2) (T B w t3 t4),
+        t => t,
     end
 
 contains = x: t: match t with
         E => False,
-        T v l r => match Pair (lt x v) (lt v x) with
+        T _ v l r => match Pair (lt x v) (lt v x) with
                 Pair True _ => contains x l,
                 Pair _ True => contains x r,
                 _ => True,

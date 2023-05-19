@@ -58,7 +58,7 @@ enum Decl<'a> {
 
 fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, char>>> {
     let ident = ident()
-        .filter(|s| !["match", "with", "end", "let", "in"].contains(s))
+        .filter(|s| !["match", "with", "end", "let", "in", "data"].contains(s))
         .padded();
 
     // This `escape` is a modified version of https://github.com/zesterer/chumsky/blob/7e8d01f647640428871944885a1bb02e8a865895/examples/json.rs#L39

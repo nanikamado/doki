@@ -211,9 +211,17 @@ impl<'a> Env<'a> {
                 self.binds_in_pattern(a, &mut binds_in_a);
                 let mut binds_in_b = FxHashMap::default();
                 self.binds_in_pattern(b, &mut binds_in_b);
-                if binds_in_a != binds_in_b {
-                    panic!("some variable is defied in a branch but not in other branch");
+                for a in binds_in_a.keys() {
+                    if !binds_in_b.contains_key(a) {
+                        panic!("`{a}` is not in some branch");
+                    }
                 }
+                for b in binds_in_b.keys() {
+                    if !binds_in_a.contains_key(b) {
+                        panic!("`{b}` is not in some branch");
+                    }
+                }
+                shadowed_variables.extend(binds_in_a);
             }
         }
     }
