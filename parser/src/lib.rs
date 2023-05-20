@@ -1,7 +1,7 @@
 use ariadne::{sources, Color, Label, Report, ReportKind};
 use chumsky::prelude::*;
 use chumsky::text::{ident, int, keyword};
-use std::process::exit;
+use std::io::Write;
 
 #[derive(Clone, Debug)]
 pub struct Ast<'a> {
@@ -211,7 +211,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
     variable_decl.or(data_decl).repeated().at_least(1).collect()
 }
 
-pub fn parse<'a>(src: &'a str, file_name: &str) -> Ast<'a> {
+pub fn parse(src: &str) -> Result<Ast<'_>, ParseError<'_>> {
     let mut data_decls = Vec::new();
     let mut variable_decls = Vec::new();
     match parser().parse(src).into_result() {
@@ -222,26 +222,12 @@ pub fn parse<'a>(src: &'a str, file_name: &str) -> Ast<'a> {
                     Decl::Variable(d) => variable_decls.push(d),
                 }
             }
-            Ast {
+            Ok(Ast {
                 data_decls,
                 variable_decls,
-            }
+            })
         }
-        Err(es) => {
-            es.into_iter().for_each(|e| {
-                Report::build(ReportKind::Error, file_name, e.span().start)
-                    .with_message(e.to_string())
-                    .with_label(
-                        Label::new((file_name.to_string(), e.span().into_range()))
-                            .with_message(e.reason().to_string())
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .print(sources([(file_name.to_string(), src)]))
-                    .unwrap()
-            });
-            exit(1)
-        }
+        Err(es) => Err(ParseError { es }),
     }
 }
 
@@ -261,5 +247,26 @@ impl Span {
 
     pub fn contains(self, i: usize) -> bool {
         self.start <= i && i < self.end
+    }
+}
+
+pub struct ParseError<'a> {
+    es: Vec<Rich<'a, char>>,
+}
+
+impl<'a> ParseError<'a> {
+    pub fn write(&self, mut w: impl Write, file_name: &str, src: &str) -> std::io::Result<()> {
+        for e in &self.es {
+            Report::build(ReportKind::Error, file_name, e.span().start)
+                .with_message(e.to_string())
+                .with_label(
+                    Label::new((file_name.to_string(), e.span().into_range()))
+                        .with_message(e.reason().to_string())
+                        .with_color(Color::Red),
+                )
+                .finish()
+                .write(sources([(file_name.to_string(), src)]), &mut w)?
+        }
+        Ok(())
     }
 }

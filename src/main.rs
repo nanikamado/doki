@@ -1,9 +1,9 @@
 mod run_c;
 
 use clap::Parser;
-use compiler::compile;
+use compiler::gen_c;
 use std::fs;
-use std::io::stdout;
+use std::io::{stderr, stdout};
 use std::process::exit;
 
 #[derive(Parser, Debug)]
@@ -29,13 +29,21 @@ fn main() {
         panic!();
     } else {
         let file_name = args.file.unwrap();
-        let s = fs::read_to_string(&file_name).unwrap();
-        if args.emit_c {
-            compile(&s, &file_name, &mut stdout());
-        } else if let Ok(exit_status) = run_c::run(|w| compile(&s, &file_name, w)) {
-            exit(exit_status.code().unwrap());
-        } else {
-            exit(1);
+        let src = fs::read_to_string(&file_name).unwrap();
+        match compiler::parse(&src) {
+            Ok(ast) => {
+                if args.emit_c {
+                    gen_c(ast, &mut stdout());
+                } else if let Ok(exit_status) = run_c::run(|w| gen_c(ast, w)) {
+                    exit(exit_status.code().unwrap());
+                } else {
+                    exit(1);
+                }
+            }
+            Err(e) => {
+                e.write(stderr(), &file_name, &src).unwrap();
+                exit(1);
+            }
         }
     }
 }

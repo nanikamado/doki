@@ -181,7 +181,7 @@ pub async fn run() {
 
 fn make_hover_map(src: &str) -> Option<HoverMap> {
     let (char_to_utf16_map, utf16_to_char_map) = make_map(src);
-    let mut span_map = compiler::token_map(src, "filename")?;
+    let mut span_map = compiler::token_map(src).ok()?;
     let mut working_span_list: Vec<(Span, _)> = Vec::new();
     let mut cache: Option<Arc<Hover>> = None;
     let utf16_to_token_map = utf16_to_char_map
