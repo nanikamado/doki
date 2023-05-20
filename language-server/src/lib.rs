@@ -1,5 +1,5 @@
+use compiler::Span;
 use dashmap::DashMap;
-use itertools::Itertools;
 use std::fs;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -213,10 +213,8 @@ pub async fn run() {
 
 fn semantic_token_and_hover_map(src: &str) -> Option<HoverMap> {
     let (char_to_utf16_map, utf16_to_char_map) = make_map(src);
-    let mut ts_tail = compiler::token_map(src, "filename")?
-        .into_iter()
-        .sorted_by_key(|(s, _)| s.start);
-    let mut ts_head = ts_tail.next().unwrap();
+    let mut span_map = compiler::token_map(src, "filename")?;
+    let mut working_span_list: Vec<(Span, _)> = Vec::new();
     let utf16_to_token_map = utf16_to_char_map
         .into_iter()
         .map(|utf16_to_char_line| {
@@ -224,23 +222,31 @@ fn semantic_token_and_hover_map(src: &str) -> Option<HoverMap> {
                 .into_iter()
                 .map(|char| {
                     char.and_then(|char| {
-                        while ts_head.0.end <= char {
-                            ts_head = ts_tail.next()?;
+                        working_span_list.retain(|(s, _)| s.contains(char));
+                        while let Some(e) = span_map.first_entry() {
+                            if e.key().contains(char) {
+                                working_span_list.push(e.remove_entry());
+                            } else {
+                                break;
+                            }
                         }
-                        if ts_head.0.contains(char) {
+                        if let Some((span, l)) = working_span_list
+                            .iter()
+                            .min_by_key(|(s, _)| s.end - s.start)
+                        {
                             Some(Hover {
                                 contents: HoverContents::Markup(MarkupContent {
-                                    value: format!("```\n{}\n```", ts_head.1),
+                                    value: format!("```\n{}\n```", l),
                                     kind: MarkupKind::Markdown,
                                 }),
                                 range: Some(Range {
                                     start: Position {
-                                        line: char_to_utf16_map[ts_head.0.start].0,
-                                        character: char_to_utf16_map[ts_head.0.start].1,
+                                        line: char_to_utf16_map[span.start].0,
+                                        character: char_to_utf16_map[span.start].1,
                                     },
                                     end: Position {
-                                        line: char_to_utf16_map[ts_head.0.end].0,
-                                        character: char_to_utf16_map[ts_head.0.end].1,
+                                        line: char_to_utf16_map[span.end].0,
+                                        character: char_to_utf16_map[span.end].1,
                                     },
                                 }),
                             })

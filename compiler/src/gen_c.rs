@@ -1,8 +1,9 @@
 use crate::intrinsics::IntrinsicVariableExt;
 use doki_ir::intrinsics::IntoEnumIterator;
 use doki_ir::{Block, GlobalVariable, LocalVariable};
-use parser::{Ast, Expr, Pattern, Span};
+use parser::{Ast, Expr, ExprWithSpan, Pattern, Span};
 use rustc_hash::FxHashMap;
+use std::collections::BTreeMap;
 use std::io::Write;
 
 #[derive(Debug, Default)]
@@ -11,7 +12,7 @@ struct Env<'a> {
     global_variable_map: FxHashMap<&'a str, GlobalVariable>,
     data_decl_map: FxHashMap<&'a str, doki_ir::ConstructorId>,
     build_env: doki_ir::Env,
-    span_to_local_variable: FxHashMap<Span, LocalVariable>,
+    span_map: BTreeMap<Span, LocalVariable>,
 }
 
 fn build(ast: Ast) -> Env {
@@ -91,19 +92,20 @@ pub fn gen_c(ast: Ast, w: &mut impl Write) {
     env.build_env.gen_c(entry_point, w)
 }
 
-pub fn token_map(ast: Ast) -> FxHashMap<Span, LocalVariable> {
+pub fn token_map(ast: Ast) -> BTreeMap<Span, LocalVariable> {
     let env = build(ast);
-    env.span_to_local_variable
+    env.span_map
 }
 
 impl<'a> Env<'a> {
-    fn expr(&mut self, e: Expr<'a>, ret: LocalVariable, block: &mut Block) {
+    fn expr(&mut self, (e, span): ExprWithSpan<'a>, ret: LocalVariable, block: &mut Block) {
+        self.span_map.insert(span, ret);
         match e {
             Expr::Ident(s) => {
-                if let Some(v) = self.global_variable_map.get(s) {
-                    self.build_env.global_variable(ret, *v, block);
-                } else if let Some(v) = self.local_variable_map.get(s) {
+                if let Some(v) = self.local_variable_map.get(s) {
                     self.build_env.local_variable(ret, *v, block);
+                } else if let Some(v) = self.global_variable_map.get(s) {
+                    self.build_env.global_variable(ret, *v, block);
                 } else {
                     panic!("variable `{s}` not found in this scope")
                 }
@@ -158,7 +160,7 @@ impl<'a> Env<'a> {
         ret: LocalVariable,
         mut p: Pattern<'a>,
         v: LocalVariable,
-        e: Expr<'a>,
+        e: ExprWithSpan<'a>,
         block: &mut Block,
     ) {
         self.find_field_less_constructor(&mut p);
@@ -211,7 +213,7 @@ impl<'a> Env<'a> {
                     self.local_variable_map.insert(name, l);
                     l
                 };
-                self.span_to_local_variable.insert(*span, l);
+                self.span_map.insert(*span, l);
             }
             Pattern::Wildcard | Pattern::Num(_) | Pattern::Str(_) => (),
             Pattern::Constructor {

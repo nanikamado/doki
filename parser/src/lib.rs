@@ -18,24 +18,26 @@ pub struct DataDecl<'a> {
 #[derive(Clone, Debug)]
 pub struct VariableDecl<'a> {
     pub name: &'a str,
-    pub expr: Expr<'a>,
+    pub expr: ExprWithSpan<'a>,
 }
+
+pub type ExprWithSpan<'a> = (Expr<'a>, Span);
 
 #[derive(Clone, Debug)]
 pub enum Expr<'a> {
     Ident(&'a str),
     Lambda {
         param: Pattern<'a>,
-        expr: Box<Expr<'a>>,
+        expr: Box<ExprWithSpan<'a>>,
     },
-    Call(Box<Expr<'a>>, Box<Expr<'a>>),
+    Call(Box<ExprWithSpan<'a>>, Box<ExprWithSpan<'a>>),
     Num(&'a str),
     Str(String),
     Match {
-        operand: Box<Expr<'a>>,
-        branches: Vec<(Pattern<'a>, Expr<'a>)>,
+        operand: Box<ExprWithSpan<'a>>,
+        branches: Vec<(Pattern<'a>, ExprWithSpan<'a>)>,
     },
-    Let(Pattern<'a>, Box<Expr<'a>>, Box<Expr<'a>>),
+    Let(Pattern<'a>, Box<ExprWithSpan<'a>>, Box<ExprWithSpan<'a>>),
 }
 
 #[derive(Clone, Debug)]
@@ -107,33 +109,32 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
                 fields: Vec::new(),
                 span: Span::from(span),
             }),
-        ))
-        .padded_by(whitespace);
+        ));
         let p = ident
-            .then(p.clone().repeated().collect())
+            .then(whitespace.ignore_then(p.clone()).repeated().collect())
             .map_with_span(|(name, fields), span| Pattern::Constructor {
                 name,
                 fields,
                 span: Span::from(span),
             })
-            .padded_by(whitespace)
             .or(p);
-        p.clone()
-            .foldl(just('|').ignore_then(p).repeated(), |a, b| {
-                Pattern::Or(Box::new(a), Box::new(b))
-            })
+        p.clone().foldl(
+            just('|').padded_by(whitespace).ignore_then(p).repeated(),
+            |a, b| Pattern::Or(Box::new(a), Box::new(b)),
+        )
     });
     let expr = recursive(|expr| {
         let branches = pattern
             .clone()
-            .then_ignore(just("=>"))
+            .then_ignore(just("=>").padded_by(whitespace))
             .then(expr.clone())
-            .separated_by(just(','))
-            .allow_trailing()
+            .separated_by(just(',').padded_by(whitespace))
             .collect::<Vec<_>>()
+            .then_ignore(just(',').or_not())
             .padded_by(whitespace);
         let match_expr = expr
             .clone()
+            .padded_by(whitespace)
             .delimited_by(keyword("match"), keyword("with"))
             .then(branches)
             .then_ignore(keyword("end"))
@@ -142,14 +143,16 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
                 branches,
             });
         let let_expr = keyword("let")
-            .ignore_then(pattern.clone())
-            .then_ignore(just("="))
+            .ignore_then(pattern.clone().padded_by(whitespace))
+            .then_ignore(just("=").padded_by(whitespace))
             .then(expr.clone())
-            .then_ignore(keyword("in"))
+            .then_ignore(keyword("in").padded_by(whitespace))
             .then(expr.clone())
             .map(|((v, e1), e2)| Let(v, Box::new(e1), Box::new(e2)));
         let e = choice((
-            expr.delimited_by(just('('), just(')')),
+            expr.padded_by(whitespace)
+                .delimited_by(just('('), just(')'))
+                .map(|(e, _)| e),
             match_expr,
             let_expr,
             int(10).map(Num),
@@ -162,22 +165,38 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
                 )
                 .map(Ident),
         ))
-        .padded_by(whitespace);
+        .map_with_span(|e, s| (e, Span::from(s)));
         let e = e
             .clone()
-            .foldl(e.repeated(), |a, b| Call(Box::new(a), Box::new(b)));
+            .foldl(whitespace.ignore_then(e).repeated(), |a, b| {
+                let span = Span {
+                    start: a.1.start,
+                    end: b.1.end,
+                };
+                (Call(Box::new(a), Box::new(b)), span)
+            });
         pattern
-            .then_ignore(just(":"))
+            .map_with_span(|p, s: SimpleSpan| (p, s))
+            .then_ignore(just(":").padded_by(whitespace))
             .repeated()
-            .foldr(e, |param, acc| Lambda {
-                param,
-                expr: Box::new(acc),
+            .foldr(e, |(param, span), acc| {
+                let span = Span {
+                    start: span.start,
+                    end: acc.1.end,
+                };
+                (
+                    Lambda {
+                        param,
+                        expr: Box::new(acc),
+                    },
+                    span,
+                )
             })
     });
     let variable_decl = ident
-        .padded_by(whitespace)
-        .then_ignore(just("="))
+        .then_ignore(just("=").padded_by(whitespace))
         .then(expr)
+        .padded_by(whitespace)
         .map(|(i, e)| Decl::Variable(VariableDecl { name: i, expr: e }));
     let data_decl = keyword("data")
         .ignore_then(ident.padded_by(whitespace))
