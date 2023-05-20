@@ -25,7 +25,7 @@ pub struct VariableDecl<'a> {
 pub enum Expr<'a> {
     Ident(&'a str),
     Lambda {
-        param: Pattern<'a>,
+        param: PatternWithSpan<'a>,
         expr: Box<Expr<'a>>,
     },
     Call(Box<Expr<'a>>, Box<Expr<'a>>),
@@ -33,10 +33,12 @@ pub enum Expr<'a> {
     Str(String),
     Match {
         operand: Box<Expr<'a>>,
-        branches: Vec<(Pattern<'a>, Expr<'a>)>,
+        branches: Vec<(PatternWithSpan<'a>, Expr<'a>)>,
     },
-    Let(Pattern<'a>, Box<Expr<'a>>, Box<Expr<'a>>),
+    Let(PatternWithSpan<'a>, Box<Expr<'a>>, Box<Expr<'a>>),
 }
+
+pub type PatternWithSpan<'a> = (Pattern<'a>, Span);
 
 #[derive(Clone, Debug)]
 pub enum Pattern<'a> {
@@ -44,9 +46,9 @@ pub enum Pattern<'a> {
     Wildcard,
     Constructor {
         name: &'a str,
-        fields: Vec<Pattern<'a>>,
+        fields: Vec<PatternWithSpan<'a>>,
     },
-    Or(Box<Pattern<'a>>, Box<Pattern<'a>>),
+    Or(Box<PatternWithSpan<'a>>, Box<PatternWithSpan<'a>>),
     Str(String),
     Num(&'a str),
 }
@@ -99,7 +101,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
     use Expr::*;
     let pattern = recursive(|pattern| {
         let p = choice((
-            pattern.delimited_by(just('('), just(')')),
+            pattern.delimited_by(just('('), just(')')).map(|(p, _)| p),
             just("_").to(Pattern::Wildcard),
             int(10).map(Pattern::Num),
             string.map(Pattern::Str),
@@ -108,14 +110,21 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
                 fields: Vec::new(),
             }),
         ))
-        .padded_by(whitespace);
+        .padded_by(whitespace)
+        .map_with_span(|p, s| (p, Span::from(s)));
         let p = ident
             .then(p.clone().repeated().collect())
-            .map(|(name, fields)| Pattern::Constructor { name, fields })
+            .map_with_span(|(name, fields), s| {
+                (Pattern::Constructor { name, fields }, Span::from(s))
+            })
             .or(p);
         p.clone()
             .foldl(just('|').ignore_then(p).repeated(), |a, b| {
-                Pattern::Or(Box::new(a), Box::new(b))
+                let span = Span {
+                    start: a.1.start,
+                    end: b.1.end,
+                };
+                (Pattern::Or(Box::new(a), Box::new(b)), span)
             })
     });
     let expr = recursive(|expr| {
@@ -213,6 +222,21 @@ pub fn parse<'a>(src: &'a str, file_name: &str) -> Ast<'a> {
                     .unwrap()
             });
             exit(1)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Span {
+    start: usize,
+    end: usize,
+}
+
+impl Span {
+    fn from(span: SimpleSpan) -> Self {
+        Self {
+            start: span.start,
+            end: span.end,
         }
     }
 }

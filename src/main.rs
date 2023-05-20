@@ -1,8 +1,7 @@
-mod gen_c;
-mod intrinsics;
 mod run_c;
 
 use clap::Parser;
+use compiler::compile;
 use std::fs;
 use std::io::stdout;
 use std::process::exit;
@@ -20,10 +19,9 @@ struct Args {
 fn main() {
     let args = Args::parse();
     let s = fs::read_to_string(&args.file).unwrap();
-    let ast = parser::parse(&s, &args.file);
     if args.emit_c {
-        gen_c::gen_c(ast, &mut stdout());
-    } else if let Ok(exit_status) = run_c::run(|w| gen_c::gen_c(ast, w)) {
+        compile(&s, &args.file, &mut stdout());
+    } else if let Ok(exit_status) = run_c::run(|w| compile(&s, &args.file, w)) {
         exit(exit_status.code().unwrap());
     } else {
         exit(1);

@@ -1,7 +1,7 @@
 use crate::intrinsics::IntrinsicVariableExt;
 use doki_ir::intrinsics::IntoEnumIterator;
 use doki_ir::{Block, GlobalVariable, LocalVariable};
-use parser::{Ast, Expr, Pattern};
+use parser::{Ast, Expr, Pattern, PatternWithSpan, Span};
 use rustc_hash::FxHashMap;
 use std::io::Write;
 
@@ -11,9 +11,10 @@ struct Env<'a> {
     global_variable_map: FxHashMap<&'a str, GlobalVariable>,
     data_decl_map: FxHashMap<&'a str, doki_ir::ConstructorId>,
     build_env: doki_ir::Env,
+    span_to_local_variable: FxHashMap<Span, LocalVariable>,
 }
 
-pub fn gen_c(ast: Ast, w: &mut impl Write) {
+fn build(ast: Ast) -> Env {
     let mut env = Env::default();
     for d in ast.data_decls {
         let constructor_id = env
@@ -81,8 +82,18 @@ pub fn gen_c(ast: Ast, w: &mut impl Write) {
         };
         env.build_env.set_global_variable(d);
     }
+    env
+}
+
+pub fn gen_c(ast: Ast, w: &mut impl Write) {
+    let env = build(ast);
     let entry_point = env.global_variable_map["main"];
     env.build_env.gen_c(entry_point, w)
+}
+
+pub fn token_map(ast: Ast) -> FxHashMap<Span, LocalVariable> {
+    let env = build(ast);
+    env.span_to_local_variable
 }
 
 impl<'a> Env<'a> {
@@ -145,14 +156,16 @@ impl<'a> Env<'a> {
     fn let_in(
         &mut self,
         ret: LocalVariable,
-        mut p: Pattern<'a>,
+        (mut p, span): PatternWithSpan<'a>,
         v: LocalVariable,
         e: Expr<'a>,
         block: &mut Block,
     ) {
         self.find_field_less_constructor(&mut p);
         let mut shadowed_variables = FxHashMap::default();
+        let p = (p, span);
         self.binds_in_pattern(&p, &mut shadowed_variables);
+        let (p, _span) = p;
         self.pattern(&p, v, block);
         self.expr(e, ret, block);
         for (name, v) in shadowed_variables {
@@ -167,7 +180,7 @@ impl<'a> Env<'a> {
             Pattern::Wildcard | Pattern::Str(_) | Pattern::Num(_) => (),
             Pattern::Constructor { name, fields } => {
                 if self.data_decl_map.contains_key(name) {
-                    for f in fields {
+                    for (f, _) in fields {
                         self.find_field_less_constructor(f);
                     }
                 } else {
@@ -178,8 +191,8 @@ impl<'a> Env<'a> {
                 }
             }
             Pattern::Or(a, b) => {
-                self.find_field_less_constructor(a);
-                self.find_field_less_constructor(b);
+                self.find_field_less_constructor(&mut a.0);
+                self.find_field_less_constructor(&mut b.0);
             }
             Pattern::Bind(_) => panic!(),
         }
@@ -187,16 +200,20 @@ impl<'a> Env<'a> {
 
     fn binds_in_pattern(
         &mut self,
-        p: &Pattern<'a>,
+        (p, span): &PatternWithSpan<'a>,
         shadowed_variables: &mut FxHashMap<&'a str, Option<LocalVariable>>,
     ) {
         match p {
             Pattern::Bind(name) => {
-                if !shadowed_variables.contains_key(name) {
+                let l = if shadowed_variables.contains_key(name) {
+                    self.local_variable_map[name]
+                } else {
                     shadowed_variables.insert(name, self.local_variable_map.get(name).copied());
                     let l = self.build_env.new_local_variable();
                     self.local_variable_map.insert(name, l);
-                }
+                    l
+                };
+                self.span_to_local_variable.insert(*span, l);
             }
             Pattern::Wildcard | Pattern::Num(_) | Pattern::Str(_) => (),
             Pattern::Constructor { name: _, fields } => {
@@ -247,7 +264,7 @@ impl<'a> Env<'a> {
             Pattern::Constructor { name, fields } => {
                 let d = self.data_decl_map[name];
                 block.test_constructor(operand, doki_ir::TypeId::UserDefined(d));
-                for (i, f) in fields.iter().enumerate() {
+                for (i, (f, _)) in fields.iter().enumerate() {
                     let ret = self.build_env.new_local_variable();
                     self.build_env.field_access(ret, operand, d, i, block);
                     self.pattern(f, ret, block);
@@ -255,9 +272,9 @@ impl<'a> Env<'a> {
             }
             Pattern::Or(a, b) => {
                 let mut a_block = Block::default();
-                self.pattern(a, operand, &mut a_block);
+                self.pattern(&a.0, operand, &mut a_block);
                 let mut b_block = Block::default();
-                self.pattern(b, operand, &mut b_block);
+                self.pattern(&b.0, operand, &mut b_block);
                 block.append(a_block.try_catch(b_block));
             }
             Pattern::Num(a) => {
