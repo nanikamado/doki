@@ -25,20 +25,6 @@ struct Backend {
     tokens: DashMap<Url, TokenCache>,
 }
 
-const SUPPORTED_TYPES: &[SemanticTokenType] = &[
-    SemanticTokenType::STRING,
-    SemanticTokenType::NUMBER,
-    SemanticTokenType::TYPE,
-    SemanticTokenType::new("constructor"),
-    SemanticTokenType::INTERFACE,
-    SemanticTokenType::FUNCTION,
-    SemanticTokenType::VARIABLE,
-    SemanticTokenType::KEYWORD,
-    SemanticTokenType::COMMENT,
-    SemanticTokenType::OPERATOR,
-    SemanticTokenType::new("constructorOperator"),
-];
-
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
@@ -51,18 +37,6 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::INCREMENTAL,
                 )),
-                semantic_tokens_provider: Some(
-                    SemanticTokensOptions {
-                        legend: SemanticTokensLegend {
-                            token_types: SUPPORTED_TYPES.to_vec(),
-                            token_modifiers: Vec::new(),
-                        },
-                        full: Some(SemanticTokensFullOptions::Bool(true)),
-                        range: None,
-                        ..Default::default()
-                    }
-                    .into(),
-                ),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
@@ -144,16 +118,6 @@ impl LanguageServer for Backend {
             .await;
     }
 
-    async fn semantic_tokens_full(
-        &self,
-        _params: SemanticTokensParams,
-    ) -> tower_lsp::jsonrpc::Result<Option<SemanticTokensResult>> {
-        self.client
-            .log_message(MessageType::INFO, "semantic tokens requested.")
-            .await;
-        Ok(None)
-    }
-
     async fn hover(&self, params: HoverParams) -> tower_lsp::jsonrpc::Result<Option<Hover>> {
         let position = params.text_document_position_params.position;
         let url = params.text_document_position_params.text_document.uri;
@@ -176,7 +140,7 @@ impl Backend {
             .await;
         if let Some(src) = text.or_else(|| fs::read_to_string(uri.path()).ok()) {
             if let Ok(Some(hover_map)) =
-                tokio::task::spawn_blocking(move || semantic_token_and_hover_map(&src)).await
+                tokio::task::spawn_blocking(move || make_hover_map(&src)).await
             {
                 self.tokens.insert(
                     uri,
@@ -211,7 +175,7 @@ pub async fn run() {
     Server::new(stdin, stdout, socket).serve(service).await;
 }
 
-fn semantic_token_and_hover_map(src: &str) -> Option<HoverMap> {
+fn make_hover_map(src: &str) -> Option<HoverMap> {
     let (char_to_utf16_map, utf16_to_char_map) = make_map(src);
     let mut span_map = compiler::token_map(src, "filename")?;
     let mut working_span_list: Vec<(Span, _)> = Vec::new();
