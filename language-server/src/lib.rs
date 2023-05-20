@@ -1,11 +1,12 @@
 use compiler::Span;
 use dashmap::DashMap;
 use std::fs;
+use std::sync::Arc;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-type HoverMap = Vec<Vec<Option<Hover>>>;
+type HoverMap = Vec<Vec<Option<Arc<Hover>>>>;
 
 #[derive(Debug, PartialEq, Eq)]
 struct TokenCache {
@@ -126,7 +127,10 @@ impl LanguageServer for Backend {
                 .value()
                 .hover_map
                 .get(position.line as usize)
-                .and_then(|t| t.get(position.character as usize).cloned()?))
+                .and_then(|t| {
+                    let rc = t.get(position.character as usize)?.as_ref()?;
+                    Some((**rc).clone())
+                }))
         } else {
             Ok(None)
         }
@@ -179,6 +183,7 @@ fn make_hover_map(src: &str) -> Option<HoverMap> {
     let (char_to_utf16_map, utf16_to_char_map) = make_map(src);
     let mut span_map = compiler::token_map(src, "filename")?;
     let mut working_span_list: Vec<(Span, _)> = Vec::new();
+    let mut cache: Option<Arc<Hover>> = None;
     let utf16_to_token_map = utf16_to_char_map
         .into_iter()
         .map(|utf16_to_char_line| {
@@ -186,19 +191,26 @@ fn make_hover_map(src: &str) -> Option<HoverMap> {
                 .into_iter()
                 .map(|char| {
                     char.and_then(|char| {
+                        let working_span_list_len = working_span_list.len();
                         working_span_list.retain(|(s, _)| s.contains(char));
+                        if working_span_list.len() != working_span_list_len {
+                            cache = None;
+                        }
                         while let Some(e) = span_map.first_entry() {
                             if e.key().contains(char) {
                                 working_span_list.push(e.remove_entry());
+                                cache = None;
                             } else {
                                 break;
                             }
                         }
-                        if let Some((span, l)) = working_span_list
+                        if let Some(a) = &cache {
+                            Some(a.clone())
+                        } else if let Some((span, l)) = working_span_list
                             .iter()
                             .min_by_key(|(s, _)| s.end - s.start)
                         {
-                            Some(Hover {
+                            let a = Arc::new(Hover {
                                 contents: HoverContents::Markup(MarkupContent {
                                     value: format!("```\n{}\n```", l),
                                     kind: MarkupKind::Markdown,
@@ -213,7 +225,9 @@ fn make_hover_map(src: &str) -> Option<HoverMap> {
                                         character: char_to_utf16_map[span.end].1,
                                     },
                                 }),
-                            })
+                            });
+                            cache = Some(a.clone());
+                            Some(a)
                         } else {
                             None
                         }
