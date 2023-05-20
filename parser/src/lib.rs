@@ -25,7 +25,7 @@ pub struct VariableDecl<'a> {
 pub enum Expr<'a> {
     Ident(&'a str),
     Lambda {
-        param: PatternWithSpan<'a>,
+        param: Pattern<'a>,
         expr: Box<Expr<'a>>,
     },
     Call(Box<Expr<'a>>, Box<Expr<'a>>),
@@ -33,22 +33,21 @@ pub enum Expr<'a> {
     Str(String),
     Match {
         operand: Box<Expr<'a>>,
-        branches: Vec<(PatternWithSpan<'a>, Expr<'a>)>,
+        branches: Vec<(Pattern<'a>, Expr<'a>)>,
     },
-    Let(PatternWithSpan<'a>, Box<Expr<'a>>, Box<Expr<'a>>),
+    Let(Pattern<'a>, Box<Expr<'a>>, Box<Expr<'a>>),
 }
-
-pub type PatternWithSpan<'a> = (Pattern<'a>, Span);
 
 #[derive(Clone, Debug)]
 pub enum Pattern<'a> {
-    Bind(&'a str),
+    Bind(&'a str, Span),
     Wildcard,
     Constructor {
         name: &'a str,
-        fields: Vec<PatternWithSpan<'a>>,
+        span: Span,
+        fields: Vec<Pattern<'a>>,
     },
-    Or(Box<PatternWithSpan<'a>>, Box<PatternWithSpan<'a>>),
+    Or(Box<Pattern<'a>>, Box<Pattern<'a>>),
     Str(String),
     Num(&'a str),
 }
@@ -67,9 +66,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
         .ignored()
         .or(comment)
         .repeated();
-    let ident = ident()
-        .filter(|s| !["match", "with", "end", "let", "in", "data"].contains(s))
-        .padded_by(whitespace);
+    let ident = ident().filter(|s| !["match", "with", "end", "let", "in", "data"].contains(s));
 
     // This `escape` is a modified version of https://github.com/zesterer/chumsky/blob/7e8d01f647640428871944885a1bb02e8a865895/examples/json.rs#L39
     // MIT License: https://github.com/zesterer/chumsky/blob/7e8d01f647640428871944885a1bb02e8a865895/LICENSE
@@ -101,30 +98,29 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
     use Expr::*;
     let pattern = recursive(|pattern| {
         let p = choice((
-            pattern.delimited_by(just('('), just(')')).map(|(p, _)| p),
+            pattern.delimited_by(just('('), just(')')),
             just("_").to(Pattern::Wildcard),
             int(10).map(Pattern::Num),
             string.map(Pattern::Str),
-            ident.map(|name| Pattern::Constructor {
+            ident.map_with_span(|name, span| Pattern::Constructor {
                 name,
                 fields: Vec::new(),
+                span: Span::from(span),
             }),
         ))
-        .padded_by(whitespace)
-        .map_with_span(|p, s| (p, Span::from(s)));
+        .padded_by(whitespace);
         let p = ident
             .then(p.clone().repeated().collect())
-            .map_with_span(|(name, fields), s| {
-                (Pattern::Constructor { name, fields }, Span::from(s))
+            .map_with_span(|(name, fields), span| Pattern::Constructor {
+                name,
+                fields,
+                span: Span::from(span),
             })
+            .padded_by(whitespace)
             .or(p);
         p.clone()
             .foldl(just('|').ignore_then(p).repeated(), |a, b| {
-                let span = Span {
-                    start: a.1.start,
-                    end: b.1.end,
-                };
-                (Pattern::Or(Box::new(a), Box::new(b)), span)
+                Pattern::Or(Box::new(a), Box::new(b))
             })
     });
     let expr = recursive(|expr| {
@@ -159,7 +155,11 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
             int(10).map(Num),
             string.map(Str),
             ident
-                .then_ignore(none_of("=").ignored().or(end().ignored()).rewind())
+                .then_ignore(
+                    whitespace
+                        .then_ignore(none_of("=").ignored().or(end()))
+                        .rewind(),
+                )
                 .map(Ident),
         ))
         .padded_by(whitespace);
@@ -175,12 +175,12 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
             })
     });
     let variable_decl = ident
+        .padded_by(whitespace)
         .then_ignore(just("="))
         .then(expr)
         .map(|(i, e)| Decl::Variable(VariableDecl { name: i, expr: e }));
     let data_decl = keyword("data")
-        .then(whitespace)
-        .ignore_then(ident)
+        .ignore_then(ident.padded_by(whitespace))
         .then(int(10))
         .padded_by(whitespace)
         .map(|(name, len): (&str, &str)| {
@@ -228,8 +228,8 @@ pub fn parse<'a>(src: &'a str, file_name: &str) -> Ast<'a> {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Span {
-    start: usize,
-    end: usize,
+    pub start: usize,
+    pub end: usize,
 }
 
 impl Span {
@@ -238,5 +238,9 @@ impl Span {
             start: span.start,
             end: span.end,
         }
+    }
+
+    pub fn contains(self, i: usize) -> bool {
+        self.start <= i && i < self.end
     }
 }
