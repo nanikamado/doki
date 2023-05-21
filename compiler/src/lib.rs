@@ -1,6 +1,6 @@
 use doki_ir::ConstructorNames;
 pub use doki_ir::DisplayTypeWithEnv;
-pub use gen_c::gen_c;
+pub use gen_c::{gen_c, SpanMapEntry};
 pub use parser::{parse, ParseError, Span};
 use std::collections::BTreeMap;
 
@@ -8,7 +8,7 @@ mod gen_c;
 mod intrinsics;
 
 pub struct AnalyzedSrc {
-    pub token_map: BTreeMap<Span, Vec<doki_ir::Type>>,
+    pub span_map: BTreeMap<Span, SpanMapEntry>,
     pub constructor_names: ConstructorNames,
 }
 

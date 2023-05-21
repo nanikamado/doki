@@ -11,7 +11,7 @@ pub struct Id<T> {
 pub struct IdGenerator<T, U>(FxHashMap<T, Id<U>>);
 
 impl<T: std::hash::Hash + Eq, U: Copy> IdGenerator<T, U> {
-    pub fn get(&mut self, value: T) -> Id<U> {
+    pub fn get_or_insert(&mut self, value: T) -> Id<U> {
         use std::collections::hash_map::Entry::*;
         let len = self.0.len();
         match self.0.entry(value) {
@@ -21,6 +21,10 @@ impl<T: std::hash::Hash + Eq, U: Copy> IdGenerator<T, U> {
                 phantom: PhantomData,
             }),
         }
+    }
+
+    pub fn get(&self, value: &T) -> Option<Id<U>> {
+        self.0.get(value).copied()
     }
 }
 

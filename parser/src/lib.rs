@@ -18,6 +18,7 @@ pub struct DataDecl<'a> {
 #[derive(Clone, Debug)]
 pub struct VariableDecl<'a> {
     pub name: &'a str,
+    pub ident_span: Span,
     pub expr: ExprWithSpan<'a>,
 }
 
@@ -194,10 +195,17 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
             })
     });
     let variable_decl = ident
+        .map_with_span(|i, s| (i, s))
         .then_ignore(just("=").padded_by(whitespace))
         .then(expr)
         .padded_by(whitespace)
-        .map(|(i, e)| Decl::Variable(VariableDecl { name: i, expr: e }));
+        .map(|((i, span), e)| {
+            Decl::Variable(VariableDecl {
+                name: i,
+                ident_span: Span::from(span),
+                expr: e,
+            })
+        });
     let data_decl = keyword("data")
         .ignore_then(ident.padded_by(whitespace))
         .then(int(10))

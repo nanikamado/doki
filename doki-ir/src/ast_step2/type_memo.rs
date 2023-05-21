@@ -261,7 +261,7 @@ fn remove_pointer_from_type_unit(
                         let t = remove_pointer_from_type_inner_for_hash(t);
                         debug_assert!(!t.contains_broken_link(0));
                         if let TypeInnerOf::Type(t) = t {
-                            type_id_generator.get(t)
+                            type_id_generator.get_or_insert(t)
                         } else {
                             panic!()
                         }
@@ -780,7 +780,7 @@ impl<R: TypeFamily> fmt::Debug for TypeUnitOf<R> {
                     "({a:?}) -{}{}{}-> {b:?}",
                     if id_paren { "(" } else { "" },
                     id.iter()
-                        .format_with(" | ", |a, f| f(&format_args!("{:?}", a))),
+                        .format_with(" | ", |a, f| f(&format_args!("{}", a))),
                     if id_paren { ")" } else { "" },
                 )
             }

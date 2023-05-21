@@ -42,7 +42,9 @@ pub struct VariableDecl {
     pub value: Block,
     pub ret: VariableId,
     pub decl_id: GlobalVariableId,
+    pub original_decl_id: GlobalVariable,
     pub t: Type,
+    pub t_for_hash: TypeForHash,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -233,7 +235,7 @@ impl Env {
     ) -> GlobalVariableId {
         let p = self.map.clone_pointer(p, replace_map);
         let t_for_hash = self.get_type_for_hash(p);
-        let t_id = self.type_id_generator.get(t_for_hash);
+        let t_id = self.type_id_generator.get_or_insert(t_for_hash.clone());
         let t = self.get_type(p);
         let root = (t_id, decl_id);
         if let Some(d) = self.monomorphized_variable_map.get(&root) {
@@ -247,6 +249,7 @@ impl Env {
             let d = VariableDecl {
                 value: b,
                 decl_id: new_decl_id,
+                original_decl_id: decl_id,
                 ret: self.get_defined_variable_id(
                     ast_step1::VariableId::Local(d.ret),
                     root,
@@ -254,6 +257,7 @@ impl Env {
                 ),
                 name: d.name,
                 t,
+                t_for_hash,
             };
             self.monomorphized_variables.push(d);
             new_decl_id

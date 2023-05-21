@@ -18,3 +18,6 @@ language-server = { path = "language-server", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2.0.4"
+
+[features]
+display-fn-id = [ "compiler/display-fn-id" ]

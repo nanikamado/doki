@@ -10,3 +10,6 @@ rustc-hash = "1.1.0"
 easy-ext = "1.0.1"
 multimap = "0.9.0"
 itertools = "0.10.5"
+
+[features]
+display-fn-id = [ "doki-ir/display-fn-id" ]

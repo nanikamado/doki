@@ -1,4 +1,4 @@
-use compiler::Span;
+use compiler::{Span, SpanMapEntry};
 use dashmap::DashMap;
 use itertools::Itertools;
 use std::fs;
@@ -183,7 +183,7 @@ pub async fn run() {
 fn make_hover_map(src: &str) -> Option<HoverMap> {
     let (char_to_utf16_map, utf16_to_char_map) = make_map(src);
     let r = compiler::token_map(src).ok()?;
-    let mut span_map = r.token_map;
+    let mut span_map = r.span_map;
     let mut working_span_list: Vec<(Span, _)> = Vec::new();
     let mut cache: Option<Arc<Hover>> = None;
     let utf16_to_token_map = utf16_to_char_map
@@ -192,7 +192,7 @@ fn make_hover_map(src: &str) -> Option<HoverMap> {
             utf16_to_char_line
                 .into_iter()
                 .map(|char| {
-                    char.and_then(|char| {
+                    char.and_then(|char| -> Option<Arc<Hover>> {
                         let working_span_list_len = working_span_list.len();
                         working_span_list.retain(|(s, _)| s.contains(char));
                         if working_span_list.len() != working_span_list_len {
@@ -212,14 +212,14 @@ fn make_hover_map(src: &str) -> Option<HoverMap> {
                             .iter()
                             .min_by_key(|(s, _)| s.end - s.start)
                         {
-                            let a = Arc::new(Hover {
-                                contents: HoverContents::Markup(MarkupContent {
-                                    value: if l.is_empty() {
+                            let value = match l {
+                                SpanMapEntry::Expr(ts) => {
+                                    if ts.is_empty() {
                                         "eliminated".to_string()
                                     } else {
                                         format!(
                                             "```\n{}\n```",
-                                            l.iter().enumerate().format_with("\n", |(i, t), f| {
+                                            ts.iter().enumerate().format_with("\n", |(i, t), f| {
                                                 let d = compiler::DisplayTypeWithEnv(
                                                     t,
                                                     &r.constructor_names,
@@ -227,7 +227,28 @@ fn make_hover_map(src: &str) -> Option<HoverMap> {
                                                 f(&format_args!("{}. {d}", i + 1))
                                             })
                                         )
-                                    },
+                                    }
+                                }
+                                SpanMapEntry::GlobalVariable { ts } => {
+                                    if ts.is_empty() {
+                                        "eliminated".to_string()
+                                    } else {
+                                        format!(
+                                            "```\n{}\n```",
+                                            ts.iter().enumerate().format_with("\n", |(i, t), f| {
+                                                let d = compiler::DisplayTypeWithEnv(
+                                                    t,
+                                                    &r.constructor_names,
+                                                );
+                                                f(&format_args!("{}. {d}", i + 1))
+                                            })
+                                        )
+                                    }
+                                }
+                            };
+                            let a = Arc::new(Hover {
+                                contents: HoverContents::Markup(MarkupContent {
+                                    value,
                                     kind: MarkupKind::Markdown,
                                 }),
                                 range: Some(Range {

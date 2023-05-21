@@ -14,7 +14,8 @@ struct Env<'a> {
     global_variable_map: FxHashMap<&'a str, GlobalVariable>,
     data_decl_map: FxHashMap<&'a str, doki_ir::ConstructorId>,
     build_env: doki_ir::Env,
-    span_map: BTreeMap<Span, LocalVariable>,
+    local_variable_span_map: BTreeMap<Span, LocalVariable>,
+    global_variable_span_map: BTreeMap<Span, GlobalVariable>,
 }
 
 fn build(ast: Ast) -> Env {
@@ -72,6 +73,7 @@ fn build(ast: Ast) -> Env {
     for d in &ast.variable_decls {
         let gid = env.build_env.new_global_variable();
         env.global_variable_map.insert(d.name, gid);
+        env.global_variable_span_map.insert(d.ident_span, gid);
     }
     for d in ast.variable_decls {
         let ret = env.build_env.new_local_variable();
@@ -94,38 +96,68 @@ pub fn gen_c(ast: Ast, w: &mut impl Write) {
     env.build_env.gen_c(entry_point, w)
 }
 
+pub enum SpanMapEntry {
+    Expr(Vec<doki_ir::Type>),
+    GlobalVariable { ts: Vec<doki_ir::TypeForHash> },
+}
+
 pub fn token_map(ast: Ast) -> AnalyzedSrc {
     let env = build(ast);
     let entry_point = env.global_variable_map["main"];
-    let span_map = env.span_map;
     let ast = env.build_env.build_ast_step2(entry_point);
+    let global_variables: multimap::MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> = ast
+        .variable_decls
+        .iter()
+        .map(|v| {
+            let t = &v.t_for_hash;
+            (
+                v.original_decl_id,
+                (t.clone(), ast.type_id_generator.get(t).unwrap()),
+            )
+        })
+        .collect();
+    let mut span_map: BTreeMap<_, _> = env
+        .global_variable_span_map
+        .into_iter()
+        .map(|(s, g)| {
+            let ts = global_variables
+                .get_vec(&g)
+                .into_iter()
+                .flatten()
+                .map(|(t, _)| t.clone())
+                .collect_vec();
+            (s, SpanMapEntry::GlobalVariable { ts })
+        })
+        .collect();
     let m: multimap::MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> = ast
         .local_variable_replace_map
         .into_iter()
-        .map(|((l, (id, _g)), l2)| (l, (id, l2)))
+        .map(|((l, (id, g)), l2)| (l, (g, id, l2)))
         .collect();
-    let token_map = span_map
-        .into_iter()
-        .map(|(s, l)| {
-            let ts = m
-                .get_vec(&l)
-                .into_iter()
-                .flatten()
-                .sorted_by_key(|(id, _)| id)
-                .map(|(_, l)| ast.variable_types.get_type(*l).clone())
-                .collect();
-            (s, ts)
-        })
-        .collect();
+    span_map.extend(env.local_variable_span_map.into_iter().map(|(s, l)| {
+        let ts = m
+            .get_vec(&l)
+            .into_iter()
+            .flatten()
+            .sorted_by_key(|(g, id, _)| {
+                global_variables
+                    .get_vec(g)
+                    .unwrap()
+                    .binary_search_by_key(id, |(_, id)| *id)
+            })
+            .map(|(_, _, l)| ast.variable_types.get_type(*l).clone())
+            .collect();
+        (s, SpanMapEntry::Expr(ts))
+    }));
     AnalyzedSrc {
-        token_map,
+        span_map,
         constructor_names: ast.constructor_names,
     }
 }
 
 impl<'a> Env<'a> {
     fn expr(&mut self, (e, span): ExprWithSpan<'a>, ret: LocalVariable, block: &mut Block) {
-        self.span_map.insert(span, ret);
+        self.local_variable_span_map.insert(span, ret);
         match e {
             Expr::Ident(s) => {
                 if let Some(v) = self.local_variable_map.get(s) {
@@ -239,7 +271,7 @@ impl<'a> Env<'a> {
                     self.local_variable_map.insert(name, l);
                     l
                 };
-                self.span_map.insert(*span, l);
+                self.local_variable_span_map.insert(*span, l);
             }
             Pattern::Wildcard | Pattern::Num(_) | Pattern::Str(_) => (),
             Pattern::Constructor {

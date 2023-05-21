@@ -10,6 +10,7 @@ pub use crate::ast_step1::{
 };
 pub use crate::ast_step2::{
     DisplayTypeWithEnvStruct as DisplayTypeWithEnv, LocalVariable as LocalVariable2, Type,
+    TypeForHash,
 };
 use std::io::Write;
 
