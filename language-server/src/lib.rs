@@ -182,7 +182,8 @@ pub async fn run() {
 
 fn make_hover_map(src: &str) -> Option<HoverMap> {
     let (char_to_utf16_map, utf16_to_char_map) = make_map(src);
-    let mut span_map = compiler::token_map(src).ok()?;
+    let r = compiler::token_map(src).ok()?;
+    let mut span_map = r.token_map;
     let mut working_span_list: Vec<(Span, _)> = Vec::new();
     let mut cache: Option<Arc<Hover>> = None;
     let utf16_to_token_map = utf16_to_char_map
@@ -216,7 +217,16 @@ fn make_hover_map(src: &str) -> Option<HoverMap> {
                                     value: if l.is_empty() {
                                         "eliminated".to_string()
                                     } else {
-                                        format!("```\n{}\n```", l.iter().format(", "))
+                                        format!(
+                                            "```\n{}\n```",
+                                            l.iter().enumerate().format_with("\n", |(i, t), f| {
+                                                let d = compiler::DisplayTypeWithEnv(
+                                                    t,
+                                                    &r.constructor_names,
+                                                );
+                                                f(&format_args!("{}. {d}", i + 1))
+                                            })
+                                        )
                                     },
                                     kind: MarkupKind::Markdown,
                                 }),

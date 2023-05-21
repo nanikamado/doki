@@ -5,9 +5,12 @@ mod id_generator;
 pub mod intrinsics;
 
 pub use crate::ast_step1::{
-    Block, ConstructorId, Env, GlobalVariable, Lambda, LocalVariable, TypeId, VariableDecl,
+    Block, ConstructorId, ConstructorNames, Env, GlobalVariable, Lambda, LocalVariable, TypeId,
+    VariableDecl,
 };
-pub use crate::ast_step2::LocalVariable as LocalVariable2;
+pub use crate::ast_step2::{
+    DisplayTypeWithEnvStruct as DisplayTypeWithEnv, LocalVariable as LocalVariable2, Type,
+};
 use std::io::Write;
 
 impl Env {

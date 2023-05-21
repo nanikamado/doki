@@ -19,7 +19,7 @@ pub struct Ast {
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct LocalVariable(usize);
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct GlobalVariable(usize);
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]

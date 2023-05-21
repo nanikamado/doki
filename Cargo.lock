@@ -215,6 +215,7 @@ version = "0.1.0"
 dependencies = [
  "doki-ir",
  "easy-ext",
+ "itertools",
  "multimap",
  "parser",
  "rustc-hash",

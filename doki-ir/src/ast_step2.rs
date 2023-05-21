@@ -30,8 +30,7 @@ pub struct Ast {
     pub fx_type_map: FxHashMap<LambdaId<id_generator::Id<TypeIdTag>>, FxLambdaId>,
     pub constructor_names: ConstructorNames,
     pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
-    pub local_variable_replace_map:
-        FxHashMap<(ast_step1::LocalVariable, id_generator::Id<TypeIdTag>), LocalVariable>,
+    pub local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -171,14 +170,13 @@ struct FnId {
 
 pub struct Env {
     variable_decls: FxHashMap<GlobalVariable, ast_step1::VariableDecl>,
-    monomorphized_variable_map: FxHashMap<(GlobalVariable, TypeUnique), GlobalVariableId>,
+    monomorphized_variable_map: FxHashMap<Root, GlobalVariableId>,
     monomorphized_variables: Vec<VariableDecl>,
     map: PaddedTypeMap,
     functions: FxHashMap<LambdaId<TypeUnique>, FunctionEntry>,
     type_memo: TypeMemo,
     local_variable_types_old: LocalVariableTypes,
-    local_variable_replace_map:
-        FxHashMap<(ast_step1::LocalVariable, id_generator::Id<TypeIdTag>), LocalVariable>,
+    local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
     local_variable_collector: LocalVariableCollector<Type>,
     used_local_variables: FxHashSet<LocalVariable>,
     defined_local_variables: FxHashSet<LocalVariable>,
@@ -200,6 +198,7 @@ pub struct FxLambdaId(pub u32);
 pub struct TypeIdTag;
 
 type TypeUnique = id_generator::Id<TypeIdTag>;
+type Root = (TypeUnique, ast_step1::GlobalVariable);
 
 impl Env {
     pub fn new(
@@ -236,22 +235,21 @@ impl Env {
         let t_for_hash = self.get_type_for_hash(p);
         let t_id = self.type_id_generator.get(t_for_hash);
         let t = self.get_type(p);
-        let decl_id_t = (decl_id, t_id);
-        if let Some(d) = self.monomorphized_variable_map.get(&decl_id_t) {
+        let root = (t_id, decl_id);
+        if let Some(d) = self.monomorphized_variable_map.get(&root) {
             *d
         } else {
             let new_decl_id = GlobalVariableId(self.global_variable_count);
             self.global_variable_count += 1;
             let d = self.variable_decls.get(&decl_id).unwrap().clone();
-            self.monomorphized_variable_map
-                .insert((decl_id, t_id), new_decl_id);
-            let (b, _) = self.block(d.value, t_id, replace_map);
+            self.monomorphized_variable_map.insert(root, new_decl_id);
+            let (b, _) = self.block(d.value, root, replace_map);
             let d = VariableDecl {
                 value: b,
                 decl_id: new_decl_id,
                 ret: self.get_defined_variable_id(
                     ast_step1::VariableId::Local(d.ret),
-                    t_id,
+                    root,
                     replace_map,
                 ),
                 name: d.name,
@@ -271,7 +269,7 @@ impl Env {
     fn local_variable_def_replace(
         &mut self,
         v: ast_step1::LocalVariable,
-        root_t: TypeUnique,
+        root_t: Root,
         replace_map: &mut ReplaceMap,
     ) -> LocalVariable {
         debug_assert!(!self.local_variable_replace_map.contains_key(&(v, root_t)));
@@ -286,7 +284,7 @@ impl Env {
     fn get_defined_local_variable(
         &mut self,
         v: ast_step1::LocalVariable,
-        root_t: TypeUnique,
+        root_t: Root,
         replace_map: &mut ReplaceMap,
     ) -> VariableId {
         if let Some(d) = self.local_variable_replace_map.get(&(v, root_t)) {
@@ -306,7 +304,7 @@ impl Env {
     fn get_defined_variable_id(
         &mut self,
         v: ast_step1::VariableId,
-        root_t: TypeUnique,
+        root_t: Root,
         replace_map: &mut ReplaceMap,
     ) -> VariableId {
         match v {
@@ -323,7 +321,7 @@ impl Env {
     fn block(
         &mut self,
         block: ast_step1::Block,
-        root_t: TypeUnique,
+        root_t: Root,
         replace_map: &mut ReplaceMap,
     ) -> (Block, bool) {
         let mut instructions = Vec::new();
@@ -341,7 +339,7 @@ impl Env {
     fn instruction(
         &mut self,
         instruction: ast_step1::Instruction,
-        root_t: TypeUnique,
+        root_t: Root,
         replace_map: &mut ReplaceMap,
         instructions: &mut Vec<Instruction>,
     ) -> bool {
@@ -431,7 +429,7 @@ impl Env {
     fn downcast(
         &mut self,
         a: ast_step1::LocalVariable,
-        root_t: TypeUnique,
+        root_t: Root,
         type_id: TypeId,
         replace_map: &mut ReplaceMap,
         instructions: &mut Vec<Instruction>,
@@ -461,7 +459,7 @@ impl Env {
         &mut self,
         e: ast_step1::Expr,
         p: TypePointer,
-        root_t: TypeUnique,
+        root_t: Root,
         replace_map: &mut ReplaceMap,
         instructions: &mut Vec<Instruction>,
     ) -> Result<Expr, String> {
@@ -503,7 +501,7 @@ impl Env {
                     .extend(defined_local_variables_tmp);
                 let lambda_id = LambdaId {
                     id: lambda_id.id,
-                    root_t,
+                    root_t: root_t.0,
                 };
                 let e = self.functions.get_mut(&lambda_id).unwrap();
                 let FunctionEntry::Placeholder(fx_lambda_id) = *e else {
