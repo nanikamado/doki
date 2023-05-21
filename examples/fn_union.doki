@@ -1,4 +1,4 @@
-data Unit 0
+data None 0
 
 println = a: intrinsic_print_str (intrinsic_append_str a "\n")
 
@@ -10,10 +10,10 @@ data Nil 0
 p = s: _: intrinsic_print_str s
 
 call_functions = l: match l with
-        Nil => Unit,
+        Nil => None,
         Cons (A | B) t => call_functions t,
         Cons f t => let _ = call_functions t
-            in f Unit,
+            in f None,
     end
 
 main = _: let l = Nil
