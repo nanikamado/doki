@@ -375,7 +375,7 @@ impl DisplayWithEnv for VariableDecl {
             "{} {}/*{}*/=(()=>({{{}||panic(\"pattern is not exhaustive\");{}}}))();",
             ct,
             Dis(&VariableId::Global(self.decl_id), env),
-            ast_step2::DisplayTypeWithEnvStruct(&self.t_hash, env.constructor_names),
+            ast_step2::DisplayTypeWithEnvStruct(&self.t, env.constructor_names),
             Dis(&self.value, env),
             Dis(&self.ret, env)
         )

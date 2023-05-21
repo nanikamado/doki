@@ -41,7 +41,6 @@ pub struct VariableDecl {
     pub value: Block,
     pub ret: VariableId,
     pub decl_id: GlobalVariableId,
-    pub t_hash: TypeForHash,
     pub t: Type,
 }
 
@@ -169,13 +168,14 @@ struct FnId {
 
 pub struct Env {
     variable_decls: FxHashMap<GlobalVariable, ast_step1::VariableDecl>,
-    monomorphized_variable_map: FxHashMap<(GlobalVariable, TypeForHash), GlobalVariableId>,
+    monomorphized_variable_map: FxHashMap<(GlobalVariable, TypeUnique), GlobalVariableId>,
     monomorphized_variables: Vec<VariableDecl>,
     map: PaddedTypeMap,
     functions: FxHashMap<LambdaId<TypeUnique>, FunctionEntry>,
     type_memo: TypeMemo,
     local_variable_types_old: LocalVariableTypes,
-    local_variable_replace_map: FxHashMap<ast_step1::LocalVariable, LocalVariable>,
+    local_variable_replace_map:
+        FxHashMap<(ast_step1::LocalVariable, id_generator::Id<TypeIdTag>), LocalVariable>,
     local_variable_collector: LocalVariableCollector<Type>,
     used_local_variables: FxHashSet<LocalVariable>,
     defined_local_variables: FxHashSet<LocalVariable>,
@@ -231,31 +231,29 @@ impl Env {
     ) -> GlobalVariableId {
         let p = self.map.clone_pointer(p, replace_map);
         let t_for_hash = self.get_type_for_hash(p);
+        let t_id = self.type_id_generator.get(t_for_hash);
         let t = self.get_type(p);
-        let decl_id_t = (decl_id, t_for_hash);
+        let decl_id_t = (decl_id, t_id);
         if let Some(d) = self.monomorphized_variable_map.get(&decl_id_t) {
             *d
         } else {
-            let (_, t_for_hash) = decl_id_t;
             let new_decl_id = GlobalVariableId(self.global_variable_count);
             self.global_variable_count += 1;
             let d = self.variable_decls.get(&decl_id).unwrap().clone();
             self.monomorphized_variable_map
-                .insert((decl_id, t_for_hash.clone()), new_decl_id);
-            let local_variable_replace_map_tmp =
-                std::mem::take(&mut self.local_variable_replace_map);
-            let ht = self.get_type_for_hash(p);
-            let t_id = self.type_id_generator.get(ht);
+                .insert((decl_id, t_id), new_decl_id);
             let (b, _) = self.block(d.value, t_id, replace_map);
             let d = VariableDecl {
                 value: b,
                 decl_id: new_decl_id,
-                ret: self.get_defined_variable_id(ast_step1::VariableId::Local(d.ret), replace_map),
+                ret: self.get_defined_variable_id(
+                    ast_step1::VariableId::Local(d.ret),
+                    t_id,
+                    replace_map,
+                ),
                 name: d.name,
-                t_hash: t_for_hash,
                 t,
             };
-            self.local_variable_replace_map = local_variable_replace_map_tmp;
             self.monomorphized_variables.push(d);
             new_decl_id
         }
@@ -270,23 +268,25 @@ impl Env {
     fn local_variable_def_replace(
         &mut self,
         v: ast_step1::LocalVariable,
+        root_t: TypeUnique,
         replace_map: &mut ReplaceMap,
     ) -> LocalVariable {
-        debug_assert!(!self.local_variable_replace_map.contains_key(&v));
+        debug_assert!(!self.local_variable_replace_map.contains_key(&(v, root_t)));
         let t = self.local_variable_types_old.get(v);
         let t = self.map.clone_pointer(t, replace_map);
         let t = self.get_type(t);
         let new_v = self.new_variable(t);
-        self.local_variable_replace_map.insert(v, new_v);
+        self.local_variable_replace_map.insert((v, root_t), new_v);
         new_v
     }
 
     fn get_defined_local_variable(
         &mut self,
         v: ast_step1::LocalVariable,
+        root_t: TypeUnique,
         replace_map: &mut ReplaceMap,
     ) -> VariableId {
-        if let Some(d) = self.local_variable_replace_map.get(&v) {
+        if let Some(d) = self.local_variable_replace_map.get(&(v, root_t)) {
             self.used_local_variables.insert(*d);
             VariableId::Local(*d)
         } else {
@@ -303,10 +303,13 @@ impl Env {
     fn get_defined_variable_id(
         &mut self,
         v: ast_step1::VariableId,
+        root_t: TypeUnique,
         replace_map: &mut ReplaceMap,
     ) -> VariableId {
         match v {
-            ast_step1::VariableId::Local(d) => self.get_defined_local_variable(d, replace_map),
+            ast_step1::VariableId::Local(d) => {
+                self.get_defined_local_variable(d, root_t, replace_map)
+            }
             ast_step1::VariableId::Global(d, r, p) => {
                 let mut r = replace_map.clone().merge(r, &mut self.map);
                 VariableId::Global(self.monomorphize_decl_rec(d, p, &mut r))
@@ -348,13 +351,14 @@ impl Env {
                 match e {
                     Ok(e) => {
                         let t = self.get_type(t);
-                        let new_v = if let Some(v) = self.local_variable_replace_map.get(&v) {
-                            *v
-                        } else {
-                            let new_v = self.new_variable(t);
-                            self.local_variable_replace_map.insert(v, new_v);
-                            new_v
-                        };
+                        let new_v =
+                            if let Some(v) = self.local_variable_replace_map.get(&(v, root_t)) {
+                                *v
+                            } else {
+                                let new_v = self.new_variable(t);
+                                self.local_variable_replace_map.insert((v, root_t), new_v);
+                                new_v
+                            };
                         instructions.push(Instruction::Assign(new_v, e));
                         false
                     }
@@ -366,7 +370,7 @@ impl Env {
             }
             ast_step1::Instruction::Test(ast_step1::Tester::I64 { value }, l) => {
                 let type_id = TypeId::Intrinsic(IntrinsicType::I64);
-                let a = self.downcast(l, type_id, replace_map, instructions);
+                let a = self.downcast(l, root_t, type_id, replace_map, instructions);
                 match a {
                     Ok(a) => instructions.push(Instruction::Test(Tester::I64 { value }, a)),
                     Err(_) => {
@@ -377,7 +381,7 @@ impl Env {
             }
             ast_step1::Instruction::Test(ast_step1::Tester::Str { value }, a) => {
                 let type_id = TypeId::Intrinsic(IntrinsicType::String);
-                let a = self.downcast(a, type_id, replace_map, instructions);
+                let a = self.downcast(a, root_t, type_id, replace_map, instructions);
                 match a {
                     Ok(a) => instructions.push(Instruction::Test(Tester::Str { value }, a)),
                     Err(_) => {
@@ -391,7 +395,7 @@ impl Env {
                     .map
                     .clone_pointer(self.local_variable_types_old.get(a), replace_map);
                 let t = self.get_type(t);
-                let a = self.get_defined_local_variable(a, replace_map);
+                let a = self.get_defined_local_variable(a, root_t, replace_map);
                 match get_tag_normal(&t, id) {
                     GetTagNormalResult::Tagged(tag, _untagged_t) => {
                         let a = self.deref(a, &t, instructions);
@@ -424,6 +428,7 @@ impl Env {
     fn downcast(
         &mut self,
         a: ast_step1::LocalVariable,
+        root_t: TypeUnique,
         type_id: TypeId,
         replace_map: &mut ReplaceMap,
         instructions: &mut Vec<Instruction>,
@@ -432,7 +437,7 @@ impl Env {
             .map
             .clone_pointer(self.local_variable_types_old.get(a), replace_map);
         let t = self.get_type(t);
-        let a = self.get_defined_local_variable(a, replace_map);
+        let a = self.get_defined_local_variable(a, root_t, replace_map);
         let a = self.deref(a, &t, instructions);
         match get_tag_normal(&t, type_id) {
             GetTagNormalResult::Tagged(tag, casted_t) => Ok(self.expr_to_variable(
@@ -470,10 +475,13 @@ impl Env {
                 let used_local_variables_tmp = mem::take(&mut self.used_local_variables);
                 let defined_local_variables_tmp = mem::take(&mut self.defined_local_variables);
                 let possible_functions = self.get_possible_functions(p);
-                let new_parameter = self.local_variable_def_replace(parameter, replace_map);
+                let new_parameter = self.local_variable_def_replace(parameter, root_t, replace_map);
                 let (b, _) = self.block(body, root_t, replace_map);
-                let ret =
-                    self.get_defined_variable_id(ast_step1::VariableId::Local(ret), replace_map);
+                let ret = self.get_defined_variable_id(
+                    ast_step1::VariableId::Local(ret),
+                    root_t,
+                    replace_map,
+                );
                 let context = self
                     .used_local_variables
                     .iter()
@@ -538,13 +546,15 @@ impl Env {
                 TypeId::Intrinsic(IntrinsicType::String),
                 instructions,
             ),
-            ast_step1::Expr::Ident(v) => Ident(self.get_defined_variable_id(v, replace_map)),
+            ast_step1::Expr::Ident(v) => {
+                Ident(self.get_defined_variable_id(v, root_t, replace_map))
+            }
             ast_step1::Expr::Call { f, a } => {
                 let f_t = self.local_variable_types_old.get(f);
                 let f_t = self.map.clone_pointer(f_t, replace_map);
                 let possible_functions = self.get_possible_functions(f_t);
-                let f = self.get_defined_local_variable(f, replace_map);
-                let a = self.get_defined_local_variable(a, replace_map);
+                let f = self.get_defined_local_variable(f, root_t, replace_map);
+                let a = self.get_defined_local_variable(a, root_t, replace_map);
                 if possible_functions.is_empty() {
                     return Err("not a function".to_string());
                 }
@@ -592,7 +602,7 @@ impl Env {
             } => {
                 let args = args
                     .into_iter()
-                    .map(|a| self.get_defined_local_variable(a, replace_map))
+                    .map(|a| self.get_defined_local_variable(a, root_t, replace_map))
                     .collect();
                 self.add_tags_to_expr(
                     BasicCall {
@@ -631,6 +641,7 @@ impl Env {
                 let a = args.into_iter().next().unwrap();
                 let a = self.downcast(
                     a,
+                    root_t,
                     TypeId::UserDefined(constructor),
                     replace_map,
                     instructions,
@@ -646,7 +657,9 @@ impl Env {
                 let args = args
                     .into_iter()
                     .zip_eq(arg_ts)
-                    .map(|(a, param_t)| self.downcast(a, param_t, replace_map, instructions))
+                    .map(|(a, param_t)| {
+                        self.downcast(a, root_t, param_t, replace_map, instructions)
+                    })
                     .collect::<Result<_, _>>()?;
                 self.add_tags_to_expr(
                     BasicCall {
@@ -687,12 +700,8 @@ impl Env {
                         fs.push((
                             tag,
                             id,
-                            TypeUnitOf::Fn(
-                                [*id_type_inner].into(),
-                                arg_t.clone(),
-                                ret_t.clone(),
-                            )
-                            .into(),
+                            TypeUnitOf::Fn([*id_type_inner].into(), arg_t.clone(), ret_t.clone())
+                                .into(),
                         ));
                         tag += 1;
                     }
