@@ -25,8 +25,8 @@ impl Display for IntrinsicVariable {
     }
 }
 
-const fn runtime_intrinsic_type(i: IntrinsicType) -> ast_step2::TypeUnit {
-    ast_step2::TypeUnit::Normal {
+const fn runtime_intrinsic_type(i: IntrinsicType) -> ast_step2::TypeUnitForHash {
+    ast_step2::TypeUnitOf::Normal {
         id: ast_step1::TypeId::Intrinsic(i),
         args: Vec::new(),
     }
@@ -84,7 +84,7 @@ impl IntrinsicVariable {
         self.runtime_arg_type_id()
             .into_iter()
             .map(|id| {
-                ast_step2::TypeUnit::Normal {
+                ast_step2::TypeUnitOf::Normal {
                     id,
                     args: Vec::new(),
                 }
@@ -164,7 +164,7 @@ impl IntrinsicConstructor {
         }
     }
 
-    pub fn to_runtime_type(self) -> ast_step2::Type {
+    pub fn to_runtime_type(self) -> ast_step2::TypeForHash {
         runtime_intrinsic_type(self.into()).into()
     }
 }

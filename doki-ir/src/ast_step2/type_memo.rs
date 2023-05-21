@@ -1,5 +1,6 @@
-use super::LambdaId;
+use super::{LambdaId, TypeIdTag};
 use crate::ast_step1::{ConstructorNames, PaddedTypeMap, Terminal, TypeId, TypePointer};
+use crate::id_generator::{self, IdGenerator};
 use crate::intrinsics::IntrinsicType;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -8,27 +9,76 @@ use std::fmt::{self, Display};
 use std::iter::once;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Default, Clone, Hash)]
-pub struct Type<R = u32> {
-    ts: Vec<TypeUnit<R>>,
+pub struct TypeOf<T: TypeFamily> {
+    ts: Vec<TypeUnitOf<T>>,
     pub recursive: bool,
     pub reference: bool,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
-pub enum TypeInner<R = u32> {
-    RecursionPoint(R),
-    Type(Type<R>),
+pub enum TypeInnerOf<T: TypeFamily> {
+    RecursionPoint(T::RecursionPoint),
+    Type(TypeOf<T>),
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
-pub enum TypeUnit<R = u32> {
-    Normal { id: TypeId, args: Vec<TypeInner<R>> },
-    Fn(BTreeSet<LambdaId<TypeInner<R>>>, TypeInner<R>, TypeInner<R>),
+pub enum TypeUnitOf<T: TypeFamily> {
+    Normal {
+        id: TypeId,
+        args: Vec<TypeInnerOf<T>>,
+    },
+    Fn(
+        BTreeSet<LambdaId<T::LambdaTag>>,
+        TypeInnerOf<T>,
+        TypeInnerOf<T>,
+    ),
 }
 
-impl From<TypeUnit> for Type {
-    fn from(value: TypeUnit) -> Self {
-        Type {
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
+struct IntermediateTypeF;
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
+pub struct TypeForHashF;
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
+pub struct NormalTypeF;
+
+pub trait TypeFamily {
+    type RecursionPoint: Eq + Ord + Clone + std::hash::Hash + std::fmt::Debug + BrokenLinkCheck;
+    type LambdaTag: Eq
+        + Ord
+        + Clone
+        + std::hash::Hash
+        + std::fmt::Debug
+        + BrokenLinkCheck
+        + DisplayTypeWithEnv;
+}
+
+impl TypeFamily for IntermediateTypeF {
+    type RecursionPoint = IndexOrPointer;
+    type LambdaTag = TypeInnerOf<IntermediateTypeF>;
+}
+
+impl TypeFamily for TypeForHashF {
+    type RecursionPoint = u32;
+    type LambdaTag = TypeInnerOf<Self>;
+}
+
+impl TypeFamily for NormalTypeF {
+    type RecursionPoint = u32;
+    type LambdaTag = id_generator::Id<TypeIdTag>;
+}
+
+type IntermediateTypeUnit = TypeUnitOf<IntermediateTypeF>;
+type IntermediateTypeInner = TypeInnerOf<IntermediateTypeF>;
+pub type TypeForHash = TypeOf<TypeForHashF>;
+pub type TypeUnitForHash = TypeUnitOf<TypeForHashF>;
+pub type TypeInnerForHash = TypeInnerOf<TypeForHashF>;
+pub type Type = TypeOf<NormalTypeF>;
+pub type TypeUnit = TypeUnitOf<NormalTypeF>;
+pub type TypeInner = TypeInnerOf<NormalTypeF>;
+
+impl<T: TypeFamily> From<TypeUnitOf<T>> for TypeOf<T> {
+    fn from(value: TypeUnitOf<T>) -> Self {
+        TypeOf {
             ts: once(value).collect(),
             recursive: false,
             reference: false,
@@ -36,35 +86,19 @@ impl From<TypeUnit> for Type {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 enum IndexOrPointer {
     Index(u32),
     Pointer(TypePointer),
 }
 
-impl Type {
-    pub fn iter(&self) -> impl Iterator<Item = &TypeUnit> {
+impl<T: TypeFamily> TypeOf<T> {
+    pub fn iter(&self) -> impl Iterator<Item = &TypeUnitOf<T>> {
         self.ts.iter()
     }
 
     pub fn len(&self) -> usize {
         self.ts.len()
-    }
-
-    pub fn contains_broken_link_rec(&self, depth: u32) -> bool {
-        let depth = self.recursive as u32 + depth;
-        self.ts.iter().any(|t| match t {
-            TypeUnit::Normal { id: _, args } => args.iter().any(|a| a.contains_broken_link(depth)),
-            TypeUnit::Fn(l, a, r) => {
-                l.iter().any(|l| l.root_t.contains_broken_link(depth))
-                    || a.contains_broken_link(depth)
-                    || r.contains_broken_link(depth)
-            }
-        })
-    }
-
-    pub fn contains_broken_link(&self) -> bool {
-        self.contains_broken_link_rec(0)
     }
 
     pub fn deref(self) -> Self {
@@ -84,74 +118,184 @@ impl Type {
             ..self
         }
     }
+
+    pub fn contains_broken_link_rec(&self, depth: u32) -> bool {
+        let depth = self.recursive as u32 + depth;
+        self.ts.iter().any(|t| match t {
+            TypeUnitOf::Normal { id: _, args } => {
+                args.iter().any(|a| a.contains_broken_link(depth))
+            }
+            TypeUnitOf::Fn(l, a, r) => {
+                l.iter().any(|l| l.root_t.contains_broken_link(depth))
+                    || a.contains_broken_link(depth)
+                    || r.contains_broken_link(depth)
+            }
+        })
+    }
+
+    pub fn contains_broken_link(&self) -> bool {
+        self.contains_broken_link_rec(0)
+    }
 }
 
-impl TypeInner {
-    pub fn contains_broken_link(&self, depth: u32) -> bool {
+pub trait BrokenLinkCheck {
+    fn contains_broken_link(&self, depth: u32) -> bool;
+}
+
+impl<T: TypeFamily> BrokenLinkCheck for TypeInnerOf<T> {
+    fn contains_broken_link(&self, depth: u32) -> bool {
         match self {
-            TypeInner::RecursionPoint(d) => *d >= depth,
-            TypeInner::Type(t) => t.contains_broken_link_rec(depth),
+            TypeInnerOf::RecursionPoint(d) => d.contains_broken_link(depth),
+            TypeInnerOf::Type(t) => t.contains_broken_link_rec(depth),
         }
     }
 }
 
-#[derive(Debug, Default)]
-pub struct UnhashableTypeMemo {
-    type_memo: FxHashMap<TypePointer, TypeInner<IndexOrPointer>>,
-    type_memo_for_hash: FxHashMap<TypePointer, TypeInner<IndexOrPointer>>,
+impl BrokenLinkCheck for u32 {
+    fn contains_broken_link(&self, depth: u32) -> bool {
+        *self >= depth
+    }
 }
 
-fn remove_pointer_from_type_inner(t: TypeInner<IndexOrPointer>) -> TypeInner {
+impl BrokenLinkCheck for IndexOrPointer {
+    fn contains_broken_link(&self, depth: u32) -> bool {
+        match self {
+            IndexOrPointer::Index(i) => *i >= depth,
+            IndexOrPointer::Pointer(_) => todo!(),
+        }
+    }
+}
+
+impl BrokenLinkCheck for id_generator::Id<TypeIdTag> {
+    fn contains_broken_link(&self, _depth: u32) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct TypeMemo {
+    type_memo: FxHashMap<TypePointer, IntermediateTypeInner>,
+    type_memo_for_hash: FxHashMap<TypePointer, IntermediateTypeInner>,
+}
+
+fn remove_pointer_from_type_inner_for_hash(t: IntermediateTypeInner) -> TypeInnerForHash {
     match t {
-        TypeInner::RecursionPoint(IndexOrPointer::Pointer(_)) => {
+        TypeInnerOf::RecursionPoint(IndexOrPointer::Pointer(_)) => {
             panic!()
         }
-        TypeInner::RecursionPoint(IndexOrPointer::Index(d)) => TypeInner::RecursionPoint(d),
-        TypeInner::Type(Type {
+        TypeInnerOf::RecursionPoint(IndexOrPointer::Index(d)) => TypeInnerOf::RecursionPoint(d),
+        TypeInnerOf::Type(TypeOf {
             ts,
             recursive,
             reference,
-        }) => TypeInner::Type(Type {
-            ts: ts.into_iter().map(remove_pointer_from_type_unit).collect(),
+        }) => TypeInnerOf::Type(TypeOf {
+            ts: ts
+                .into_iter()
+                .map(remove_pointer_from_type_unit_for_hash)
+                .collect(),
             recursive,
             reference,
         }),
     }
 }
 
-fn remove_pointer_from_type_unit(t: TypeUnit<IndexOrPointer>) -> TypeUnit {
+fn remove_pointer_from_type_unit_for_hash(t: TypeUnitOf<IntermediateTypeF>) -> TypeUnitForHash {
     match t {
-        TypeUnit::Normal { id, args } => TypeUnit::Normal {
+        TypeUnitOf::Normal { id, args } => TypeUnitOf::Normal {
             id,
             args: args
                 .into_iter()
-                .map(remove_pointer_from_type_inner)
+                .map(remove_pointer_from_type_inner_for_hash)
                 .collect(),
         },
-        TypeUnit::Fn(id, a, b) => TypeUnit::Fn(
+        TypeUnitOf::Fn(id, a, b) => TypeUnitOf::Fn(
             id.into_iter()
-                .map(|l| l.map_type(remove_pointer_from_type_inner))
+                .map(|l| l.map_type(remove_pointer_from_type_inner_for_hash))
                 .collect(),
-            remove_pointer_from_type_inner(a),
-            remove_pointer_from_type_inner(b),
+            remove_pointer_from_type_inner_for_hash(a),
+            remove_pointer_from_type_inner_for_hash(b),
         ),
     }
 }
 
-impl UnhashableTypeMemo {
-    pub fn get_type(&mut self, p: TypePointer, map: &mut PaddedTypeMap) -> Type {
-        self.get_type_aux(p, map, false)
+fn remove_pointer_from_type_inner(
+    t: IntermediateTypeInner,
+    type_id_generator: &mut IdGenerator<TypeForHash, TypeIdTag>,
+) -> TypeInner {
+    match t {
+        TypeInnerOf::RecursionPoint(IndexOrPointer::Pointer(_)) => {
+            panic!()
+        }
+        TypeInnerOf::RecursionPoint(IndexOrPointer::Index(d)) => TypeInnerOf::RecursionPoint(d),
+        TypeInnerOf::Type(TypeOf {
+            ts,
+            recursive,
+            reference,
+        }) => TypeInnerOf::Type(TypeOf {
+            ts: ts
+                .into_iter()
+                .map(|t| remove_pointer_from_type_unit(t, type_id_generator))
+                .collect(),
+            recursive,
+            reference,
+        }),
+    }
+}
+
+fn remove_pointer_from_type_unit(
+    t: TypeUnitOf<IntermediateTypeF>,
+    type_id_generator: &mut IdGenerator<TypeForHash, TypeIdTag>,
+) -> TypeUnit {
+    match t {
+        TypeUnitOf::Normal { id, args } => TypeUnitOf::Normal {
+            id,
+            args: args
+                .into_iter()
+                .map(|t| remove_pointer_from_type_inner(t, type_id_generator))
+                .collect(),
+        },
+        TypeUnitOf::Fn(id, a, b) => TypeUnitOf::Fn(
+            id.into_iter()
+                .map(|l| {
+                    l.map_type(|t| {
+                        let t = remove_pointer_from_type_inner_for_hash(t);
+                        debug_assert!(!t.contains_broken_link(0));
+                        if let TypeInnerOf::Type(t) = t {
+                            type_id_generator.get(t)
+                        } else {
+                            panic!()
+                        }
+                    })
+                })
+                .collect(),
+            remove_pointer_from_type_inner(a, type_id_generator),
+            remove_pointer_from_type_inner(b, type_id_generator),
+        ),
+    }
+}
+
+impl TypeMemo {
+    pub fn get_type(
+        &mut self,
+        p: TypePointer,
+        map: &mut PaddedTypeMap,
+        type_id_generator: &mut IdGenerator<TypeForHash, TypeIdTag>,
+    ) -> Type {
+        let t = self.get_type_inner(p, &Default::default(), map, false);
+        match remove_pointer_from_type_inner(t, type_id_generator) {
+            TypeInnerOf::RecursionPoint(_) => panic!(),
+            TypeInnerOf::Type(t) => {
+                debug_assert!(!t.contains_broken_link());
+                t
+            }
+        }
     }
 
-    pub fn get_type_for_hash(&mut self, p: TypePointer, map: &mut PaddedTypeMap) -> Type {
-        self.get_type_aux(p, map, true)
-    }
-
-    fn get_type_aux(&mut self, p: TypePointer, map: &mut PaddedTypeMap, for_hash: bool) -> Type {
-        let t = self.get_type_inner(p, &Default::default(), map, for_hash);
-        match remove_pointer_from_type_inner(t) {
-            TypeInner::RecursionPoint(_) => panic!(),
-            TypeInner::Type(t) => {
+    pub fn get_type_for_hash(&mut self, p: TypePointer, map: &mut PaddedTypeMap) -> TypeForHash {
+        let t = self.get_type_inner(p, &Default::default(), map, true);
+        match remove_pointer_from_type_inner_for_hash(t) {
+            TypeInnerOf::RecursionPoint(_) => panic!(),
+            TypeInnerOf::Type(t) => {
                 debug_assert!(!t.contains_broken_link());
                 t
             }
@@ -163,7 +307,7 @@ impl UnhashableTypeMemo {
         p: TypePointer,
         trace: &FxHashSet<TypePointer>,
         map: &mut PaddedTypeMap,
-    ) -> BTreeSet<LambdaId<TypeInner<IndexOrPointer>>> {
+    ) -> BTreeSet<LambdaId<IntermediateTypeInner>> {
         let Terminal::LambdaId(ids) = map.dereference_without_find(p) else {
             panic!()
         };
@@ -181,7 +325,7 @@ impl UnhashableTypeMemo {
         trace: &FxHashSet<TypePointer>,
         map: &mut PaddedTypeMap,
         for_hash: bool,
-    ) -> TypeInner<IndexOrPointer> {
+    ) -> IntermediateTypeInner {
         if for_hash {
             if let Some(t) = self.type_memo_for_hash.get(&p) {
                 return t.clone();
@@ -190,7 +334,7 @@ impl UnhashableTypeMemo {
             return t.clone();
         }
         if trace.contains(&p) {
-            return TypeInner::RecursionPoint(IndexOrPointer::Pointer(p));
+            return TypeInnerOf::RecursionPoint(IndexOrPointer::Pointer(p));
         }
         let mut trace = trace.clone();
         trace.insert(p);
@@ -200,7 +344,7 @@ impl UnhashableTypeMemo {
                 for (type_id, normal_type) in &type_map.normals {
                     t.push((*type_id, normal_type.clone()));
                 }
-                TypeInner::Type(Type {
+                TypeInnerOf::Type(TypeOf {
                     ts: t
                         .into_iter()
                         .map(|(id, args)| {
@@ -216,7 +360,7 @@ impl UnhashableTypeMemo {
         let r = replace_pointer(t, p, 0);
         let mut t = r.t;
         if r.replaced {
-            if let TypeInner::Type(t) = &mut t {
+            if let TypeInnerOf::Type(t) = &mut t {
                 t.recursive = true;
                 t.reference = true;
             } else {
@@ -241,7 +385,7 @@ impl UnhashableTypeMemo {
         trace: &FxHashSet<TypePointer>,
         map: &mut PaddedTypeMap,
         for_hash: bool,
-    ) -> TypeUnit<IndexOrPointer> {
+    ) -> IntermediateTypeUnit {
         if let TypeId::Intrinsic(IntrinsicType::Fn) = id {
             debug_assert_eq!(args.len(), 3);
             let mut args = args.iter();
@@ -258,9 +402,9 @@ impl UnhashableTypeMemo {
                 },
                 map,
             );
-            TypeUnit::Fn(lambda_id, a, b)
+            TypeUnitOf::Fn(lambda_id, a, b)
         } else {
-            TypeUnit::Normal {
+            TypeUnitOf::Normal {
                 id,
                 args: args
                     .iter()
@@ -272,43 +416,43 @@ impl UnhashableTypeMemo {
 }
 
 struct ReplacePointerResult {
-    t: TypeInner<IndexOrPointer>,
+    t: IntermediateTypeInner,
     replaced: bool,
     contains_pointer: bool,
 }
 
 fn replace_pointer(
-    t: TypeInner<IndexOrPointer>,
+    t: IntermediateTypeInner,
     from: TypePointer,
     depth: u32,
 ) -> ReplacePointerResult {
     match t {
-        TypeInner::RecursionPoint(IndexOrPointer::Index(i)) => ReplacePointerResult {
-            t: TypeInner::RecursionPoint(IndexOrPointer::Index(i)),
+        TypeInnerOf::RecursionPoint(IndexOrPointer::Index(i)) => ReplacePointerResult {
+            t: TypeInnerOf::RecursionPoint(IndexOrPointer::Index(i)),
             replaced: false,
             contains_pointer: i > depth,
         },
-        TypeInner::RecursionPoint(IndexOrPointer::Pointer(i)) => {
+        TypeInnerOf::RecursionPoint(IndexOrPointer::Pointer(i)) => {
             if i == from {
                 ReplacePointerResult {
-                    t: TypeInner::RecursionPoint(IndexOrPointer::Index(depth)),
+                    t: TypeInnerOf::RecursionPoint(IndexOrPointer::Index(depth)),
                     replaced: true,
                     contains_pointer: false,
                 }
             } else {
                 ReplacePointerResult {
-                    t: TypeInner::RecursionPoint(IndexOrPointer::Pointer(i)),
+                    t: TypeInnerOf::RecursionPoint(IndexOrPointer::Pointer(i)),
                     replaced: false,
                     contains_pointer: true,
                 }
             }
         }
-        TypeInner::Type(t) => {
+        TypeInnerOf::Type(t) => {
             let depth = t.recursive as u32 + depth;
             let mut new_t = Vec::new();
             let mut replaced = false;
             let mut contains_pointer = false;
-            use TypeUnit::*;
+            use TypeUnitOf::*;
             for u in t.ts {
                 match u {
                     Normal { id, args } => {
@@ -348,7 +492,7 @@ fn replace_pointer(
                 }
             }
             ReplacePointerResult {
-                t: TypeInner::Type(Type {
+                t: TypeInnerOf::Type(TypeOf {
                     ts: new_t,
                     recursive: t.recursive,
                     reference: t.reference,
@@ -363,7 +507,7 @@ fn replace_pointer(
 pub enum GetTagNormalResult {
     NotTagged,
     Impossible,
-    Tagged(u32, TypeUnit),
+    Tagged(u32, TypeUnitOf<NormalTypeF>),
 }
 
 pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
@@ -372,21 +516,21 @@ pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
     if ot.len() == 1 {
         let t = ot.ts.first().unwrap();
         return match t {
-            TypeUnit::Normal { id, .. } => {
+            TypeUnitOf::Normal { id, .. } => {
                 if *id == type_id {
                     GetTagNormalResult::NotTagged
                 } else {
                     GetTagNormalResult::Impossible
                 }
             }
-            TypeUnit::Fn(_, _, _) => GetTagNormalResult::Impossible,
+            TypeUnitOf::Fn(_, _, _) => GetTagNormalResult::Impossible,
         };
     }
     for t in &ot.ts {
         match t {
-            TypeUnit::Normal { id, args } if *id == type_id => {
+            TypeUnitOf::Normal { id, args } if *id == type_id => {
                 let t = if ot.recursive {
-                    TypeUnit::Normal {
+                    TypeUnitOf::Normal {
                         id: *id,
                         args: args
                             .iter()
@@ -398,7 +542,7 @@ pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
                 };
                 return GetTagNormalResult::Tagged(tag, t);
             }
-            TypeUnit::Fn(lambda_ids, _, _) => {
+            TypeUnitOf::Fn(lambda_ids, _, _) => {
                 tag += lambda_ids.len() as u32;
             }
             _ => {
@@ -410,15 +554,15 @@ pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
 }
 
 impl TypeInner {
-    pub fn replace_index(self, to: &Type, depth: u32) -> Self {
+    fn replace_index(self, to: &Type, depth: u32) -> Self {
         match self {
-            TypeInner::RecursionPoint(a) if a == depth => TypeInner::Type(to.clone()),
-            TypeInner::RecursionPoint(a) => TypeInner::RecursionPoint(a),
-            TypeInner::Type(Type {
+            TypeInnerOf::RecursionPoint(a) if a == depth => TypeInnerOf::Type(to.clone()),
+            TypeInnerOf::RecursionPoint(a) => TypeInnerOf::RecursionPoint(a),
+            TypeInnerOf::Type(TypeOf {
                 ts,
                 recursive,
                 reference,
-            }) => TypeInner::Type(Type {
+            }) => TypeInnerOf::Type(TypeOf {
                 ts: ts
                     .into_iter()
                     .map(|t| t.replace_index(to, depth + recursive as u32))
@@ -431,79 +575,96 @@ impl TypeInner {
 }
 
 impl TypeUnit {
-    pub fn replace_index(self, to: &Type, depth: u32) -> Self {
+    fn replace_index(self, to: &Type, depth: u32) -> Self {
         match self {
-            TypeUnit::Normal { id, args } => TypeUnit::Normal {
+            TypeUnitOf::Normal { id, args } => TypeUnitOf::Normal {
                 id,
                 args: args
                     .into_iter()
                     .map(|t| t.replace_index(to, depth))
                     .collect(),
             },
-            TypeUnit::Fn(ids, a, b) => {
-                TypeUnit::Fn(ids, a.replace_index(to, depth), b.replace_index(to, depth))
+            TypeUnitOf::Fn(ids, a, b) => {
+                TypeUnitOf::Fn(ids, a.replace_index(to, depth), b.replace_index(to, depth))
             }
         }
     }
 }
 
-pub struct DisplayTypeWithEnv<'a, T>(pub &'a T, pub &'a ConstructorNames);
+pub trait DisplayTypeWithEnv {
+    fn fmt_with_env(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        env: &ConstructorNames,
+    ) -> std::fmt::Result;
+}
 
-impl<R: fmt::Debug> fmt::Display for DisplayTypeWithEnv<'_, Type<R>> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.0.recursive {
+pub struct DisplayTypeWithEnvStruct<'a, T: DisplayTypeWithEnv>(pub &'a T, pub &'a ConstructorNames);
+
+impl<T: DisplayTypeWithEnv> Display for DisplayTypeWithEnvStruct<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt_with_env(f, self.1)
+    }
+}
+
+impl<R: TypeFamily> DisplayTypeWithEnv for TypeOf<R> {
+    fn fmt_with_env(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        env: &ConstructorNames,
+    ) -> std::fmt::Result {
+        if self.recursive {
             write!(f, "rec[")?;
         }
-        if self.0.reference {
+        if self.reference {
             write!(f, "&")?;
         }
-        match self.0.ts.len() {
+        match self.ts.len() {
             0 => write!(f, "Never"),
-            1 => {
-                write!(
-                    f,
-                    "{}",
-                    DisplayTypeWithEnv(self.0.ts.first().unwrap(), self.1)
-                )
-            }
+            1 => self.ts.first().unwrap().fmt_with_env(f, env),
             _ => write!(
                 f,
                 "({})",
-                self.0
-                    .ts
+                self.ts
                     .iter()
-                    .format_with(" | ", |t, f| f(&DisplayTypeWithEnv(t, self.1)))
+                    .format_with(" | ", |t, f| f(&DisplayTypeWithEnvStruct(t, env)))
             ),
         }?;
-        if self.0.recursive {
+        if self.recursive {
             write!(f, "]")?;
         }
         Ok(())
     }
 }
 
-impl<R: fmt::Debug> Display for DisplayTypeWithEnv<'_, TypeInner<R>> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.0 {
-            TypeInner::RecursionPoint(d) => {
+impl<R: TypeFamily> DisplayTypeWithEnv for TypeInnerOf<R> {
+    fn fmt_with_env(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        env: &ConstructorNames,
+    ) -> std::fmt::Result {
+        match self {
+            TypeInnerOf::RecursionPoint(d) => {
                 write!(f, "d{d:?}")
             }
-            TypeInner::Type(t) => {
-                write!(f, "{}", DisplayTypeWithEnv(t, self.1))
-            }
+            TypeInnerOf::Type(t) => t.fmt_with_env(f, env),
         }
     }
 }
 
-impl<R: fmt::Debug> Display for DisplayTypeWithEnv<'_, TypeUnit<R>> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use TypeUnit::*;
-        match self.0 {
+impl<R: TypeFamily> DisplayTypeWithEnv for TypeUnitOf<R> {
+    fn fmt_with_env(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        env: &ConstructorNames,
+    ) -> std::fmt::Result {
+        use TypeUnitOf::*;
+        match self {
             Normal { args, id } => {
                 debug_assert_ne!(*id, TypeId::Intrinsic(IntrinsicType::Fn));
                 match id {
                     TypeId::UserDefined(u) => {
-                        write!(f, "{}", self.1.get(*u))?;
+                        write!(f, "{}", env.get(*u))?;
                     }
                     TypeId::Intrinsic(d) => {
                         write!(f, "{d:?}")?;
@@ -514,7 +675,7 @@ impl<R: fmt::Debug> Display for DisplayTypeWithEnv<'_, TypeUnit<R>> {
                         f,
                         "[{}]",
                         args.iter()
-                            .format_with(", ", |a, f| f(&DisplayTypeWithEnv(a, self.1)))
+                            .format_with(", ", |a, f| f(&DisplayTypeWithEnvStruct(a, env)))
                     )?;
                 };
                 Ok(())
@@ -523,41 +684,53 @@ impl<R: fmt::Debug> Display for DisplayTypeWithEnv<'_, TypeUnit<R>> {
                 #[cfg(feature = "display-fn-id")]
                 {
                     let id_paren = _id.len() >= 2;
+                    write!(f, "(")?;
+                    a.fmt_with_env(f, env)?;
                     write!(
                         f,
-                        "({}) -{}{}{}-> {}",
-                        DisplayTypeWithEnv(a, self.1),
+                        ") -{}{}{}-> ",
                         if id_paren { "(" } else { "" },
                         _id.iter()
-                            .format_with(" | ", |a, f| f(&DisplayTypeWithEnv(a, self.1))),
+                            .format_with(" | ", |a, f| f(&DisplayTypeWithEnvStruct(a, env))),
                         if id_paren { ")" } else { "" },
-                        DisplayTypeWithEnv(b, self.1)
-                    )
+                    )?;
+                    b.fmt_with_env(f, env)
                 }
                 #[cfg(not(feature = "display-fn-id"))]
                 write!(
                     f,
                     "({}) -> {}",
-                    DisplayTypeWithEnv(a, self.1),
-                    DisplayTypeWithEnv(b, self.1)
+                    DisplayTypeWithEnvStruct(a, env),
+                    DisplayTypeWithEnvStruct(b, env)
                 )
             }
         }
     }
 }
 
-impl<R: fmt::Debug> Display for DisplayTypeWithEnv<'_, LambdaId<TypeInner<R>>> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "f{}({})",
-            self.0.id,
-            DisplayTypeWithEnv(&self.0.root_t, self.1)
-        )
+impl<R: DisplayTypeWithEnv> DisplayTypeWithEnv for LambdaId<R> {
+    fn fmt_with_env(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        env: &ConstructorNames,
+    ) -> std::fmt::Result {
+        write!(f, "f{}(", self.id,)?;
+        self.root_t.fmt_with_env(f, env)?;
+        write!(f, ")")
     }
 }
 
-impl<R: fmt::Debug> fmt::Debug for Type<R> {
+impl DisplayTypeWithEnv for id_generator::Id<TypeIdTag> {
+    fn fmt_with_env(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        _env: &ConstructorNames,
+    ) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl<R: TypeFamily> fmt::Debug for TypeOf<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.recursive {
             write!(f, "rec[")?;
@@ -577,20 +750,20 @@ impl<R: fmt::Debug> fmt::Debug for Type<R> {
     }
 }
 
-impl<R: fmt::Debug> fmt::Debug for TypeInner<R> {
+impl<R: TypeFamily> fmt::Debug for TypeInnerOf<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TypeInner::RecursionPoint(d) => {
+            TypeInnerOf::RecursionPoint(d) => {
                 write!(f, "d{d:?}")
             }
-            TypeInner::Type(t) => write!(f, "{t:?}"),
+            TypeInnerOf::Type(t) => write!(f, "{t:?}"),
         }
     }
 }
 
-impl<R: fmt::Debug> fmt::Debug for TypeUnit<R> {
+impl<R: TypeFamily> fmt::Debug for TypeUnitOf<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use TypeUnit::*;
+        use TypeUnitOf::*;
         match self {
             Normal { args, id } => {
                 debug_assert_ne!(*id, TypeId::Intrinsic(IntrinsicType::Fn));

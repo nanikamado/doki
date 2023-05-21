@@ -1,6 +1,7 @@
 use super::collector::Collector;
 use crate::ast_step1::{self, TypeId};
-use crate::ast_step2::{FxLambdaId as LambdaId, Type, TypeInner, TypeUnit};
+use crate::ast_step2::{FxLambdaId as LambdaId, Type, TypeIdTag, TypeInnerOf, TypeUnitOf};
+use crate::id_generator::{self};
 use crate::intrinsics::IntrinsicType;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::Display;
@@ -34,7 +35,7 @@ pub struct Env {
     pub function_context: FxHashMap<LambdaId, Vec<Type>>,
     pub aggregate_types: Collector<CAggregateType>,
     pub memo: FxHashMap<Type, CType>,
-    pub fx_type_map: FxHashMap<ast_step1::LambdaId<Type>, LambdaId>,
+    pub fx_type_map: FxHashMap<ast_step1::LambdaId<id_generator::Id<TypeIdTag>>, LambdaId>,
     pub reffed_aggregates: FxHashSet<usize>,
 }
 
@@ -43,8 +44,8 @@ impl Env {
         debug_assert!(!t.reference);
         let single = if t.len() == 1 {
             match t.iter().next().unwrap() {
-                TypeUnit::Normal { .. } => true,
-                TypeUnit::Fn(l, _, _) => l.len() == 1,
+                TypeUnitOf::Normal { .. } => true,
+                TypeUnitOf::Fn(l, _, _) => l.len() == 1,
             }
         } else {
             false
@@ -61,7 +62,7 @@ impl Env {
         let mut ts = Vec::new();
         debug_assert!(!t.contains_broken_link_rec(type_stack.is_some() as u32));
         for tu in t.iter() {
-            use TypeUnit::*;
+            use TypeUnitOf::*;
             match tu {
                 Normal { id, args } => match id {
                     TypeId::Intrinsic(IntrinsicType::String)
@@ -81,13 +82,13 @@ impl Env {
                         let t = CAggregateType::Struct(
                             args.iter()
                                 .map(|t| match t {
-                                    TypeInner::RecursionPoint(d) => {
+                                    TypeInnerOf::RecursionPoint(d) => {
                                         assert_eq!(*d, 0);
                                         CType::Ref(Box::new(CType::Aggregate(
                                             type_stack.as_ref().unwrap().0,
                                         )))
                                     }
-                                    TypeInner::Type(t) => self.c_type(t, type_stack.clone()),
+                                    TypeInnerOf::Type(t) => self.c_type(t, type_stack.clone()),
                                 })
                                 .collect(),
                         );
@@ -106,15 +107,7 @@ impl Env {
                 },
                 Fn(lambda_id, _, _) => {
                     for l in lambda_id {
-                        let l = l.map_type_ref(|t| {
-                            if let TypeInner::Type(t) = t {
-                                debug_assert!(!t.contains_broken_link());
-                                t.clone()
-                            } else {
-                                panic!()
-                            }
-                        });
-                        let l = self.fx_type_map[&l];
+                        let l = self.fx_type_map[l];
                         let ctx = self.function_context[&l].clone();
                         let c_t = CAggregateType::Struct(
                             ctx.iter()

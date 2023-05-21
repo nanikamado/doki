@@ -5,7 +5,7 @@ use self::c_type::{CAggregateType, CType};
 use crate::ast_step1::{ConstructorId, ConstructorNames, TypeId};
 use crate::ast_step2::{
     self, Ast, Block, Expr, Function, GlobalVariableId, Instruction, LocalVariable,
-    LocalVariableCollector, Tester, Type, TypeUnit, VariableDecl, VariableId,
+    LocalVariableCollector, Tester, Type, TypeUnitOf, VariableDecl, VariableId,
 };
 use crate::intrinsics::{IntrinsicType, IntrinsicVariable};
 use itertools::Itertools;
@@ -63,7 +63,7 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
             )
         })
         .collect_vec();
-    let unit_t: Type = TypeUnit::Normal {
+    let unit_t: Type = TypeUnitOf::Normal {
         id: TypeId::Intrinsic(IntrinsicType::Unit),
         args: Vec::new(),
     }
@@ -215,7 +215,7 @@ fn primitive_arg_types(i: IntrinsicVariable, env: &mut c_type::Env) -> Vec<CType
 }
 
 fn primitive_ret_type(i: IntrinsicVariable, env: &mut c_type::Env) -> CType {
-    let t = TypeUnit::Normal {
+    let t = TypeUnitOf::Normal {
         id: TypeId::Intrinsic(i.runtime_return_type()),
         args: Vec::new(),
     }
@@ -298,7 +298,7 @@ fn write_fns(
                 function.id,
                 ct,
                 Dis(&VariableId::Local(function.parameter), &env),
-                ast_step2::DisplayTypeWithEnv(t, env.constructor_names),
+                ast_step2::DisplayTypeWithEnvStruct(t, env.constructor_names),
                 CType::Aggregate(
                     c_type_env.aggregate_types.get(CAggregateType::Struct(
                         function
@@ -375,7 +375,7 @@ impl DisplayWithEnv for VariableDecl {
             "{} {}/*{}*/=(()=>({{{}||panic(\"pattern is not exhaustive\");{}}}))();",
             ct,
             Dis(&VariableId::Global(self.decl_id), env),
-            ast_step2::DisplayTypeWithEnv(&self.t, env.constructor_names),
+            ast_step2::DisplayTypeWithEnvStruct(&self.t_hash, env.constructor_names),
             Dis(&self.value, env),
             Dis(&self.ret, env)
         )
@@ -407,7 +407,7 @@ impl DisplayWithEnv for TerminalBlock<'_> {
                     f(&format_args!(
                         "{} /*{}*/ {};",
                         ct,
-                        ast_step2::DisplayTypeWithEnv(t, env.constructor_names),
+                        ast_step2::DisplayTypeWithEnvStruct(t, env.constructor_names),
                         Dis(&VariableId::Local(*v), env),
                     ))
                 }),

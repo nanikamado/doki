@@ -4,7 +4,7 @@ pub use self::padded_type_map::{PaddedTypeMap, ReplaceMap, Terminal, TypeId, Typ
 use crate::intrinsics::{IntrinsicConstructor, IntrinsicType, IntrinsicVariable};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 #[derive(Debug)]
 pub struct Ast {
@@ -31,7 +31,7 @@ pub enum VariableId {
     Global(GlobalVariable, ReplaceMap, TypePointer),
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct LambdaId<T> {
     pub id: u32,
     pub root_t: T,
@@ -518,9 +518,9 @@ impl Block {
     }
 }
 
-impl<T: Display> Display for LambdaId<T> {
+impl<T: Debug> Display for LambdaId<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "f{}({})", self.id, self.root_t)
+        write!(f, "f{}({:?})", self.id, self.root_t)
     }
 }
 

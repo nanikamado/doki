@@ -1,6 +1,7 @@
 mod ast_step1;
 mod ast_step2;
 mod codegen;
+mod id_generator;
 pub mod intrinsics;
 
 pub use crate::ast_step1::{

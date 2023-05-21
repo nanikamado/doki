@@ -2,12 +2,17 @@ mod local_variable;
 mod type_memo;
 
 pub use self::local_variable::{LocalVariable, LocalVariableCollector};
-use self::type_memo::{get_tag_normal, GetTagNormalResult, UnhashableTypeMemo};
-pub use self::type_memo::{DisplayTypeWithEnv, Type, TypeInner, TypeUnit};
+use self::type_memo::{get_tag_normal, GetTagNormalResult, TypeMemo};
+pub use self::type_memo::{
+    DisplayTypeWithEnv, DisplayTypeWithEnvStruct, Type, TypeForHash, TypeInner, TypeInnerForHash,
+    TypeInnerOf, TypeOf, TypeUnit, TypeUnitForHash, TypeUnitOf,
+};
 use crate::ast_step1::{
     self, BasicFunction, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes,
     PaddedTypeMap, ReplaceMap, TypeId, TypePointer,
 };
+use crate::ast_step2::type_memo::BrokenLinkCheck;
+use crate::id_generator::{self, IdGenerator};
 use crate::intrinsics::IntrinsicType;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -22,8 +27,9 @@ pub struct Ast {
     pub functions: Vec<Function>,
     pub type_map: PaddedTypeMap,
     pub variable_types: LocalVariableCollector<Type>,
-    pub fx_type_map: FxHashMap<LambdaId<Type>, FxLambdaId>,
+    pub fx_type_map: FxHashMap<LambdaId<id_generator::Id<TypeIdTag>>, FxLambdaId>,
     pub constructor_names: ConstructorNames,
+    pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -35,6 +41,7 @@ pub struct VariableDecl {
     pub value: Block,
     pub ret: VariableId,
     pub decl_id: GlobalVariableId,
+    pub t_hash: TypeForHash,
     pub t: Type,
 }
 
@@ -145,6 +152,7 @@ impl Ast {
                     variable_types: memo.local_variable_collector,
                     fx_type_map,
                     constructor_names: memo.constructor_names,
+                    type_id_generator: memo.type_id_generator,
                 }
             }
             _ => panic!(),
@@ -154,18 +162,18 @@ impl Ast {
 
 #[derive(Debug, PartialEq, Clone)]
 struct FnId {
-    arg_t: Type,
-    ret_t: Type,
-    lambda_id: LambdaId<Type>,
+    arg_t: TypeForHash,
+    ret_t: TypeForHash,
+    lambda_id: LambdaId<TypeForHash>,
 }
 
 pub struct Env {
     variable_decls: FxHashMap<GlobalVariable, ast_step1::VariableDecl>,
-    monomorphized_variable_map: FxHashMap<(GlobalVariable, Type), GlobalVariableId>,
+    monomorphized_variable_map: FxHashMap<(GlobalVariable, TypeForHash), GlobalVariableId>,
     monomorphized_variables: Vec<VariableDecl>,
     map: PaddedTypeMap,
-    functions: FxHashMap<LambdaId<Type>, FunctionEntry>,
-    unhashable_type_memo: UnhashableTypeMemo,
+    functions: FxHashMap<LambdaId<TypeUnique>, FunctionEntry>,
+    type_memo: TypeMemo,
     local_variable_types_old: LocalVariableTypes,
     local_variable_replace_map: FxHashMap<ast_step1::LocalVariable, LocalVariable>,
     local_variable_collector: LocalVariableCollector<Type>,
@@ -173,6 +181,7 @@ pub struct Env {
     defined_local_variables: FxHashSet<LocalVariable>,
     global_variable_count: usize,
     constructor_names: ConstructorNames,
+    type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
 }
 
 #[derive(Debug)]
@@ -183,6 +192,11 @@ pub enum FunctionEntry {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct FxLambdaId(pub u32);
+
+#[derive(Debug, Clone, Copy)]
+pub struct TypeIdTag;
+
+type TypeUnique = id_generator::Id<TypeIdTag>;
 
 impl Env {
     pub fn new(
@@ -197,7 +211,7 @@ impl Env {
             monomorphized_variables: Default::default(),
             map,
             functions: FxHashMap::default(),
-            unhashable_type_memo: UnhashableTypeMemo::default(),
+            type_memo: TypeMemo::default(),
             local_variable_types_old: local_variable_types,
             local_variable_replace_map: FxHashMap::default(),
             local_variable_collector: LocalVariableCollector::new(),
@@ -205,6 +219,7 @@ impl Env {
             defined_local_variables: Default::default(),
             global_variable_count: 0,
             constructor_names,
+            type_id_generator: Default::default(),
         }
     }
 
@@ -215,26 +230,29 @@ impl Env {
         replace_map: &mut ReplaceMap,
     ) -> GlobalVariableId {
         let p = self.map.clone_pointer(p, replace_map);
+        let t_for_hash = self.get_type_for_hash(p);
         let t = self.get_type(p);
-        let decl_id_t = (decl_id, t);
+        let decl_id_t = (decl_id, t_for_hash);
         if let Some(d) = self.monomorphized_variable_map.get(&decl_id_t) {
             *d
         } else {
-            let (_, t) = decl_id_t;
+            let (_, t_for_hash) = decl_id_t;
             let new_decl_id = GlobalVariableId(self.global_variable_count);
             self.global_variable_count += 1;
             let d = self.variable_decls.get(&decl_id).unwrap().clone();
             self.monomorphized_variable_map
-                .insert((decl_id, t.clone()), new_decl_id);
+                .insert((decl_id, t_for_hash.clone()), new_decl_id);
             let local_variable_replace_map_tmp =
                 std::mem::take(&mut self.local_variable_replace_map);
             let ht = self.get_type_for_hash(p);
-            let (b, _) = self.block(d.value, &ht, replace_map);
+            let t_id = self.type_id_generator.get(ht);
+            let (b, _) = self.block(d.value, t_id, replace_map);
             let d = VariableDecl {
                 value: b,
                 decl_id: new_decl_id,
                 ret: self.get_defined_variable_id(ast_step1::VariableId::Local(d.ret), replace_map),
                 name: d.name,
+                t_hash: t_for_hash,
                 t,
             };
             self.local_variable_replace_map = local_variable_replace_map_tmp;
@@ -299,7 +317,7 @@ impl Env {
     fn block(
         &mut self,
         block: ast_step1::Block,
-        root_t: &Type,
+        root_t: TypeUnique,
         replace_map: &mut ReplaceMap,
     ) -> (Block, bool) {
         let mut instructions = Vec::new();
@@ -317,7 +335,7 @@ impl Env {
     fn instruction(
         &mut self,
         instruction: ast_step1::Instruction,
-        root_t: &Type,
+        root_t: TypeUnique,
         replace_map: &mut ReplaceMap,
         instructions: &mut Vec<Instruction>,
     ) -> bool {
@@ -425,7 +443,7 @@ impl Env {
             GetTagNormalResult::NotTagged => Ok(a),
             GetTagNormalResult::Impossible => Err(format!(
                 "expected {type_id} but found {}. cannot downcast.",
-                DisplayTypeWithEnv(&t, &self.constructor_names)
+                DisplayTypeWithEnvStruct(&t, &self.constructor_names)
             )),
         }
     }
@@ -435,7 +453,7 @@ impl Env {
         &mut self,
         e: ast_step1::Expr,
         p: TypePointer,
-        root_t: &Type,
+        root_t: TypeUnique,
         replace_map: &mut ReplaceMap,
         instructions: &mut Vec<Instruction>,
     ) -> Result<Expr, String> {
@@ -474,7 +492,7 @@ impl Env {
                     .extend(defined_local_variables_tmp);
                 let lambda_id = LambdaId {
                     id: lambda_id.id,
-                    root_t: root_t.clone(),
+                    root_t,
                 };
                 let e = self.functions.get_mut(&lambda_id).unwrap();
                 let FunctionEntry::Placeholder(fx_lambda_id) = *e else {
@@ -650,21 +668,17 @@ impl Env {
         let ot = self.get_type(p);
         for t in ot.iter() {
             match t {
-                TypeUnit::Normal { .. } => {
+                TypeUnitOf::Normal { .. } => {
                     tag += 1;
                 }
-                TypeUnit::Fn(fn_id, arg_t, ret_t) => {
+                TypeUnitOf::Fn(fn_id, arg_t, ret_t) => {
+                    debug_assert!(!arg_t.contains_broken_link(0));
+                    debug_assert!(!ret_t.contains_broken_link(0));
                     for id_type_inner in fn_id {
                         let len = self.functions.len() as u32;
                         let e = self
                             .functions
-                            .entry(id_type_inner.clone().map_type(|t| {
-                                if let TypeInner::Type(t) = t.replace_index(&ot, 0) {
-                                    t
-                                } else {
-                                    panic!()
-                                }
-                            }))
+                            .entry(*id_type_inner)
                             .or_insert(FunctionEntry::Placeholder(FxLambdaId(len)));
                         let id = match e {
                             FunctionEntry::Placeholder(id) => *id,
@@ -673,10 +687,10 @@ impl Env {
                         fs.push((
                             tag,
                             id,
-                            TypeUnit::Fn(
-                                [id_type_inner.clone()].into(),
-                                arg_t.clone().replace_index(&ot, 0),
-                                ret_t.clone().replace_index(&ot, 0),
+                            TypeUnitOf::Fn(
+                                [*id_type_inner].into(),
+                                arg_t.clone(),
+                                ret_t.clone(),
                             )
                             .into(),
                         ));
@@ -689,12 +703,12 @@ impl Env {
     }
 
     fn get_type(&mut self, p: TypePointer) -> Type {
-        self.unhashable_type_memo.get_type(p, &mut self.map)
+        self.type_memo
+            .get_type(p, &mut self.map, &mut self.type_id_generator)
     }
 
-    fn get_type_for_hash(&mut self, p: TypePointer) -> Type {
-        self.unhashable_type_memo
-            .get_type_for_hash(p, &mut self.map)
+    fn get_type_for_hash(&mut self, p: TypePointer) -> TypeForHash {
+        self.type_memo.get_type_for_hash(p, &mut self.map)
     }
 
     fn expr_to_variable(
