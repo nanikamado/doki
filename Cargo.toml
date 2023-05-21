@@ -5,16 +5,16 @@ edition = "2021"
 
 [workspace]
 default-members = ["."]
-members = [".", "doki-ir", "parser", "compiler"]
+members = [".", "crates/*"]
 
 [profile.release]
 debug = true
 
 [dependencies]
 clap = { version = "4.2.7", features = ["derive"] }
-compiler = { path = "compiler" }
+compiler = { path = "crates/compiler" }
 tempfile = "3.5.0"
-language-server = { path = "language-server", optional = true }
+language-server = { path = "crates/language-server", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2.0.4"
