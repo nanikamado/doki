@@ -1,7 +1,7 @@
 use rustc_hash::FxHashMap;
 use std::marker::PhantomData;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Id<T> {
     id: usize,
     phantom: PhantomData<T>,
@@ -53,5 +53,11 @@ impl<T> PartialOrd for Id<T> {
 impl<T> std::hash::Hash for Id<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
+    }
+}
+
+impl<T> std::fmt::Debug for Id<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.id)
     }
 }
