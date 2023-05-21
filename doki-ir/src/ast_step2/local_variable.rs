@@ -32,3 +32,9 @@ impl Display for LocalVariable {
         write!(f, "{}", self.0)
     }
 }
+
+impl<T> Default for LocalVariableCollector<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -30,6 +30,8 @@ pub struct Ast {
     pub fx_type_map: FxHashMap<LambdaId<id_generator::Id<TypeIdTag>>, FxLambdaId>,
     pub constructor_names: ConstructorNames,
     pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
+    pub local_variable_replace_map:
+        FxHashMap<(ast_step1::LocalVariable, id_generator::Id<TypeIdTag>), LocalVariable>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -152,6 +154,7 @@ impl Ast {
                     fx_type_map,
                     constructor_names: memo.constructor_names,
                     type_id_generator: memo.type_id_generator,
+                    local_variable_replace_map: memo.local_variable_replace_map,
                 }
             }
             _ => panic!(),

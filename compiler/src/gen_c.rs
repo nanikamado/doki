@@ -1,8 +1,8 @@
 use crate::intrinsics::IntrinsicVariableExt;
 use doki_ir::intrinsics::IntoEnumIterator;
-use doki_ir::{Block, GlobalVariable, LocalVariable};
+use doki_ir::{Block, GlobalVariable, LocalVariable, LocalVariable2};
 use parser::{Ast, Expr, ExprWithSpan, Pattern, Span};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHasher};
 use std::collections::BTreeMap;
 use std::io::Write;
 
@@ -92,9 +92,20 @@ pub fn gen_c(ast: Ast, w: &mut impl Write) {
     env.build_env.gen_c(entry_point, w)
 }
 
-pub fn token_map(ast: Ast) -> BTreeMap<Span, LocalVariable> {
+pub fn token_map(ast: Ast) -> BTreeMap<Span, Vec<LocalVariable2>> {
     let env = build(ast);
-    env.span_map
+    let entry_point = env.global_variable_map["main"];
+    let span_map = env.span_map;
+    let ast = env.build_env.build_ast_step2(entry_point);
+    let m: multimap::MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> = ast
+        .local_variable_replace_map
+        .into_iter()
+        .map(|((l, _id), l2)| (l, l2))
+        .collect();
+    span_map
+        .into_iter()
+        .map(|(s, l)| (s, m.get_vec(&l).cloned().unwrap_or_default()))
+        .collect()
 }
 
 impl<'a> Env<'a> {

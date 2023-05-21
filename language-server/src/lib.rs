@@ -1,5 +1,6 @@
 use compiler::Span;
 use dashmap::DashMap;
+use itertools::Itertools;
 use std::fs;
 use std::sync::Arc;
 use tower_lsp::jsonrpc::Result;
@@ -212,7 +213,11 @@ fn make_hover_map(src: &str) -> Option<HoverMap> {
                         {
                             let a = Arc::new(Hover {
                                 contents: HoverContents::Markup(MarkupContent {
-                                    value: format!("```\n{}\n```", l),
+                                    value: if l.is_empty() {
+                                        "eliminated".to_string()
+                                    } else {
+                                        format!("```\n{}\n```", l.iter().format(", "))
+                                    },
                                     kind: MarkupKind::Markdown,
                                 }),
                                 range: Some(Range {
