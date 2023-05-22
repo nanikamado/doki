@@ -297,7 +297,7 @@ impl Env {
         let parameter = self.new_local_variable();
         let lambda_id = LambdaId {
             id: self.lambda_count,
-            root_t: PaddedTypeMap::dummy_pointer(),
+            root_t: PaddedTypeMap::null_pointer(),
         };
         self.lambda_count += 1;
         let ret = self.new_local_variable();
@@ -333,7 +333,7 @@ impl Env {
             Expr::Ident(VariableId::Global(
                 v,
                 Default::default(),
-                PaddedTypeMap::dummy_pointer(),
+                PaddedTypeMap::null_pointer(),
             )),
         );
     }

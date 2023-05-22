@@ -30,6 +30,7 @@ pub enum Terminal {
 enum Node {
     Pointer(TypePointer),
     Terminal(Terminal),
+    Null,
 }
 
 #[derive(Debug)]
@@ -40,7 +41,7 @@ pub struct PaddedTypeMap {
 impl Default for PaddedTypeMap {
     fn default() -> Self {
         Self {
-            map: vec![Node::Terminal(Terminal::TypeMap(TypeMap::default()))],
+            map: vec![Node::Null],
         }
     }
 }
@@ -53,7 +54,7 @@ impl PaddedTypeMap {
         TypePointer(p)
     }
 
-    pub fn dummy_pointer() -> TypePointer {
+    pub fn null_pointer() -> TypePointer {
         TypePointer(0)
     }
 
@@ -152,12 +153,12 @@ impl PaddedTypeMap {
     }
 
     pub fn find(&mut self, p: TypePointer) -> TypePointer {
-        debug_assert_ne!(p.0, 0);
         let next_p = match &self.map[p.0] {
             Node::Pointer(p) => *p,
             Node::Terminal(_) => {
                 return p;
             }
+            Node::Null => panic!(),
         };
         let next_p = self.find(next_p);
         self.map[p.0] = Node::Pointer(next_p);
@@ -193,7 +194,6 @@ impl PaddedTypeMap {
     }
 
     pub fn dereference_without_find(&self, p: TypePointer) -> &Terminal {
-        debug_assert_ne!(p.0, 0);
         if let Node::Terminal(t) = &self.map[p.0] {
             t
         } else {
