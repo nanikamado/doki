@@ -152,7 +152,7 @@ impl PaddedTypeMap {
         }
     }
 
-    pub fn find(&mut self, p: TypePointer) -> TypePointer {
+    fn find(&mut self, p: TypePointer) -> TypePointer {
         let next_p = match &self.map[p.0] {
             Node::Pointer(p) => *p,
             Node::Terminal(_) => {
