@@ -16,13 +16,13 @@ use std::io::Write;
 
 impl Env {
     pub fn gen_c(self, entry_point: GlobalVariable, w: &mut impl Write) {
-        let ast = self.build_ast4(entry_point);
+        let ast = self.build(entry_point);
         let ast = ast_step2::Ast::from(ast);
         codegen::codegen(ast, w)
     }
 
     pub fn build_ast_step2(self, entry_point: GlobalVariable) -> ast_step2::Ast {
-        let ast = self.build_ast4(entry_point);
+        let ast = self.build(entry_point);
         ast_step2::Ast::from(ast)
     }
 }

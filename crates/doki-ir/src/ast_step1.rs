@@ -447,7 +447,7 @@ impl Env {
         ConstructorId(self.field_len.len() - 1)
     }
 
-    pub(crate) fn build_ast4(self, entry_point: GlobalVariable) -> Ast {
+    pub(crate) fn build(self, entry_point: GlobalVariable) -> Ast {
         let mut env_next = TypeInfEnv {
             type_map: self.type_map,
             global_variable_types: self.global_variable_types,
