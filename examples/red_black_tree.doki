@@ -9,9 +9,17 @@ lt = a: b: match intrinsic_lt a b with
 
 println = a: intrinsic_print_str (intrinsic_append_str a "\n")
 
-bool_to_string = a: match a with
-        True => "True",
-        False => "False",
+not = a: match a with
+        True => False,
+        False => True,
+    end
+
+and = a: b: match a with
+        True => match b with
+                True => True,
+                False => False,
+            end,
+        False => False,
     end
 
 data E 0
@@ -50,11 +58,11 @@ contains = x: t: match t with
             end,
     end
 
-main = _: let test0 = contains 0 E
+main = _: let test0 = not (contains 0 E)
     in let t = insert 100 (insert 0 (insert 0 (insert 4 (insert 2 E))))
     in let test1 = contains 0 t
-    in let test2 = contains 3 t
-    in println match Pair test0 (Pair test1 test2) with
-        Pair False (Pair True False) => "ok",
-        True => "ng",
+    in let test2 = not (contains 3 t)
+    in println match and test0 (and test1 test2) with
+        True => "ok",
+        False => "ng",
     end
