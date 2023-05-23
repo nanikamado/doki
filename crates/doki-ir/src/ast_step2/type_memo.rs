@@ -591,9 +591,19 @@ impl TypeUnit {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub enum Precedence {
+    Strong = 0,
+    Fn = 1,
+    Weak = 2,
+}
+
+use Precedence as P;
+
 pub trait DisplayTypeWithEnv {
     fn fmt_with_env(
         &self,
+        p: Precedence,
         f: &mut std::fmt::Formatter<'_>,
         env: &ConstructorNames,
     ) -> std::fmt::Result;
@@ -601,38 +611,45 @@ pub trait DisplayTypeWithEnv {
 
 pub struct DisplayTypeWithEnvStruct<'a, T: DisplayTypeWithEnv>(pub &'a T, pub &'a ConstructorNames);
 
+struct DisplayTypeHelper<'a, T: DisplayTypeWithEnv>(&'a T, Precedence, &'a ConstructorNames);
+
+impl<T: DisplayTypeWithEnv> Display for DisplayTypeHelper<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt_with_env(self.1, f, self.2)
+    }
+}
+
 impl<T: DisplayTypeWithEnv> Display for DisplayTypeWithEnvStruct<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt_with_env(f, self.1)
+        self.0.fmt_with_env(P::Weak, f, self.1)
     }
 }
 
 impl<R: TypeFamily> DisplayTypeWithEnv for TypeOf<R> {
     fn fmt_with_env(
         &self,
+        mut p: Precedence,
         f: &mut std::fmt::Formatter<'_>,
         env: &ConstructorNames,
     ) -> std::fmt::Result {
         if self.recursive {
-            write!(f, "rec[")?;
+            write!(f, "rec ")?;
         }
         if self.reference {
             write!(f, "&")?;
+            p = P::Strong;
         }
         match self.ts.len() {
             0 => write!(f, "Never"),
-            1 => self.ts.first().unwrap().fmt_with_env(f, env),
+            1 => self.ts.first().unwrap().fmt_with_env(p, f, env),
             _ => write!(
                 f,
                 "({})",
                 self.ts
                     .iter()
-                    .format_with(" | ", |t, f| f(&DisplayTypeWithEnvStruct(t, env)))
+                    .format_with(" | ", |t, f| f(&DisplayTypeHelper(t, P::Strong, env)))
             ),
         }?;
-        if self.recursive {
-            write!(f, "]")?;
-        }
         Ok(())
     }
 }
@@ -640,6 +657,7 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeOf<R> {
 impl<R: TypeFamily> DisplayTypeWithEnv for TypeInnerOf<R> {
     fn fmt_with_env(
         &self,
+        p: Precedence,
         f: &mut std::fmt::Formatter<'_>,
         env: &ConstructorNames,
     ) -> std::fmt::Result {
@@ -647,7 +665,7 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeInnerOf<R> {
             TypeInnerOf::RecursionPoint(d) => {
                 write!(f, "d{d:?}")
             }
-            TypeInnerOf::Type(t) => t.fmt_with_env(f, env),
+            TypeInnerOf::Type(t) => t.fmt_with_env(p, f, env),
         }
     }
 }
@@ -655,6 +673,7 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeInnerOf<R> {
 impl<R: TypeFamily> DisplayTypeWithEnv for TypeUnitOf<R> {
     fn fmt_with_env(
         &self,
+        p: Precedence,
         f: &mut std::fmt::Formatter<'_>,
         env: &ConstructorNames,
     ) -> std::fmt::Result {
@@ -674,35 +693,44 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeUnitOf<R> {
                     write!(
                         f,
                         "[{}]",
-                        args.iter()
-                            .format_with(", ", |a, f| f(&DisplayTypeWithEnvStruct(a, env)))
+                        args.iter().format_with(", ", |a, f| f(&DisplayTypeHelper(
+                            a,
+                            P::Weak,
+                            env
+                        )))
                     )?;
                 };
                 Ok(())
             }
             Fn(_id, a, b) => {
+                if p == P::Strong {
+                    write!(f, "(")?;
+                }
                 #[cfg(feature = "display-fn-id")]
                 {
                     let id_paren = _id.len() >= 2;
-                    write!(f, "(")?;
-                    a.fmt_with_env(f, env)?;
                     write!(
                         f,
-                        ") -{}{}{}-> ",
+                        "{} -{}{}{}-> ",
+                        DisplayTypeHelper(a, P::Strong, env),
                         if id_paren { "(" } else { "" },
                         _id.iter()
-                            .format_with(" | ", |a, f| f(&DisplayTypeWithEnvStruct(a, env))),
+                            .format_with(" | ", |a, f| f(&DisplayTypeHelper(a, P::Fn, env))),
                         if id_paren { ")" } else { "" },
                     )?;
-                    b.fmt_with_env(f, env)
+                    b.fmt_with_env(P::Fn, f, env)?;
                 }
                 #[cfg(not(feature = "display-fn-id"))]
                 write!(
                     f,
-                    "({}) -> {}",
-                    DisplayTypeWithEnvStruct(a, env),
-                    DisplayTypeWithEnvStruct(b, env)
-                )
+                    "{} -> {}",
+                    DisplayTypeHelper(a, P::Strong, env),
+                    DisplayTypeHelper(b, P::Fn, env)
+                )?;
+                if p == P::Strong {
+                    write!(f, ")")?;
+                }
+                Ok(())
             }
         }
     }
@@ -711,11 +739,12 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeUnitOf<R> {
 impl<R: DisplayTypeWithEnv> DisplayTypeWithEnv for LambdaId<R> {
     fn fmt_with_env(
         &self,
+        _p: Precedence,
         f: &mut std::fmt::Formatter<'_>,
         env: &ConstructorNames,
     ) -> std::fmt::Result {
         write!(f, "f{}(", self.id,)?;
-        self.root_t.fmt_with_env(f, env)?;
+        self.root_t.fmt_with_env(P::Strong, f, env)?;
         write!(f, ")")
     }
 }
@@ -723,6 +752,7 @@ impl<R: DisplayTypeWithEnv> DisplayTypeWithEnv for LambdaId<R> {
 impl DisplayTypeWithEnv for id_generator::Id<TypeIdTag> {
     fn fmt_with_env(
         &self,
+        _p: Precedence,
         f: &mut std::fmt::Formatter<'_>,
         _env: &ConstructorNames,
     ) -> std::fmt::Result {
@@ -733,18 +763,18 @@ impl DisplayTypeWithEnv for id_generator::Id<TypeIdTag> {
 impl<R: TypeFamily> fmt::Debug for TypeOf<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.recursive {
-            write!(f, "rec[")?;
+            write!(f, "rec ")?;
         }
         if self.reference {
-            write!(f, "&")?;
+            write!(f, "&(")?;
         }
         match self.ts.len() {
             0 => write!(f, "Never"),
             1 => write!(f, "{:?}", self.ts.first().unwrap()),
             _ => write!(f, "({:?})", self.ts.iter().format(" | ")),
         }?;
-        if self.recursive {
-            write!(f, "]")?;
+        if self.reference {
+            write!(f, ")")?;
         }
         Ok(())
     }
