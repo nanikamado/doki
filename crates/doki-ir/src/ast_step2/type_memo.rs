@@ -513,19 +513,7 @@ pub enum GetTagNormalResult {
 pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
     debug_assert_ne!(type_id, TypeId::Intrinsic(IntrinsicType::Fn));
     let mut tag = 0;
-    if ot.len() == 1 {
-        let t = ot.ts.first().unwrap();
-        return match t {
-            TypeUnitOf::Normal { id, .. } => {
-                if *id == type_id {
-                    GetTagNormalResult::NotTagged
-                } else {
-                    GetTagNormalResult::Impossible
-                }
-            }
-            TypeUnitOf::Fn(_, _, _) => GetTagNormalResult::Impossible,
-        };
-    }
+    let mut result = None;
     for t in &ot.ts {
         match t {
             TypeUnitOf::Normal { id, args } if *id == type_id => {
@@ -540,7 +528,9 @@ pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
                 } else {
                     t.clone()
                 };
-                return GetTagNormalResult::Tagged(tag, t);
+                debug_assert!(result.is_none());
+                result = Some((tag, t));
+                tag += 1;
             }
             TypeUnitOf::Fn(lambda_ids, _, _) => {
                 tag += lambda_ids.len() as u32;
@@ -550,7 +540,16 @@ pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
             }
         }
     }
-    GetTagNormalResult::Impossible
+    match result {
+        Some((tag_of_t, t)) => {
+            if tag == 1 {
+                GetTagNormalResult::NotTagged
+            } else {
+                GetTagNormalResult::Tagged(tag_of_t, t)
+            }
+        }
+        None => GetTagNormalResult::Impossible,
+    }
 }
 
 impl TypeInner {

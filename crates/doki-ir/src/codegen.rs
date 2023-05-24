@@ -139,7 +139,7 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
         unit_t,
         r#"
         |int panic(char* msg){
-        |    printf("error: %s\n", msg);
+        |    fprintf(stderr, "error: %s\n", msg);
         |    exit(1);
         |}
         |"#
