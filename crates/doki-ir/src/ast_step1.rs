@@ -3,7 +3,7 @@ mod padded_type_map;
 pub use self::padded_type_map::{PaddedTypeMap, ReplaceMap, Terminal, TypeId, TypePointer};
 use crate::intrinsics::{IntrinsicConstructor, IntrinsicType, IntrinsicVariable};
 use itertools::Itertools;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::fmt::{Debug, Display};
 
 #[derive(Debug)]
@@ -105,14 +105,12 @@ struct TypeInfEnv {
     global_variables_before_type_inf: FxHashMap<GlobalVariable, VariableDecl>,
     global_variables_done: Vec<VariableDecl>,
     trace: FxHashMap<GlobalVariable, TypePointer>,
-    used_trace: FxHashSet<GlobalVariable>,
     field_len: Vec<usize>,
 }
 
 impl TypeInfEnv {
     fn get_type_global(&mut self, decl_id: GlobalVariable) -> (TypePointer, bool) {
         if let Some(p) = self.trace.get(&decl_id) {
-            self.used_trace.insert(decl_id);
             (*p, true)
         } else if let Some(p) = self.global_variable_types.get(&decl_id) {
             (*p, false)
@@ -123,14 +121,11 @@ impl TypeInfEnv {
                 .unwrap();
             let root_t = self.local_variable_types.get(d.ret);
             self.trace.insert(decl_id, root_t);
-            let used_trace_len_base = self.used_trace.len();
             self.block(&mut d.value, root_t);
-            self.used_trace.remove(&decl_id);
             self.trace.remove(&decl_id);
-            let recurring = used_trace_len_base < self.used_trace.len();
             self.global_variable_types.insert(decl_id, root_t);
             self.global_variables_done.push(d);
-            (root_t, recurring)
+            (root_t, false)
         }
     }
 
@@ -454,7 +449,6 @@ impl Env {
             local_variable_types: self.local_variable_types,
             global_variables_before_type_inf: self.global_variables_done,
             trace: Default::default(),
-            used_trace: Default::default(),
             global_variables_done: Default::default(),
             field_len: self.field_len,
         };
