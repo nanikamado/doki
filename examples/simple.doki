@@ -1,0 +1,1 @@
+main = _: intrinsic_print_str "Hello, world.\n"
