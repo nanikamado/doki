@@ -90,10 +90,10 @@ fn build(ast: Ast) -> Env {
     env
 }
 
-pub fn gen_c(ast: Ast, w: &mut impl Write) {
+pub fn gen_c(ast: Ast, minimize_type: bool, w: &mut impl Write) {
     let env = build(ast);
     let entry_point = env.global_variable_map["main"];
-    env.build_env.gen_c(entry_point, w)
+    env.build_env.gen_c(entry_point, minimize_type, w)
 }
 
 pub enum SpanMapEntry {
@@ -101,10 +101,10 @@ pub enum SpanMapEntry {
     GlobalVariable { ts: Vec<doki_ir::TypeForHash> },
 }
 
-pub fn token_map(ast: Ast) -> AnalyzedSrc {
+pub fn token_map(ast: Ast, minimize_type: bool) -> AnalyzedSrc {
     let env = build(ast);
     let entry_point = env.global_variable_map["main"];
-    let ast = env.build_env.build_ast_step2(entry_point);
+    let ast = env.build_env.build_ast_step2(entry_point, minimize_type);
     let global_variables: multimap::MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> = ast
         .variable_decls
         .iter()

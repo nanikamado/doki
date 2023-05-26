@@ -10,13 +10,16 @@ use std::process::exit;
 #[command(version, about, long_about = None)]
 #[clap(arg_required_else_help(true))]
 struct Args {
-    #[arg(required_unless_present_any(["language_server"]))]
+    #[arg(required(true), conflicts_with("language_server"))]
     file: Option<String>,
     /// Output generated c code
-    #[arg(short('c'), long)]
+    #[arg(short('c'), long, conflicts_with("language_server"))]
     emit_c: bool,
+    /// Do not minimize types
+    #[arg(long)]
+    not_type_minimization: bool,
     /// start language server
-    #[arg(short('l'), long, exclusive(true))]
+    #[arg(short('l'), long)]
     language_server: bool,
 }
 
@@ -24,7 +27,7 @@ fn main() {
     let args = Args::parse();
     if args.language_server {
         #[cfg(feature = "language-server")]
-        language_server::run();
+        language_server::run(!args.not_type_minimization);
         #[cfg(not(feature = "language-server"))]
         panic!();
     } else {
@@ -33,8 +36,10 @@ fn main() {
         match compiler::parse(&src) {
             Ok(ast) => {
                 if args.emit_c {
-                    gen_c(ast, &mut stdout());
-                } else if let Ok(exit_status) = run_c::run(|w| gen_c(ast, w)) {
+                    gen_c(ast, !args.not_type_minimization, &mut stdout());
+                } else if let Ok(exit_status) =
+                    run_c::run(|w| gen_c(ast, !args.not_type_minimization, w))
+                {
                     exit(exit_status.code().unwrap());
                 } else {
                     exit(1);

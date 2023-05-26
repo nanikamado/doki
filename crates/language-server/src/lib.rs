@@ -25,6 +25,7 @@ enum TokenCacheState {
 struct Backend {
     client: Client,
     tokens: DashMap<Url, TokenCache>,
+    minimize_type: bool,
 }
 
 #[tower_lsp::async_trait]
@@ -144,8 +145,9 @@ impl Backend {
             .log_message(MessageType::INFO, "compiling.")
             .await;
         if let Some(src) = text.or_else(|| fs::read_to_string(uri.path()).ok()) {
+            let minimize_type = self.minimize_type;
             if let Ok(Some(hover_map)) =
-                tokio::task::spawn_blocking(move || make_hover_map(&src)).await
+                tokio::task::spawn_blocking(move || make_hover_map(&src, minimize_type)).await
             {
                 self.tokens.insert(
                     uri,
@@ -171,18 +173,19 @@ impl Backend {
 }
 
 #[tokio::main]
-pub async fn run() {
+pub async fn run(minimize_type: bool) {
     let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
     let (service, socket) = LspService::new(|client| Backend {
         client,
         tokens: Default::default(),
+        minimize_type,
     });
     Server::new(stdin, stdout, socket).serve(service).await;
 }
 
-fn make_hover_map(src: &str) -> Option<HoverMap> {
+fn make_hover_map(src: &str, minimize_type: bool) -> Option<HoverMap> {
     let (char_to_utf16_map, utf16_to_char_map) = make_map(src);
-    let r = compiler::token_map(src).ok()?;
+    let r = compiler::token_map(src, minimize_type).ok()?;
     let mut span_map = r.span_map;
     let mut working_span_list: Vec<(Span, _)> = Vec::new();
     let mut cache: Option<Arc<Hover>> = None;

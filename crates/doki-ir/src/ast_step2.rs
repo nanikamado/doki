@@ -114,12 +114,13 @@ pub struct Function {
 }
 
 impl Ast {
-    pub fn from(ast: ast_step1::Ast) -> Self {
+    pub fn from(ast: ast_step1::Ast, minimize_type: bool) -> Self {
         let mut memo = Env::new(
             ast.variable_decls,
             ast.local_variable_types,
             ast.type_map,
             ast.constructor_names,
+            minimize_type,
         );
         memo.monomorphize_decl_rec(
             ast.entry_point,
@@ -185,6 +186,7 @@ pub struct Env {
     global_variable_count: usize,
     constructor_names: ConstructorNames,
     type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
+    minimize_type: bool,
 }
 
 #[derive(Debug)]
@@ -208,6 +210,7 @@ impl Env {
         local_variable_types: LocalVariableTypes,
         map: PaddedTypeMap,
         constructor_names: ConstructorNames,
+        minimize_type: bool,
     ) -> Self {
         Env {
             variable_decls: variable_decls.into_iter().map(|d| (d.decl_id, d)).collect(),
@@ -224,6 +227,7 @@ impl Env {
             global_variable_count: 0,
             constructor_names,
             type_id_generator: Default::default(),
+            minimize_type,
         }
     }
 
@@ -717,11 +721,17 @@ impl Env {
     }
 
     fn get_type(&mut self, p: TypePointer) -> Type {
+        if self.minimize_type {
+            self.type_memo.replace_map = self.map.minimize(p);
+        }
         self.type_memo
             .get_type(p, &mut self.map, &mut self.type_id_generator)
     }
 
     fn get_type_for_hash(&mut self, p: TypePointer) -> TypeForHash {
+        if self.minimize_type {
+            self.type_memo.replace_map = self.map.minimize(p);
+        }
         self.type_memo.get_type_for_hash(p, &mut self.map)
     }
 

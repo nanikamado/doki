@@ -262,6 +262,7 @@ name = "doki-ir"
 version = "0.1.0"
 dependencies = [
  "itertools",
+ "multimap",
  "once_cell",
  "rustc-hash",
  "stripmargin",

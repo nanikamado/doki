@@ -1,7 +1,10 @@
+mod minimize;
+
 pub use self::replace_map::ReplaceMap;
 use super::{ConstructorId, LambdaId};
 use crate::intrinsics::IntrinsicType;
 use itertools::Itertools;
+use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 use std::mem;
@@ -15,25 +18,25 @@ pub enum TypeId {
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Copy, Hash)]
 pub struct TypePointer(usize);
 
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default, Eq, PartialOrd, Ord, Hash)]
 pub struct TypeMap {
     pub normals: BTreeMap<TypeId, Vec<TypePointer>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
 pub enum Terminal {
     TypeMap(TypeMap),
     LambdaId(BTreeSet<LambdaId<TypePointer>>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
 enum Node {
     Pointer(TypePointer),
     Terminal(Terminal),
     Null,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PaddedTypeMap {
     map: Vec<Node>,
 }
@@ -245,6 +248,10 @@ impl PaddedTypeMap {
         self.map[new_p.0] = Node::Terminal(t);
         new_p
     }
+
+    pub fn minimize(&mut self, root: TypePointer) -> FxHashMap<TypePointer, TypePointer> {
+        minimize::minimize(root, self)
+    }
 }
 
 impl<T> LambdaId<T> {
@@ -321,13 +328,18 @@ impl Display for Terminal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Terminal::TypeMap(tm) => {
-                write!(
-                    f,
-                    "{}",
-                    tm.normals.iter().format_with(" | ", |(id, args), f| {
-                        f(&format_args!("{id}({})", args.iter().format(", ")))
-                    })
-                )
+                if tm.normals.len() == 1 {
+                    let (id, args) = tm.normals.first_key_value().unwrap();
+                    write!(f, "{id}({})", args.iter().format(", "))
+                } else {
+                    write!(
+                        f,
+                        "({})",
+                        tm.normals.iter().format_with(" | ", |(id, args), f| {
+                            f(&format_args!("{id}({})", args.iter().format(", ")))
+                        })
+                    )
+                }
             }
             Terminal::LambdaId(l) => {
                 write!(f, "lambda({})", l.iter().format(" | "))

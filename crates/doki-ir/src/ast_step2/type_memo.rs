@@ -176,6 +176,7 @@ impl BrokenLinkCheck for id_generator::Id<TypeIdTag> {
 pub struct TypeMemo {
     type_memo: FxHashMap<TypePointer, IntermediateTypeInner>,
     type_memo_for_hash: FxHashMap<TypePointer, IntermediateTypeInner>,
+    pub replace_map: FxHashMap<TypePointer, TypePointer>,
 }
 
 fn remove_pointer_from_type_inner_for_hash(t: IntermediateTypeInner) -> TypeInnerForHash {
@@ -321,11 +322,14 @@ impl TypeMemo {
 
     fn get_type_inner(
         &mut self,
-        p: TypePointer,
+        mut p: TypePointer,
         trace: &FxHashSet<TypePointer>,
         map: &mut PaddedTypeMap,
         for_hash: bool,
     ) -> IntermediateTypeInner {
+        while let Some(replaced) = self.replace_map.get(&p) {
+            p = *replaced;
+        }
         if for_hash {
             if let Some(t) = self.type_memo_for_hash.get(&p) {
                 return t.clone();

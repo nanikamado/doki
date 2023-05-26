@@ -12,7 +12,7 @@ pub struct AnalyzedSrc {
     pub constructor_names: ConstructorNames,
 }
 
-pub fn token_map(src: &str) -> Result<AnalyzedSrc, ParseError> {
+pub fn token_map(src: &str, minimize_type: bool) -> Result<AnalyzedSrc, ParseError> {
     let ast = parser::parse(src)?;
-    Ok(gen_c::token_map(ast))
+    Ok(gen_c::token_map(ast, minimize_type))
 }
