@@ -544,12 +544,23 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 };
                 write!(f, "({t}){{{tag},(union u{i}){}}}", Dis(value, env))
             }
-            Expr::Downcast { tag, value } => {
+            Expr::Downcast {
+                tag,
+                value,
+                check: true,
+            } => {
                 write!(
                     f,
                     "({0}.tag=={tag}||panic(\"failed to downcast\"),{0}.value._{tag})",
                     Dis(value, env)
                 )
+            }
+            Expr::Downcast {
+                tag,
+                value,
+                check: false,
+            } => {
+                write!(f, "{0}.value._{tag}", Dis(value, env))
             }
             Expr::Ref(v) => {
                 let t = if let CType::Ref(t) = t { t } else { panic!() };

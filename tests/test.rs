@@ -33,6 +33,11 @@ fn helloworld() {
 }
 
 #[test]
+fn simple() {
+    test_examples("simple.doki", "Hello, world.\n");
+}
+
+#[test]
 fn closure() {
     test_examples("closure.doki", "a\n");
 }
@@ -59,4 +64,12 @@ fn fail_not_a_function() {
     test_test_fail("not_a_function.doki")
         .stderr("error: not a function\n")
         .code(1);
+}
+
+#[test]
+fn literal_pattern() {
+    test_examples(
+        "literal_pattern.doki",
+        "is not a zero\nis not a zero\nis zero\n",
+    );
 }

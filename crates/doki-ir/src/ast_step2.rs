@@ -93,6 +93,7 @@ pub enum Expr {
     Downcast {
         tag: u32,
         value: VariableId,
+        check: bool,
     },
     Ref(VariableId),
     Deref(VariableId),
@@ -379,7 +380,7 @@ impl Env {
             }
             ast_step1::Instruction::Test(ast_step1::Tester::I64 { value }, l) => {
                 let type_id = TypeId::Intrinsic(IntrinsicType::I64);
-                let a = self.downcast(l, root_t, type_id, replace_map, instructions);
+                let a = self.downcast(l, root_t, type_id, replace_map, instructions, true);
                 match a {
                     Ok(a) => instructions.push(Instruction::Test(Tester::I64 { value }, a)),
                     Err(_) => {
@@ -390,7 +391,7 @@ impl Env {
             }
             ast_step1::Instruction::Test(ast_step1::Tester::Str { value }, a) => {
                 let type_id = TypeId::Intrinsic(IntrinsicType::String);
-                let a = self.downcast(a, root_t, type_id, replace_map, instructions);
+                let a = self.downcast(a, root_t, type_id, replace_map, instructions, true);
                 match a {
                     Ok(a) => instructions.push(Instruction::Test(Tester::Str { value }, a)),
                     Err(_) => {
@@ -441,6 +442,7 @@ impl Env {
         type_id: TypeId,
         replace_map: &mut ReplaceMap,
         instructions: &mut Vec<Instruction>,
+        test_instead_of_panic: bool,
     ) -> Result<VariableId, String> {
         let t = self
             .map
@@ -449,11 +451,21 @@ impl Env {
         let a = self.get_defined_local_variable(a, root_t, replace_map);
         let a = self.deref(a, &t, instructions);
         match get_tag_normal(&t, type_id) {
-            GetTagNormalResult::Tagged(tag, casted_t) => Ok(self.expr_to_variable(
-                Expr::Downcast { tag, value: a },
-                casted_t.into(),
-                instructions,
-            )),
+            GetTagNormalResult::Tagged(tag, casted_t) => {
+                let casted_t: Type = casted_t.into();
+                if test_instead_of_panic {
+                    instructions.push(Instruction::Test(Tester::Tag { tag }, a));
+                };
+                Ok(self.expr_to_variable(
+                    Expr::Downcast {
+                        tag,
+                        value: a,
+                        check: !test_instead_of_panic,
+                    },
+                    casted_t,
+                    instructions,
+                ))
+            }
             GetTagNormalResult::NotTagged => Ok(a),
             GetTagNormalResult::Impossible => Err(format!(
                 "expected {type_id} but found {}. cannot downcast.",
@@ -586,6 +598,7 @@ impl Env {
                             Expr::Downcast {
                                 tag: tag as u32,
                                 value: f,
+                                check: false,
                             },
                         ));
                         b2.push(Instruction::Assign(
@@ -654,6 +667,7 @@ impl Env {
                     TypeId::UserDefined(constructor),
                     replace_map,
                     instructions,
+                    false,
                 )?;
                 BasicCall { args: vec![a], id }
             }
@@ -667,7 +681,7 @@ impl Env {
                     .into_iter()
                     .zip_eq(arg_ts)
                     .map(|(a, param_t)| {
-                        self.downcast(a, root_t, param_t, replace_map, instructions)
+                        self.downcast(a, root_t, param_t, replace_map, instructions, false)
                     })
                     .collect::<Result<_, _>>()?;
                 self.add_tags_to_expr(

@@ -1,0 +1,10 @@
+println = a: intrinsic_print_str (intrinsic_append_str a "\n")
+
+test_zero = a: match a with
+        0 => println "is zero",
+        a => println "is not a zero",
+    end
+
+main = _: let _ = test_zero 1
+    in let _ = test_zero "a"
+    in test_zero 0
