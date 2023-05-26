@@ -281,21 +281,18 @@ mod replace_map {
 
     impl ReplaceMap {
         pub fn merge(mut self, new: Self, map: &mut PaddedTypeMap) -> Self {
-            let mut replaced: FxHashSet<_> = new
-                .replaced
-                .into_iter()
-                .map(|p| map.clone_pointer(p, &mut self))
-                .collect();
-            replaced.extend(self.replaced.clone());
             let mut new_map: FxHashMap<_, _> = new
                 .map
                 .into_iter()
                 .map(|(from, to)| (from, map.clone_pointer(to, &mut self)))
                 .collect();
-            new_map.extend(self.map);
+            for (from, to) in self.map {
+                let o = new_map.insert(from, to);
+                debug_assert!(o.is_none());
+            }
             Self {
                 map: new_map,
-                replaced,
+                replaced: self.replaced,
             }
         }
 
