@@ -24,6 +24,10 @@ struct Args {
 }
 
 fn main() {
+    #[cfg(feature = "backtrace-on-stack-overflow")]
+    unsafe {
+        backtrace_on_stack_overflow::enable()
+    };
     let args = Args::parse();
     if args.language_server {
         #[cfg(feature = "language-server")]
