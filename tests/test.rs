@@ -73,3 +73,8 @@ fn literal_pattern() {
         "is not a zero\nis not a zero\nis zero\n",
     );
 }
+
+#[test]
+fn taut() {
+    test_examples("taut.doki", "True\nTrue\nFalse\nTrue\n");
+}

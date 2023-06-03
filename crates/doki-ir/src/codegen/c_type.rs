@@ -51,7 +51,7 @@ impl Env {
             false
         };
         let reserved_id;
-        if t.recursive {
+        if t.recursive && self.recurring(t) {
             let i = self.aggregate_types.get_empty_id();
             debug_assert!(!t.contains_broken_link());
             type_stack = Some((i, t.clone().get_ref()));
@@ -171,5 +171,28 @@ impl Env {
         } else {
             self.c_type_memoize(t, type_stack)
         }
+    }
+
+    fn recurring(&self, t: &Type) -> bool {
+        self.contains_index(t, 0)
+    }
+
+    #[allow(clippy::only_used_in_recursion)]
+    fn contains_index(&self, t: &Type, depth: u32) -> bool {
+        t.iter().any(|a| match a {
+            TypeUnitOf::Normal { id: _, args } => args.iter().any(|a| match a {
+                TypeInnerOf::RecursionPoint(a) => *a == depth,
+                TypeInnerOf::Type(t) => self.contains_index(t, depth + t.recursive as u32),
+            }),
+            // TODO: not correct
+            TypeUnitOf::Fn(_, _, _) => false,
+            // TypeUnitOf::Fn(ls, _, _) => ls.iter().any(|l| {
+            //     let l = self.fx_type_map[l];
+            //     eprintln!("l = {l}");
+            //     self.function_context[&l]
+            //         .iter()
+            //         .any(|c| self.contains_index(c, depth + c.recursive as u32))
+            // }),
+        })
     }
 }

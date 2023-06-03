@@ -518,20 +518,14 @@ pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
     debug_assert_ne!(type_id, TypeId::Intrinsic(IntrinsicType::Fn));
     let mut tag = 0;
     let mut result = None;
-    for t in &ot.ts {
-        match t {
-            TypeUnitOf::Normal { id, args } if *id == type_id => {
-                let t = if ot.recursive {
-                    TypeUnitOf::Normal {
-                        id: *id,
-                        args: args
-                            .iter()
-                            .map(|a| a.clone().replace_index(ot, 0))
-                            .collect(),
-                    }
-                } else {
-                    t.clone()
-                };
+    for t in ot.ts.clone() {
+        let t = if ot.recursive {
+            t.replace_index(ot, 0)
+        } else {
+            t
+        };
+        match &t {
+            TypeUnitOf::Normal { id, .. } if *id == type_id => {
                 debug_assert!(result.is_none());
                 result = Some((tag, t));
                 tag += 1;
@@ -578,7 +572,7 @@ impl TypeInner {
 }
 
 impl TypeUnit {
-    fn replace_index(self, to: &Type, depth: u32) -> Self {
+    pub fn replace_index(self, to: &Type, depth: u32) -> Self {
         match self {
             TypeUnitOf::Normal { id, args } => TypeUnitOf::Normal {
                 id,

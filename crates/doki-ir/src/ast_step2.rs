@@ -495,7 +495,7 @@ impl Env {
             } => {
                 let used_local_variables_tmp = mem::take(&mut self.used_local_variables);
                 let defined_local_variables_tmp = mem::take(&mut self.defined_local_variables);
-                let possible_functions = self.get_possible_functions(p);
+                let possible_functions = self.get_possible_functions(&t);
                 let new_parameter = self.local_variable_def_replace(parameter, root_t, replace_map);
                 let (b, _) = self.block(body, root_t, replace_map);
                 let ret = self.get_defined_variable_id(
@@ -531,7 +531,7 @@ impl Env {
                     id: fx_lambda_id,
                     ..f
                 });
-                if possible_functions.len() == 1 && possible_functions[0].0 == 0 {
+                let e = if possible_functions.len() == 1 && possible_functions[0].0 == 0 {
                     Lambda {
                         context,
                         lambda_id: possible_functions[0].1,
@@ -553,6 +553,13 @@ impl Env {
                         tag: f.0 as u32,
                         value: VariableId::Local(d),
                     }
+                };
+                if t.reference {
+                    debug_assert!(t.recursive);
+                    let v = self.expr_to_variable(e, t.clone().deref(), instructions);
+                    Expr::Ref(v)
+                } else {
+                    e
                 }
             }
             ast_step1::Expr::I64(s) => self.add_tags_to_expr(
@@ -573,8 +580,10 @@ impl Env {
             ast_step1::Expr::Call { f, a } => {
                 let f_t = self.local_variable_types_old.get(f);
                 let f_t = self.map.clone_pointer(f_t, replace_map);
-                let possible_functions = self.get_possible_functions(f_t);
+                let f_t = self.get_type(f_t);
+                let possible_functions = self.get_possible_functions(&f_t);
                 let f = self.get_defined_local_variable(f, root_t, replace_map);
+                let f = self.deref(f, &f_t, instructions);
                 let a = self.get_defined_local_variable(a, root_t, replace_map);
                 if possible_functions.is_empty() {
                     return Err("not a function".to_string());
@@ -698,11 +707,15 @@ impl Env {
         Ok(e)
     }
 
-    fn get_possible_functions(&mut self, p: TypePointer) -> Vec<(i32, FxLambdaId, Type)> {
+    fn get_possible_functions(&mut self, ot: &Type) -> Vec<(i32, FxLambdaId, Type)> {
         let mut fs = Vec::new();
         let mut tag = 0;
-        let ot = self.get_type(p);
         for t in ot.iter() {
+            let t = if ot.recursive {
+                t.clone().replace_index(ot, 0)
+            } else {
+                t.clone()
+            };
             match t {
                 TypeUnitOf::Normal { .. } => {
                     tag += 1;
@@ -714,7 +727,7 @@ impl Env {
                         let len = self.functions.len() as u32;
                         let e = self
                             .functions
-                            .entry(*id_type_inner)
+                            .entry(id_type_inner)
                             .or_insert(FunctionEntry::Placeholder(FxLambdaId(len)));
                         let id = match e {
                             FunctionEntry::Placeholder(id) => *id,
@@ -723,7 +736,7 @@ impl Env {
                         fs.push((
                             tag,
                             id,
-                            TypeUnitOf::Fn([*id_type_inner].into(), arg_t.clone(), ret_t.clone())
+                            TypeUnitOf::Fn([id_type_inner].into(), arg_t.clone(), ret_t.clone())
                                 .into(),
                         ));
                         tag += 1;

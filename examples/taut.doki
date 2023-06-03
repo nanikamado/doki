@@ -1,0 +1,28 @@
+data True 0
+data False 0
+
+println = a: intrinsic_print_str (intrinsic_append_str (to_string a) "\n")
+
+to_string = a: match a with
+        True => "True",
+        False => "False",
+    end
+
+and = a: b: match a with
+        True => match b with
+                True => True,
+                False => False,
+            end,
+        False => False,
+    end
+
+taut = f: match f with
+        (True | False) => f,
+        _ => and (taut (f True)) (taut (f False)),
+    end
+
+main = _: let _ = println (taut True)
+        in let _ = println (taut (_: True))
+        in let _ = println (taut (_: False))
+        in println (taut (_: _: True))
+
