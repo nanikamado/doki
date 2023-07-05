@@ -1,0 +1,19 @@
+println = a: intrinsic_print_str (intrinsic_append_str (intrinsic_i64_to_string a) "\n")
+
+data Sum 0
+
+msg = o: m: o o m
+
+empty = self: m: match m with
+        Sum => 0,
+    end
+
+node = v: l: r: self: m: match m with
+        Sum => intrinsic_plus
+            v
+            (intrinsic_plus (msg l Sum) (msg r Sum)),
+    end
+
+main = _: let o = node 1 (node 100 empty empty) (node 10 empty empty)
+        in let a = msg o Sum
+        in println a

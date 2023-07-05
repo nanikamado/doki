@@ -64,7 +64,8 @@ pub fn minimize(root: TypePointer, m: &mut PaddedTypeMap) -> FxHashMap<TypePoint
     let points_rev: MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> =
         points.into_iter().map(|(a, b)| (b, a)).collect();
     let mut replace_map = FxHashMap::default();
-    for (_, v) in points_rev {
+    for (_, mut v) in points_rev {
+        v.sort_unstable();
         if v.len() >= 2 {
             let p = TypePointer(v[0]);
             for p2 in &v[1..] {

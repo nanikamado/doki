@@ -305,10 +305,13 @@ impl TypeMemo {
 
     fn get_lambda_ids(
         &mut self,
-        p: TypePointer,
+        mut p: TypePointer,
         trace: &FxHashSet<TypePointer>,
         map: &mut PaddedTypeMap,
     ) -> BTreeSet<LambdaId<IntermediateTypeInner>> {
+        while let Some(replaced) = self.replace_map.get(&p) {
+            p = *replaced;
+        }
         let Terminal::LambdaId(ids) = map.dereference_without_find(p) else {
             panic!()
         };
@@ -332,6 +335,7 @@ impl TypeMemo {
         }
         if for_hash {
             if let Some(t) = self.type_memo_for_hash.get(&p) {
+                debug_assert!(!trace.contains(&p));
                 return t.clone();
             }
         } else if let Some(t) = self.type_memo.get(&p) {
@@ -344,17 +348,19 @@ impl TypeMemo {
         trace.insert(p);
         let t = match &map.dereference_without_find(p) {
             Terminal::TypeMap(type_map) => {
-                let mut t = Vec::new();
-                for (type_id, normal_type) in &type_map.normals {
-                    t.push((*type_id, normal_type.clone()));
+                let mut ts = Vec::new();
+                for (type_id, normal_type) in type_map.normals.clone() {
+                    let a = self.get_type_from_id_and_args_rec(
+                        type_id,
+                        &normal_type,
+                        &trace,
+                        map,
+                        for_hash,
+                    );
+                    ts.push(a)
                 }
                 TypeInnerOf::Type(TypeOf {
-                    ts: t
-                        .into_iter()
-                        .map(|(id, args)| {
-                            self.get_type_from_id_and_args_rec(id, &args, &trace, map, for_hash)
-                        })
-                        .collect(),
+                    ts,
                     recursive: false,
                     reference: false,
                 })

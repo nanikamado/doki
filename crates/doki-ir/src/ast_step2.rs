@@ -747,18 +747,33 @@ impl Env {
         fs
     }
 
-    fn get_type(&mut self, p: TypePointer) -> Type {
-        if self.minimize_type {
-            self.type_memo.replace_map = self.map.minimize(p);
+    fn minimize(&mut self, p: TypePointer) {
+        if self.minimize_type && !self.type_memo.replace_map.contains_key(&p) {
+            use std::collections::hash_map::Entry::*;
+            for (from, to) in self.map.minimize(p) {
+                match self.type_memo.replace_map.entry(from) {
+                    Occupied(mut e) => {
+                        let v = e.get();
+                        if to < *v {
+                            e.insert(to);
+                        }
+                    }
+                    Vacant(e) => {
+                        e.insert(to);
+                    }
+                }
+            }
         }
+    }
+
+    fn get_type(&mut self, p: TypePointer) -> Type {
+        self.minimize(p);
         self.type_memo
             .get_type(p, &mut self.map, &mut self.type_id_generator)
     }
 
     fn get_type_for_hash(&mut self, p: TypePointer) -> TypeForHash {
-        if self.minimize_type {
-            self.type_memo.replace_map = self.map.minimize(p);
-        }
+        self.minimize(p);
         self.type_memo.get_type_for_hash(p, &mut self.map)
     }
 
