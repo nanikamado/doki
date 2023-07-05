@@ -21,4 +21,4 @@ backtrace-on-stack-overflow = { version = "0.3.0", optional = true }
 assert_cmd = "2.0.4"
 
 [features]
-display-fn-id = [ "compiler/display-fn-id" ]
+display-fn-id = ["compiler/display-fn-id"]
