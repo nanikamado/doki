@@ -5,6 +5,8 @@ use super::{ConstructorId, LambdaId};
 use crate::intrinsics::IntrinsicType;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
+#[cfg(debug_assertions)]
+use rustc_hash::FxHashSet;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 use std::mem;
@@ -251,6 +253,82 @@ impl PaddedTypeMap {
 
     pub fn minimize(&mut self, root: TypePointer) -> FxHashMap<TypePointer, TypePointer> {
         minimize::minimize(root, self)
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn json_debug(
+        &self,
+        f: &mut impl std::fmt::Write,
+        p: TypePointer,
+        visited_pointers: &FxHashSet<TypePointer>,
+    ) -> Result<(), std::fmt::Error> {
+        let mut visited_pointers = visited_pointers.clone();
+        if visited_pointers.contains(&p) {
+            return write!(f, r#"{{"p":"{p}","type":"rec"}}"#);
+        } else {
+            visited_pointers.insert(p);
+        }
+        write!(f, r#"{{"p":"{p}","#)?;
+        match &self.map[p.0] {
+            Node::Pointer(p2) => {
+                write!(
+                    f,
+                    r#""type":"pointer","v":{}}}"#,
+                    JsonDebugRec(self, *p2, &visited_pointers)
+                )
+            }
+            Node::Terminal(t) => match t {
+                Terminal::TypeMap(m) => {
+                    let m = m.normals.iter().format_with(",", |(tag, ps), f| {
+                        f(&format_args!(
+                            r#""{tag}":[{}]"#,
+                            ps.iter().format_with(",", |p, f| f(&JsonDebugRec(
+                                self,
+                                *p,
+                                &visited_pointers
+                            )))
+                        ))
+                    });
+                    write!(f, r#""type":"type_map","v":{{{}}}}}"#, m)
+                }
+                Terminal::LambdaId(ls) => {
+                    write!(
+                        f,
+                        r#""type":"lambda_id","v":{{{}}}}}"#,
+                        ls.iter().format_with(",", |l, f| f(&format_args!(
+                            r#"{}:{}"#,
+                            l.id,
+                            JsonDebugRec(self, l.root_t, &visited_pointers)
+                        )))
+                    )
+                }
+            },
+            Node::Null => write!(f, r#""type":"null"}}"#),
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+struct JsonDebugRec<'a>(
+    pub &'a PaddedTypeMap,
+    pub TypePointer,
+    pub &'a FxHashSet<TypePointer>,
+);
+
+#[cfg(debug_assertions)]
+impl Display for JsonDebugRec<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.json_debug(f, self.1, self.2)
+    }
+}
+
+#[cfg(debug_assertions)]
+pub struct JsonDebug<'a>(pub &'a PaddedTypeMap, pub TypePointer);
+
+#[cfg(debug_assertions)]
+impl Display for JsonDebug<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.json_debug(f, self.1, &FxHashSet::default())
     }
 }
 
