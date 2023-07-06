@@ -5,8 +5,9 @@ pub use self::padded_type_map::JsonDebug;
 pub use self::padded_type_map::{PaddedTypeMap, ReplaceMap, Terminal, TypeId, TypePointer};
 use crate::intrinsics::{IntrinsicConstructor, IntrinsicType, IntrinsicVariable};
 use itertools::Itertools;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::{Debug, Display};
+use std::mem;
 
 #[derive(Debug)]
 pub struct Ast {
@@ -75,6 +76,7 @@ pub enum Expr {
         parameter: LocalVariable,
         body: Block,
         ret: LocalVariable,
+        context: Vec<LocalVariable>,
     },
     I64(String),
     Str(String),
@@ -108,6 +110,8 @@ struct TypeInfEnv {
     global_variables_done: Vec<VariableDecl>,
     trace: FxHashMap<GlobalVariable, TypePointer>,
     field_len: Vec<usize>,
+    used_local_variables: FxHashSet<LocalVariable>,
+    defined_local_variables: FxHashSet<LocalVariable>,
 }
 
 impl TypeInfEnv {
@@ -142,7 +146,13 @@ impl TypeInfEnv {
                             parameter,
                             body,
                             ret,
+                            context,
                         } => {
+                            let used_local_variables_tmp =
+                                mem::take(&mut self.used_local_variables);
+                            let defined_local_variables_tmp =
+                                mem::take(&mut self.defined_local_variables);
+                            self.defined_local_variables.insert(*parameter);
                             let arg = self.local_variable_types.get(*parameter);
                             let ret = self.local_variable_types.get(*ret);
                             let fn_id = self.type_map.new_lambda_id_pointer();
@@ -155,6 +165,15 @@ impl TypeInfEnv {
                             );
                             self.type_map.insert_function(t, arg, ret, fn_id);
                             self.block(body, root_t);
+                            *context = self
+                                .used_local_variables
+                                .iter()
+                                .copied()
+                                .filter(|v| !self.defined_local_variables.contains(v))
+                                .collect_vec();
+                            self.used_local_variables.extend(used_local_variables_tmp);
+                            self.defined_local_variables
+                                .extend(defined_local_variables_tmp);
                         }
                         Expr::I64(_) => {
                             self.type_map.insert_normal(
@@ -184,10 +203,13 @@ impl TypeInfEnv {
                             };
                         }
                         Expr::Ident(VariableId::Local(d)) => {
+                            self.used_local_variables.insert(*d);
                             let t2 = self.local_variable_types.get(*d);
                             self.type_map.union(t, t2);
                         }
                         Expr::Call { f, a } => {
+                            self.used_local_variables.insert(*f);
+                            self.used_local_variables.insert(*a);
                             let f_t = self.local_variable_types.get(*f);
                             let a_t = self.local_variable_types.get(*a);
                             let (f_arg_t, ret_t, _) = self.type_map.get_fn(f_t);
@@ -202,7 +224,10 @@ impl TypeInfEnv {
                                 t,
                                 TypeId::UserDefined(*d),
                                 args.iter()
-                                    .map(|a| self.local_variable_types.get(*a))
+                                    .map(|a| {
+                                        self.used_local_variables.insert(*a);
+                                        self.local_variable_types.get(*a)
+                                    })
                                     .collect(),
                             );
                         }
@@ -214,7 +239,10 @@ impl TypeInfEnv {
                                 t,
                                 TypeId::Intrinsic((*d).into()),
                                 args.iter()
-                                    .map(|a| self.local_variable_types.get(*a))
+                                    .map(|a| {
+                                        self.used_local_variables.insert(*a);
+                                        self.local_variable_types.get(*a)
+                                    })
                                     .collect(),
                             );
                         }
@@ -227,6 +255,7 @@ impl TypeInfEnv {
                                 .map(|_| self.type_map.new_pointer())
                                 .collect_vec();
                             self.type_map.union(t, fields_p[*field]);
+                            self.used_local_variables.insert(args[0]);
                             self.type_map.insert_normal(
                                 self.local_variable_types.get(args[0]),
                                 TypeId::UserDefined(*constructor),
@@ -234,16 +263,23 @@ impl TypeInfEnv {
                             );
                         }
                         Expr::BasicCall {
-                            args: _,
+                            args,
                             id: BasicFunction::Intrinsic(v),
                         } => {
+                            for a in args {
+                                self.used_local_variables.insert(*a);
+                            }
                             let ret_type = v.runtime_return_type();
                             self.type_map
                                 .insert_normal(t, TypeId::Intrinsic(ret_type), Vec::new());
                         }
                     }
+                    self.defined_local_variables.insert(*v);
                 }
-                Instruction::Test(_, _) | Instruction::FailTest | Instruction::Panic { .. } => (),
+                Instruction::Test(_, l) => {
+                    self.used_local_variables.insert(*l);
+                }
+                Instruction::FailTest | Instruction::Panic { .. } => (),
                 Instruction::TryCatch(a, b) => {
                     self.block(a, root_t);
                     self.block(b, root_t);
@@ -303,6 +339,7 @@ impl Env {
             parameter,
             body: Block::default(),
             ret,
+            context: Vec::new(),
         };
         block.instructions.push(Instruction::Assign(assign_v, e));
         let body = if let Instruction::Assign(_, Expr::Lambda { body, .. }) =
@@ -453,6 +490,8 @@ impl Env {
             trace: Default::default(),
             global_variables_done: Default::default(),
             field_len: self.field_len,
+            used_local_variables: Default::default(),
+            defined_local_variables: Default::default(),
         };
         let (type_of_entry_point, rec) = env_next.get_type_global(entry_point);
         let (p, _, _) = env_next.type_map.get_fn(type_of_entry_point);

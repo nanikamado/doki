@@ -15,9 +15,8 @@ use crate::ast_step2::type_memo::BrokenLinkCheck;
 use crate::id_generator::{self, IdGenerator};
 use crate::intrinsics::IntrinsicType;
 use itertools::Itertools;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::fmt::{Debug, Display};
-use std::mem;
 
 #[derive(Debug)]
 pub struct Ast {
@@ -182,8 +181,6 @@ pub struct Env {
     local_variable_types_old: LocalVariableTypes,
     local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
     local_variable_collector: LocalVariableCollector<Type>,
-    used_local_variables: FxHashSet<LocalVariable>,
-    defined_local_variables: FxHashSet<LocalVariable>,
     global_variable_count: usize,
     constructor_names: ConstructorNames,
     type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
@@ -223,8 +220,6 @@ impl Env {
             local_variable_types_old: local_variable_types,
             local_variable_replace_map: FxHashMap::default(),
             local_variable_collector: LocalVariableCollector::new(),
-            used_local_variables: Default::default(),
-            defined_local_variables: Default::default(),
             global_variable_count: 0,
             constructor_names,
             type_id_generator: Default::default(),
@@ -270,9 +265,7 @@ impl Env {
     }
 
     fn new_variable(&mut self, t: Type) -> LocalVariable {
-        let v = self.local_variable_collector.new_variable(t);
-        self.defined_local_variables.insert(v);
-        v
+        self.local_variable_collector.new_variable(t)
     }
 
     fn local_variable_def_replace(
@@ -295,18 +288,16 @@ impl Env {
         v: ast_step1::LocalVariable,
         root_t: Root,
         replace_map: &mut ReplaceMap,
-    ) -> VariableId {
+    ) -> LocalVariable {
         if let Some(d) = self.local_variable_replace_map.get(&(v, root_t)) {
-            self.used_local_variables.insert(*d);
-            VariableId::Local(*d)
+            *d
         } else {
             // Some variables are undefined because of
             // the elimination of unreachable code.
             let t = self.local_variable_types_old.get(v);
             let t = self.map.clone_pointer(t, replace_map);
             let t = self.get_type(t);
-            let new_v = self.local_variable_collector.new_variable(t);
-            VariableId::Local(new_v)
+            self.local_variable_collector.new_variable(t)
         }
     }
 
@@ -318,7 +309,7 @@ impl Env {
     ) -> VariableId {
         match v {
             ast_step1::VariableId::Local(d) => {
-                self.get_defined_local_variable(d, root_t, replace_map)
+                VariableId::Local(self.get_defined_local_variable(d, root_t, replace_map))
             }
             ast_step1::VariableId::Global(d, r, p) => {
                 let mut r = replace_map.clone().merge(r, &mut self.map);
@@ -357,10 +348,11 @@ impl Env {
                 let t = self
                     .map
                     .clone_pointer(self.local_variable_types_old.get(v), replace_map);
-                let e = self.expr(e, t, root_t, replace_map, instructions);
+                let t = self.map.clone_pointer(t, replace_map);
+                let t = self.get_type(t);
+                let e = self.expr(e, &t, root_t, replace_map, instructions);
                 match e {
                     Ok(e) => {
-                        let t = self.get_type(t);
                         let new_v =
                             if let Some(v) = self.local_variable_replace_map.get(&(v, root_t)) {
                                 *v
@@ -408,7 +400,7 @@ impl Env {
                 let a = self.get_defined_local_variable(a, root_t, replace_map);
                 match get_tag_normal(&t, id) {
                     GetTagNormalResult::Tagged(tag, _untagged_t) => {
-                        let a = self.deref(a, &t, instructions);
+                        let a = self.deref(VariableId::Local(a), &t, instructions);
                         instructions.push(Instruction::Test(Tester::Tag { tag }, a));
                     }
                     GetTagNormalResult::NotTagged => (),
@@ -449,7 +441,7 @@ impl Env {
             .clone_pointer(self.local_variable_types_old.get(a), replace_map);
         let t = self.get_type(t);
         let a = self.get_defined_local_variable(a, root_t, replace_map);
-        let a = self.deref(a, &t, instructions);
+        let a = self.deref(VariableId::Local(a), &t, instructions);
         match get_tag_normal(&t, type_id) {
             GetTagNormalResult::Tagged(tag, casted_t) => {
                 let casted_t: Type = casted_t.into();
@@ -478,24 +470,25 @@ impl Env {
     fn expr(
         &mut self,
         e: ast_step1::Expr,
-        p: TypePointer,
+        t: &Type,
         root_t: Root,
         replace_map: &mut ReplaceMap,
         instructions: &mut Vec<Instruction>,
     ) -> Result<Expr, String> {
         use Expr::*;
-        let p = self.map.clone_pointer(p, replace_map);
-        let t = self.get_type(p);
         let e = match e {
             ast_step1::Expr::Lambda {
                 lambda_id,
                 parameter,
                 body,
                 ret,
+                context,
             } => {
-                let used_local_variables_tmp = mem::take(&mut self.used_local_variables);
-                let defined_local_variables_tmp = mem::take(&mut self.defined_local_variables);
-                let possible_functions = self.get_possible_functions(&t);
+                let context = context
+                    .into_iter()
+                    .map(|v| self.get_defined_local_variable(v, root_t, replace_map))
+                    .collect_vec();
+                let possible_functions = self.get_possible_functions(t);
                 let new_parameter = self.local_variable_def_replace(parameter, root_t, replace_map);
                 let (b, _) = self.block(body, root_t, replace_map);
                 let ret = self.get_defined_variable_id(
@@ -503,12 +496,6 @@ impl Env {
                     root_t,
                     replace_map,
                 );
-                let context = self
-                    .used_local_variables
-                    .iter()
-                    .copied()
-                    .filter(|v| !self.defined_local_variables.contains(v))
-                    .collect_vec();
                 let f = Function {
                     parameter: new_parameter,
                     body: b,
@@ -516,9 +503,6 @@ impl Env {
                     context: context.clone(),
                     ret,
                 };
-                self.used_local_variables.extend(used_local_variables_tmp);
-                self.defined_local_variables
-                    .extend(defined_local_variables_tmp);
                 let lambda_id = LambdaId {
                     id: lambda_id.id,
                     root_t: root_t.0,
@@ -564,13 +548,13 @@ impl Env {
             }
             ast_step1::Expr::I64(s) => self.add_tags_to_expr(
                 I64(s),
-                &t,
+                t,
                 TypeId::Intrinsic(IntrinsicType::I64),
                 instructions,
             ),
             ast_step1::Expr::Str(s) => self.add_tags_to_expr(
                 Str(s),
-                &t,
+                t,
                 TypeId::Intrinsic(IntrinsicType::String),
                 instructions,
             ),
@@ -583,8 +567,8 @@ impl Env {
                 let f_t = self.get_type(f_t);
                 let possible_functions = self.get_possible_functions(&f_t);
                 let f = self.get_defined_local_variable(f, root_t, replace_map);
-                let f = self.deref(f, &f_t, instructions);
-                let a = self.get_defined_local_variable(a, root_t, replace_map);
+                let f = self.deref(VariableId::Local(f), &f_t, instructions);
+                let a = VariableId::Local(self.get_defined_local_variable(a, root_t, replace_map));
                 if possible_functions.is_empty() {
                     return Err("not a function".to_string());
                 }
@@ -595,7 +579,7 @@ impl Env {
                         real_function: possible_functions[0].1,
                     }
                 } else {
-                    let ret_v = self.new_variable(t);
+                    let ret_v = self.new_variable(t.clone());
                     let mut b = vec![Instruction::Panic {
                         msg: "not a function".to_string(),
                     }];
@@ -633,14 +617,16 @@ impl Env {
             } => {
                 let args = args
                     .into_iter()
-                    .map(|a| self.get_defined_local_variable(a, root_t, replace_map))
+                    .map(|a| {
+                        VariableId::Local(self.get_defined_local_variable(a, root_t, replace_map))
+                    })
                     .collect();
                 self.add_tags_to_expr(
                     BasicCall {
                         args,
                         id: BasicFunction::Construction(id),
                     },
-                    &t,
+                    t,
                     TypeId::UserDefined(id),
                     instructions,
                 )
@@ -655,7 +641,7 @@ impl Env {
                         args: Vec::new(),
                         id: BasicFunction::IntrinsicConstruction(id),
                     },
-                    &t,
+                    t,
                     TypeId::Intrinsic(id.into()),
                     instructions,
                 )
@@ -698,7 +684,7 @@ impl Env {
                         args,
                         id: BasicFunction::Intrinsic(id),
                     },
-                    &t,
+                    t,
                     TypeId::Intrinsic(rt),
                     instructions,
                 )
