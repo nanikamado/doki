@@ -1,7 +1,6 @@
 use super::collector::Collector;
-use crate::ast_step1::{self, TypeId};
-use crate::ast_step2::{FxLambdaId as LambdaId, Type, TypeIdTag, TypeInnerOf, TypeUnitOf};
-use crate::id_generator::{self};
+use crate::ast_step1::TypeId;
+use crate::ast_step2::{Type, TypeInner, TypeInnerOf, TypeUnitOf};
 use crate::intrinsics::IntrinsicType;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::Display;
@@ -32,10 +31,8 @@ pub enum CAggregateType {
 }
 
 pub struct Env {
-    pub function_context: FxHashMap<LambdaId, Vec<Type>>,
     pub aggregate_types: Collector<CAggregateType>,
     pub memo: FxHashMap<Type, CType>,
-    pub fx_type_map: FxHashMap<ast_step1::LambdaId<id_generator::Id<TypeIdTag>>, LambdaId>,
     pub reffed_aggregates: FxHashSet<usize>,
 }
 
@@ -51,9 +48,8 @@ impl Env {
             false
         };
         let reserved_id;
-        if t.recursive && self.recurring(t) {
+        if t.recursive && recurring(t) {
             let i = self.aggregate_types.get_empty_id();
-            debug_assert!(!t.contains_broken_link());
             type_stack = Some((i, t.clone().get_ref()));
             reserved_id = Some(i);
         } else {
@@ -81,15 +77,7 @@ impl Env {
                     _ => {
                         let t = CAggregateType::Struct(
                             args.iter()
-                                .map(|t| match t {
-                                    TypeInnerOf::RecursionPoint(d) => {
-                                        assert_eq!(*d, 0);
-                                        CType::Ref(Box::new(CType::Aggregate(
-                                            type_stack.as_ref().unwrap().0,
-                                        )))
-                                    }
-                                    TypeInnerOf::Type(t) => self.c_type(t, type_stack.clone()),
-                                })
+                                .map(|t| self.c_type_from_inner_type(t, &type_stack))
                                 .collect(),
                         );
                         if single {
@@ -106,12 +94,10 @@ impl Env {
                     }
                 },
                 Fn(lambda_id, _, _) => {
-                    for l in lambda_id {
-                        let l = self.fx_type_map[l];
-                        let ctx = self.function_context[&l].clone();
+                    for ctx in lambda_id.values() {
                         let c_t = CAggregateType::Struct(
                             ctx.iter()
-                                .map(|t| self.c_type(t, type_stack.clone()))
+                                .map(|t| self.c_type_from_inner_type(t, &type_stack))
                                 .collect(),
                         );
                         match reserved_id {
@@ -145,16 +131,17 @@ impl Env {
     fn c_type_memoize(&mut self, t: &Type, type_stack: Option<(usize, Type)>) -> CType {
         if let Some(t) = self.memo.get(t) {
             t.clone()
-        } else if type_stack.is_none() {
+        } else {
+            let recurring = contains_index(t, 0);
             let c_t = self.c_type_inner(t, type_stack);
-            let _o = self.memo.insert(t.clone(), c_t.clone());
-            #[cfg(debug_assertions)]
-            if let Some(t) = _o {
-                assert_eq!(t, c_t);
+            if !recurring {
+                let _o = self.memo.insert(t.clone(), c_t.clone());
+                #[cfg(debug_assertions)]
+                if let Some(t) = _o {
+                    assert_eq!(t, c_t);
+                }
             }
             c_t
-        } else {
-            self.c_type_inner(t, type_stack)
         }
     }
 
@@ -162,9 +149,10 @@ impl Env {
         debug_assert!(!t.contains_broken_link_rec(type_stack.is_some() as u32));
         if t.reference {
             let t = self.c_type_memoize(&t.clone().deref(), type_stack);
-            let i = match t {
-                CType::Aggregate(i) => i,
-                _ => panic!(),
+            let i = if let CType::Aggregate(i) = t {
+                i
+            } else {
+                panic!()
             };
             self.reffed_aggregates.insert(i);
             CType::Ref(Box::new(t))
@@ -173,26 +161,37 @@ impl Env {
         }
     }
 
-    fn recurring(&self, t: &Type) -> bool {
-        self.contains_index(t, 0)
+    pub fn c_type_from_inner_type(
+        &mut self,
+        t: &TypeInner,
+        type_stack: &Option<(usize, Type)>,
+    ) -> CType {
+        match t {
+            TypeInnerOf::RecursionPoint(d) => {
+                assert_eq!(*d, 0);
+                CType::Ref(Box::new(CType::Aggregate(type_stack.as_ref().unwrap().0)))
+            }
+            TypeInnerOf::Type(t) => self.c_type(t, type_stack.clone()),
+        }
     }
+}
 
-    #[allow(clippy::only_used_in_recursion)]
-    fn contains_index(&self, t: &Type, depth: u32) -> bool {
-        t.iter().any(|a| match a {
-            TypeUnitOf::Normal { id: _, args } => args.iter().any(|a| match a {
-                TypeInnerOf::RecursionPoint(a) => *a == depth,
-                TypeInnerOf::Type(t) => self.contains_index(t, depth + t.recursive as u32),
-            }),
-            // TODO: not correct
-            TypeUnitOf::Fn(_, _, _) => false,
-            // TypeUnitOf::Fn(ls, _, _) => ls.iter().any(|l| {
-            //     let l = self.fx_type_map[l];
-            //     eprintln!("l = {l}");
-            //     self.function_context[&l]
-            //         .iter()
-            //         .any(|c| self.contains_index(c, depth + c.recursive as u32))
-            // }),
-        })
+fn recurring(t: &Type) -> bool {
+    contains_index(t, -1)
+}
+
+fn contains_index(t: &Type, mut depth: i32) -> bool {
+    if t.recursive {
+        depth += 1;
     }
+    let check = |a: &[TypeInner]| {
+        a.iter().any(|a| match a {
+            TypeInnerOf::RecursionPoint(a) => *a as i32 == depth,
+            TypeInnerOf::Type(t) => contains_index(t, depth),
+        })
+    };
+    t.iter().any(|a| match a {
+        TypeUnitOf::Normal { id: _, args } => check(args),
+        TypeUnitOf::Fn(ls, _, _) => ls.iter().any(|(_, ctx)| check(ctx)),
+    })
 }

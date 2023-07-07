@@ -17,24 +17,9 @@ use strum::IntoEnumIterator;
 use unic_ucd_category::GeneralCategory;
 
 pub fn codegen(ast: Ast, w: &mut impl Write) {
-    let function_context = ast
-        .functions
-        .iter()
-        .map(|f| {
-            (
-                f.id,
-                f.context
-                    .iter()
-                    .map(|&c| ast.variable_types.get_type(c).clone())
-                    .collect_vec(),
-            )
-        })
-        .collect();
     let mut c_type_env = c_type::Env {
-        function_context,
         aggregate_types: Default::default(),
         memo: Default::default(),
-        fx_type_map: ast.fx_type_map,
         reffed_aggregates: Default::default(),
     };
     let local_variable_types: LocalVariableCollector<(Type, CType)> = ast.variable_types.map(|t| {
@@ -53,7 +38,6 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
         global_variable_types: &global_variable_types,
         constructor_names: &ast.constructor_names,
     };
-    collect_c_type(&ast.functions, &mut c_type_env, &env);
     let intrinsic_variables = IntrinsicVariable::iter()
         .map(|v| {
             (
@@ -252,19 +236,6 @@ fn sort_aggregates_rec<'a>(
             }
         }
         sorted.push((i, a));
-    }
-}
-
-fn collect_c_type(functions: &[Function], c_type_env: &mut c_type::Env, env: &Env) {
-    for f in functions {
-        c_type_env
-            .aggregate_types
-            .get_or_insert(CAggregateType::Struct(
-                f.context
-                    .iter()
-                    .map(|l| env.local_variable_types.get_type(*l).1.clone())
-                    .collect(),
-            ));
     }
 }
 

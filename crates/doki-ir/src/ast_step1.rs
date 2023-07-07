@@ -156,14 +156,6 @@ impl TypeInfEnv {
                             let arg = self.local_variable_types.get(*parameter);
                             let ret = self.local_variable_types.get(*ret);
                             let fn_id = self.type_map.new_lambda_id_pointer();
-                            self.type_map.insert_lambda_id(
-                                fn_id,
-                                LambdaId {
-                                    id: lambda_id.id,
-                                    root_t,
-                                },
-                            );
-                            self.type_map.insert_function(t, arg, ret, fn_id);
                             self.block(body, root_t);
                             *context = self
                                 .used_local_variables
@@ -171,6 +163,18 @@ impl TypeInfEnv {
                                 .copied()
                                 .filter(|v| !self.defined_local_variables.contains(v))
                                 .collect_vec();
+                            self.type_map.insert_lambda_id(
+                                fn_id,
+                                LambdaId {
+                                    id: lambda_id.id,
+                                    root_t,
+                                },
+                                context
+                                    .iter()
+                                    .map(|p| self.local_variable_types.get(*p))
+                                    .collect(),
+                            );
+                            self.type_map.insert_function(t, arg, ret, fn_id);
                             self.used_local_variables.extend(used_local_variables_tmp);
                             self.defined_local_variables
                                 .extend(defined_local_variables_tmp);

@@ -26,7 +26,6 @@ pub struct Ast {
     pub functions: Vec<Function>,
     pub type_map: PaddedTypeMap,
     pub variable_types: LocalVariableCollector<Type>,
-    pub fx_type_map: FxHashMap<LambdaId<id_generator::Id<TypeIdTag>>, FxLambdaId>,
     pub constructor_names: ConstructorNames,
     pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
     pub local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
@@ -136,16 +135,14 @@ impl Ast {
             Instruction::Assign(_, Expr::Lambda { lambda_id, context }) => {
                 debug_assert!(context.is_empty());
                 let entry_point = *lambda_id;
-                let mut functions = Vec::new();
-                let mut fx_type_map = FxHashMap::default();
-                for (id, f) in memo.functions {
-                    if let FunctionEntry::Function(f) = f {
-                        functions.push(f.clone());
-                        fx_type_map.insert(id, f.id);
-                    } else {
-                        panic!()
-                    }
-                }
+                let functions = memo
+                    .functions
+                    .into_values()
+                    .map(|f| match f {
+                        FunctionEntry::Placeholder(_) => panic!(),
+                        FunctionEntry::Function(f) => f,
+                    })
+                    .collect();
                 Self {
                     variable_decls: memo.monomorphized_variables,
                     entry_point,
@@ -153,7 +150,6 @@ impl Ast {
                     variable_names,
                     type_map: memo.map,
                     variable_types: memo.local_variable_collector,
-                    fx_type_map,
                     constructor_names: memo.constructor_names,
                     type_id_generator: memo.type_id_generator,
                     local_variable_replace_map: memo.local_variable_replace_map,
@@ -265,6 +261,7 @@ impl Env {
     }
 
     fn new_variable(&mut self, t: Type) -> LocalVariable {
+        debug_assert!(!t.contains_broken_link());
         self.local_variable_collector.new_variable(t)
     }
 
@@ -713,7 +710,7 @@ impl Env {
                         let len = self.functions.len() as u32;
                         let e = self
                             .functions
-                            .entry(id_type_inner)
+                            .entry(id_type_inner.0)
                             .or_insert(FunctionEntry::Placeholder(FxLambdaId(len)));
                         let id = match e {
                             FunctionEntry::Placeholder(id) => *id,

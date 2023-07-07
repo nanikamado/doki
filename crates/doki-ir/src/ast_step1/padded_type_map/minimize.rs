@@ -23,9 +23,14 @@ pub fn minimize(root: TypePointer, m: &mut PaddedTypeMap) -> FxHashMap<TypePoint
             Node::Terminal(Terminal::LambdaId(ls)) => {
                 let ls = ls
                     .into_iter()
-                    .map(|l| LambdaId {
-                        id: l.id,
-                        root_t: m.find(l.root_t),
+                    .map(|(l, ctx)| {
+                        (
+                            LambdaId {
+                                id: l.id,
+                                root_t: m.find(l.root_t),
+                            },
+                            ctx.into_iter().map(|c| m.find(c)).collect(),
+                        )
                     })
                     .collect();
                 Node::Terminal(Terminal::LambdaId(ls))
@@ -93,8 +98,11 @@ fn collect_points(p: TypePointer, map: &PaddedTypeMap, points: &mut FxHashMap<us
                     }
                 }
                 Terminal::LambdaId(ls) => {
-                    for l in ls {
-                        collect_points(l.root_t, map, points)
+                    for (l, ctx) in ls {
+                        collect_points(l.root_t, map, points);
+                        for c in ctx {
+                            collect_points(*c, map, points);
+                        }
                     }
                 }
             }
@@ -109,9 +117,15 @@ impl Node {
             Node::Terminal(Terminal::LambdaId(ls)) => {
                 let ls = ls
                     .iter()
-                    .map(|l| LambdaId {
-                        id: l.id,
-                        root_t: TypePointer(points[&l.root_t.0]),
+                    .map(|(l, ctx)| {
+                        let ctx = ctx.iter().map(|p| TypePointer(points[&p.0])).collect();
+                        (
+                            LambdaId {
+                                id: l.id,
+                                root_t: TypePointer(points[&l.root_t.0]),
+                            },
+                            ctx,
+                        )
                     })
                     .collect();
                 Node::Terminal(Terminal::LambdaId(ls))

@@ -10,6 +10,15 @@ fn test_examples(file_name: &str, stdout: &str) {
         .success();
 }
 
+fn test_test_success(file_name: &str, stdout: &str) {
+    Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .arg(["tests/success/", file_name].concat())
+        .assert()
+        .stdout(stdout.to_string())
+        .success();
+}
+
 fn test_test_fail(file_name: &str) -> assert_cmd::assert::Assert {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
@@ -77,4 +86,9 @@ fn literal_pattern() {
 #[test]
 fn taut() {
     test_examples("taut.doki", "True\nTrue\nFalse\nTrue\n");
+}
+
+#[test]
+fn recursive_env() {
+    test_test_success("recursive_env.doki", "A\nA\n");
 }

@@ -4,7 +4,7 @@ use crate::id_generator::{self, IdGenerator};
 use crate::intrinsics::IntrinsicType;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fmt::{self, Display};
 use std::iter::once;
 
@@ -28,7 +28,7 @@ pub enum TypeUnitOf<T: TypeFamily> {
         args: Vec<TypeInnerOf<T>>,
     },
     Fn(
-        BTreeSet<LambdaId<T::LambdaTag>>,
+        BTreeMap<LambdaId<T::LambdaTag>, T::LambdaCtx>,
         TypeInnerOf<T>,
         TypeInnerOf<T>,
     ),
@@ -50,21 +50,25 @@ pub trait TypeFamily {
         + std::fmt::Debug
         + BrokenLinkCheck
         + DisplayTypeWithEnv;
+    type LambdaCtx: Eq + Ord + Clone + std::hash::Hash + DebugCtx + BrokenLinkCheck;
 }
 
 impl TypeFamily for IntermediateTypeF {
     type RecursionPoint = IndexOrPointer;
     type LambdaTag = TypeInnerOf<IntermediateTypeF>;
+    type LambdaCtx = Vec<TypeInnerOf<Self>>;
 }
 
 impl TypeFamily for TypeForHashF {
     type RecursionPoint = u32;
     type LambdaTag = TypeInnerOf<Self>;
+    type LambdaCtx = ();
 }
 
 impl TypeFamily for NormalTypeF {
     type RecursionPoint = u32;
     type LambdaTag = id_generator::Id<TypeIdTag>;
+    type LambdaCtx = Vec<TypeInnerOf<Self>>;
 }
 
 type IntermediateTypeUnit = TypeUnitOf<IntermediateTypeF>;
@@ -126,8 +130,9 @@ impl<T: TypeFamily> TypeOf<T> {
                 args.iter().any(|a| a.contains_broken_link(depth))
             }
             TypeUnitOf::Fn(l, a, r) => {
-                l.iter().any(|l| l.root_t.contains_broken_link(depth))
-                    || a.contains_broken_link(depth)
+                l.iter().any(|(l, ctx)| {
+                    l.root_t.contains_broken_link(depth) || ctx.contains_broken_link(depth)
+                }) || a.contains_broken_link(depth)
                     || r.contains_broken_link(depth)
             }
         })
@@ -172,6 +177,18 @@ impl BrokenLinkCheck for id_generator::Id<TypeIdTag> {
     }
 }
 
+impl BrokenLinkCheck for () {
+    fn contains_broken_link(&self, _depth: u32) -> bool {
+        false
+    }
+}
+
+impl<T: BrokenLinkCheck> BrokenLinkCheck for Vec<T> {
+    fn contains_broken_link(&self, depth: u32) -> bool {
+        self.iter().any(|a| a.contains_broken_link(depth))
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct TypeMemo {
     type_memo: FxHashMap<TypePointer, IntermediateTypeInner>,
@@ -210,8 +227,8 @@ fn remove_pointer_from_type_unit_for_hash(t: TypeUnitOf<IntermediateTypeF>) -> T
                 .collect(),
         },
         TypeUnitOf::Fn(id, a, b) => TypeUnitOf::Fn(
-            id.into_iter()
-                .map(|l| l.map_type(remove_pointer_from_type_inner_for_hash))
+            id.into_keys()
+                .map(|l| (l.map_type(remove_pointer_from_type_inner_for_hash), ()))
                 .collect(),
             remove_pointer_from_type_inner_for_hash(a),
             remove_pointer_from_type_inner_for_hash(b),
@@ -257,8 +274,8 @@ fn remove_pointer_from_type_unit(
         },
         TypeUnitOf::Fn(id, a, b) => TypeUnitOf::Fn(
             id.into_iter()
-                .map(|l| {
-                    l.map_type(|t| {
+                .map(|(l, ctx)| {
+                    let l = l.map_type(|t| {
                         let t = remove_pointer_from_type_inner_for_hash(t);
                         debug_assert!(!t.contains_broken_link(0));
                         if let TypeInnerOf::Type(t) = t {
@@ -266,7 +283,13 @@ fn remove_pointer_from_type_unit(
                         } else {
                             panic!()
                         }
-                    })
+                    });
+                    (
+                        l,
+                        ctx.into_iter()
+                            .map(|t| remove_pointer_from_type_inner(t, type_id_generator))
+                            .collect(),
+                    )
                 })
                 .collect(),
             remove_pointer_from_type_inner(a, type_id_generator),
@@ -308,17 +331,31 @@ impl TypeMemo {
         mut p: TypePointer,
         trace: &FxHashSet<TypePointer>,
         map: &mut PaddedTypeMap,
-    ) -> BTreeSet<LambdaId<IntermediateTypeInner>> {
+        for_hash: bool,
+    ) -> BTreeMap<LambdaId<IntermediateTypeInner>, <IntermediateTypeF as TypeFamily>::LambdaCtx>
+    {
         while let Some(replaced) = self.replace_map.get(&p) {
             p = *replaced;
         }
         let Terminal::LambdaId(ids) = map.dereference_without_find(p) else {
             panic!()
         };
-        let mut new_ids = BTreeSet::new();
-        for id in ids.clone() {
-            let id = id.map_type(|p| self.get_type_inner(p, trace, map, true));
-            new_ids.insert(id);
+        let mut new_ids = BTreeMap::new();
+        let empty_trace;
+        let trace_for_id = if for_hash {
+            trace
+        } else {
+            empty_trace = Default::default();
+            &empty_trace
+        };
+        for (id, ctx) in ids.clone() {
+            let id = id.map_type(|p| self.get_type_inner(p, trace_for_id, map, true));
+            new_ids.insert(
+                id,
+                ctx.into_iter()
+                    .map(|c| self.get_type_inner(c, trace, map, true))
+                    .collect(),
+            );
         }
         new_ids
     }
@@ -401,17 +438,7 @@ impl TypeMemo {
             let mut args = args.iter();
             let a = self.get_type_inner(*args.next().unwrap(), trace, map, for_hash);
             let b = self.get_type_inner(*args.next().unwrap(), trace, map, for_hash);
-            let empty_trace;
-            let lambda_id = self.get_lambda_ids(
-                *args.next().unwrap(),
-                if for_hash {
-                    trace
-                } else {
-                    empty_trace = Default::default();
-                    &empty_trace
-                },
-                map,
-            );
+            let lambda_id = self.get_lambda_ids(*args.next().unwrap(), trace, map, for_hash);
             TypeUnitOf::Fn(lambda_id, a, b)
         } else {
             TypeUnitOf::Normal {
@@ -480,13 +507,23 @@ fn replace_pointer(
                     Fn(l, a, b) => {
                         let l = l
                             .into_iter()
-                            .map(|l| {
-                                l.map_type(|t| {
-                                    let r = replace_pointer(t, from, depth);
-                                    replaced |= r.replaced;
-                                    contains_pointer |= r.contains_pointer;
-                                    r.t
-                                })
+                            .map(|(l, ctx)| {
+                                (
+                                    l.map_type(|t| {
+                                        let r = replace_pointer(t, from, depth);
+                                        replaced |= r.replaced;
+                                        contains_pointer |= r.contains_pointer;
+                                        r.t
+                                    }),
+                                    ctx.into_iter()
+                                        .map(|c| {
+                                            let r = replace_pointer(c, from, depth);
+                                            replaced |= r.replaced;
+                                            contains_pointer |= r.contains_pointer;
+                                            r.t
+                                        })
+                                        .collect(),
+                                )
                             })
                             .collect();
                         let r = replace_pointer(a, from, depth);
@@ -587,9 +624,20 @@ impl TypeUnit {
                     .map(|t| t.replace_index(to, depth))
                     .collect(),
             },
-            TypeUnitOf::Fn(ids, a, b) => {
-                TypeUnitOf::Fn(ids, a.replace_index(to, depth), b.replace_index(to, depth))
-            }
+            TypeUnitOf::Fn(ids, a, b) => TypeUnitOf::Fn(
+                ids.into_iter()
+                    .map(|(id, ctx)| {
+                        (
+                            id,
+                            ctx.into_iter()
+                                .map(|t| t.replace_index(to, depth))
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+                a.replace_index(to, depth),
+                b.replace_index(to, depth),
+            ),
         }
     }
 }
@@ -718,7 +766,7 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeUnitOf<R> {
                         DisplayTypeHelper(a, P::Strong, env),
                         if id_paren { "(" } else { "" },
                         _id.iter()
-                            .format_with(" | ", |a, f| f(&DisplayTypeHelper(a, P::Fn, env))),
+                            .format_with(" | ", |(a, _), f| f(&DisplayTypeHelper(a, P::Fn, env))),
                         if id_paren { ")" } else { "" },
                     )?;
                     b.fmt_with_env(P::Fn, f, env)?;
@@ -812,11 +860,38 @@ impl<R: TypeFamily> fmt::Debug for TypeUnitOf<R> {
                     f,
                     "({a:?}) -{}{}{}-> {b:?}",
                     if id_paren { "(" } else { "" },
-                    id.iter()
-                        .format_with(" | ", |a, f| f(&format_args!("{}", a))),
+                    id.iter().format_with(" | ", |(a, ctx), f| f(&format_args!(
+                        "{}{}",
+                        a,
+                        DebugCtxS(ctx)
+                    ))),
                     if id_paren { ")" } else { "" },
                 )
             }
         }
+    }
+}
+
+pub trait DebugCtx {
+    fn ctx_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+}
+
+impl DebugCtx for () {
+    fn ctx_fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(())
+    }
+}
+
+impl<T: fmt::Debug> DebugCtx for Vec<T> {
+    fn ctx_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({:?})", self.iter().format(", "))
+    }
+}
+
+struct DebugCtxS<T>(T);
+
+impl<T: DebugCtx> Display for DebugCtxS<&T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.ctx_fmt(f)
     }
 }

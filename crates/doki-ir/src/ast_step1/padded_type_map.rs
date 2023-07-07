@@ -7,7 +7,7 @@ use itertools::Itertools;
 use rustc_hash::FxHashMap;
 #[cfg(debug_assertions)]
 use rustc_hash::FxHashSet;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::mem;
 
@@ -28,7 +28,7 @@ pub struct TypeMap {
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
 pub enum Terminal {
     TypeMap(TypeMap),
-    LambdaId(BTreeSet<LambdaId<TypePointer>>),
+    LambdaId(BTreeMap<LambdaId<TypePointer>, Vec<TypePointer>>),
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
@@ -66,7 +66,7 @@ impl PaddedTypeMap {
     pub fn new_lambda_id_pointer(&mut self) -> TypePointer {
         let p = self.map.len();
         self.map
-            .push(Node::Terminal(Terminal::LambdaId(BTreeSet::default())));
+            .push(Node::Terminal(Terminal::LambdaId(BTreeMap::default())));
         TypePointer(p)
     }
 
@@ -127,15 +127,23 @@ impl PaddedTypeMap {
         }
     }
 
-    pub fn insert_lambda_id(&mut self, p: TypePointer, id: LambdaId<TypePointer>) {
+    pub fn insert_lambda_id(
+        &mut self,
+        p: TypePointer,
+        id: LambdaId<TypePointer>,
+        lambda_ctx: Vec<TypePointer>,
+    ) {
         let t = self.dereference_mut(p);
         let Terminal::LambdaId(t) = t else {
             panic!()
         };
-        t.insert(id);
+        t.insert(id, lambda_ctx);
     }
 
-    pub fn get_lambda_id(&mut self, p: TypePointer) -> &BTreeSet<LambdaId<TypePointer>> {
+    pub fn get_lambda_id(
+        &mut self,
+        p: TypePointer,
+    ) -> &BTreeMap<LambdaId<TypePointer>, Vec<TypePointer>> {
         let t = self.dereference(p);
         let Terminal::LambdaId(t) = t else {
             panic!()
@@ -240,9 +248,16 @@ impl PaddedTypeMap {
             }),
             Terminal::LambdaId(t) => Terminal::LambdaId(
                 t.into_iter()
-                    .map(|t| LambdaId {
-                        id: t.id,
-                        root_t: self.clone_pointer(t.root_t, replace_map),
+                    .map(|(t, ctx)| {
+                        (
+                            LambdaId {
+                                id: t.id,
+                                root_t: self.clone_pointer(t.root_t, replace_map),
+                            },
+                            ctx.into_iter()
+                                .map(|c| self.clone_pointer(c, replace_map))
+                                .collect(),
+                        )
                     })
                     .collect(),
             ),
@@ -294,11 +309,16 @@ impl PaddedTypeMap {
                 Terminal::LambdaId(ls) => {
                     write!(
                         f,
-                        r#""type":"lambda_id","v":{{{}}}}}"#,
-                        ls.iter().format_with(",", |l, f| f(&format_args!(
-                            r#"{}:{}"#,
+                        r#""type":"lambda_id","v":[{}]}}"#,
+                        ls.iter().format_with(",", |(l, ctx), f| f(&format_args!(
+                            r#"{{id:{},root_t:{},ctx:[{}]}}"#,
                             l.id,
-                            JsonDebugRec(self, l.root_t, &visited_pointers)
+                            JsonDebugRec(self, l.root_t, &visited_pointers),
+                            ctx.iter().format_with(",", |c, f| f(&JsonDebugRec(
+                                self,
+                                *c,
+                                &visited_pointers
+                            )))
                         )))
                     )
                 }
@@ -420,7 +440,7 @@ impl Display for Terminal {
                 }
             }
             Terminal::LambdaId(l) => {
-                write!(f, "lambda({})", l.iter().format(" | "))
+                write!(f, "lambda({})", l.keys().format(" | "))
             }
         }
     }

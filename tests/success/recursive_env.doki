@@ -1,0 +1,23 @@
+println = a: intrinsic_print_str (intrinsic_append_str (to_string a) "\n")
+
+data Nil 0
+data Cons 2
+
+print_list = l: match l with
+        Nil => Nil,
+        Cons h t => let _ = println h
+                in print_list t,
+    end
+
+data A 0
+
+to_string = a: match a with
+        A => "A",
+        f => f Nil,
+    end
+
+main = _: let l = Nil
+    in let a = A
+    in let l = Cons a l
+    in let l = Cons (_: to_string a) l
+    in print_list l
