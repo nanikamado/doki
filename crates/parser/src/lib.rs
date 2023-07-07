@@ -1,6 +1,7 @@
 use ariadne::{sources, Color, Label, Report, ReportKind};
 use chumsky::prelude::*;
-use chumsky::text::{ident, int, keyword};
+use chumsky::text::int;
+use chumsky::text::unicode::{ident, keyword};
 use std::io::Write;
 
 #[derive(Clone, Debug)]
