@@ -19,7 +19,7 @@ impl Display for CType {
         match self {
             CType::I64 => write!(f, "int64_t"),
             CType::U8 => write!(f, "uint8_t"),
-            CType::String => write!(f, "char*"),
+            CType::String => write!(f, "struct intrinsic_str_t"),
             CType::Aggregate(i) => write!(f, "struct t{i}"),
             CType::Ref(i) => write!(f, "{i}*"),
         }

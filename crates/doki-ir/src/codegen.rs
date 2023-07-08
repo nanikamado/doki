@@ -96,7 +96,13 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
         #include <string.h>
         #include <stdint.h>
         #include <inttypes.h>
+        #include <unistd.h>
+        {} {{
+            size_t _0;
+            char* _1;
+        }};
         {}{}{}",
+        CType::String,
         sorted.iter().format_with("", |(i, t), f| {
             match t {
                 CAggregateType::Struct(fields) => f(&format_args!(
@@ -154,7 +160,7 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
     .unwrap();
     write!(
         w,
-        "static {0} __unit(){{
+        "static {0} intrinsic_unit(){{
             return ({0}){{}};
         }}
         {1}{2}{3}",
@@ -230,27 +236,33 @@ impl Display for PrimitiveDefPrint<'_> {
             Div => write!(f, "return _0 / _1;"),
             Lt => write!(f, "return _0 < _1;"),
             Eq => write!(f, "return _0 == _1;"),
-            PrintStr => write!(f, r#"printf("%s", _0);return __unit();"#),
+            PrintStr => write!(
+                f,
+                r#"write(STDOUT_FILENO, _0._1, _0._0);return intrinsic_unit();"#
+            ),
             I64ToString => write!(
                 f,
                 r#"int l = snprintf(NULL, 0, "%" PRId64, _0) + 1;
                 char* s = malloc(l);
                 snprintf(s, l, "%" PRId64, _0);
-                return s;"#
+                return ({}){{l-1,s}};"#,
+                CType::String
             ),
             AppendStr => write!(
                 f,
-                r#"int l = strlen(_0) + strlen(_1);
-                char* s = malloc(sizeof(char) * (l + 1));
-                sprintf(s, "%s%s", _0, _1);
-                return s;"#
+                r#"size_t l = _0._0 + _1._0;
+                char* s = malloc(sizeof(char) * l);
+                memcpy(s, _0._1, _0._0);
+                memcpy(s + _0._0, _1._1, _1._0);
+                return ({}){{l,s}};"#,
+                CType::String
             ),
             Mut => {
                 let n = self.mutted_types[&self.arg_ts[0]];
                 write!(f, "return mut_{n}(_0);")
             }
             Set => {
-                write!(f, "*_0 = _1;return __unit();")
+                write!(f, "*_0 = _1;return intrinsic_unit();")
             }
             Get => {
                 write!(f, "return *_0;")
@@ -517,7 +529,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
             ),
             Expr::I64(a) => write!(f, "{a}"),
             Expr::U8(a) => write!(f, "{a}"),
-            Expr::Str(a) => write!(f, "{a:?}"),
+            Expr::Str(a) => write!(f, "({}){{{},{a:?}}}", CType::String, a.len()),
             Expr::Ident(i) => i.fmt_with_env(env, f),
             Expr::Call {
                 f: g,
