@@ -8,6 +8,7 @@ use std::fmt::Display;
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CType {
     I64,
+    U8,
     String,
     Aggregate(usize),
     Ref(Box<CType>),
@@ -17,6 +18,7 @@ impl Display for CType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CType::I64 => write!(f, "int64_t"),
+            CType::U8 => write!(f, "uint8_t"),
             CType::String => write!(f, "char*"),
             CType::Aggregate(i) => write!(f, "struct t{i}"),
             CType::Ref(i) => write!(f, "{i}*"),
@@ -62,10 +64,12 @@ impl Env {
             match tu {
                 Normal { id, args } => match id {
                     TypeId::Intrinsic(IntrinsicTypeTag::String)
-                    | TypeId::Intrinsic(IntrinsicTypeTag::I64) => {
+                    | TypeId::Intrinsic(IntrinsicTypeTag::I64)
+                    | TypeId::Intrinsic(IntrinsicTypeTag::U8) => {
                         let c_t = match id {
                             TypeId::Intrinsic(IntrinsicTypeTag::String) => CType::String,
                             TypeId::Intrinsic(IntrinsicTypeTag::I64) => CType::I64,
+                            TypeId::Intrinsic(IntrinsicTypeTag::U8) => CType::U8,
                             _ => panic!(),
                         };
                         if single {

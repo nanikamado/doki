@@ -516,6 +516,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 )))
             ),
             Expr::I64(a) => write!(f, "{a}"),
+            Expr::U8(a) => write!(f, "{a}"),
             Expr::Str(a) => write!(f, "{a:?}"),
             Expr::Ident(i) => i.fmt_with_env(env, f),
             Expr::Call {

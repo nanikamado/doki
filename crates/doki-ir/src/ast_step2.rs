@@ -74,6 +74,7 @@ pub enum Expr {
         context: Vec<LocalVariable>,
     },
     I64(String),
+    U8(u8),
     Str(String),
     Ident(VariableId),
     Call {
@@ -551,6 +552,12 @@ impl Env {
                 I64(s),
                 t,
                 TypeId::Intrinsic(IntrinsicTypeTag::I64),
+                instructions,
+            ),
+            ast_step1::Expr::U8(s) => self.add_tags_to_expr(
+                U8(s),
+                t,
+                TypeId::Intrinsic(IntrinsicTypeTag::U8),
                 instructions,
             ),
             ast_step1::Expr::Str(s) => self.add_tags_to_expr(

@@ -79,6 +79,7 @@ pub enum Expr {
         context: Vec<LocalVariable>,
     },
     I64(String),
+    U8(u8),
     Str(String),
     Ident(VariableId),
     Call {
@@ -183,6 +184,13 @@ impl TypeInfEnv {
                             self.type_map.insert_normal(
                                 t,
                                 TypeId::Intrinsic(IntrinsicTypeTag::I64),
+                                Vec::new(),
+                            );
+                        }
+                        Expr::U8(_) => {
+                            self.type_map.insert_normal(
+                                t,
+                                TypeId::Intrinsic(IntrinsicTypeTag::U8),
                                 Vec::new(),
                             );
                         }

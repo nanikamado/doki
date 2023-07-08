@@ -116,6 +116,7 @@ impl IntrinsicVariable {
 pub enum IntrinsicTypeTag {
     String,
     I64,
+    U8,
     Unit,
     True,
     False,
