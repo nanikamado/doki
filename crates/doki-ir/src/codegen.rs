@@ -94,6 +94,8 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
         #include <stdio.h>
         #include <stdlib.h>
         #include <string.h>
+        #include <stdint.h>
+        #include <inttypes.h>
         {}{}{}",
         sorted.iter().format_with("", |(i, t), f| {
             match t {
@@ -231,9 +233,9 @@ impl Display for PrimitiveDefPrint<'_> {
             PrintStr => write!(f, r#"printf("%s", _0);return __unit();"#),
             I64ToString => write!(
                 f,
-                r#"int l = snprintf(NULL, 0, "%d", _0) + 1;
+                r#"int l = snprintf(NULL, 0, "%" PRId64, _0) + 1;
                 char* s = malloc(l);
-                snprintf(s, l, "%d", _0);
+                snprintf(s, l, "%" PRId64, _0);
                 return s;"#
             ),
             AppendStr => write!(
