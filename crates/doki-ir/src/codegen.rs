@@ -143,7 +143,7 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
         ast.variable_decls
             .iter()
             .format_with("", |d, f| f(&format_args!(
-                "{} g_{}_{}();",
+                "{} g_{}_{};",
                 env.global_variable_types[&d.decl_id],
                 d.decl_id,
                 convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
@@ -183,7 +183,7 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
         ast.variable_decls
             .iter()
             .format_with("", |d, f| f(&format_args!(
-                "{} g_{}_{}(){}",
+                "{} init_g_{}_{}(){}",
                 env.global_variable_types[&d.decl_id],
                 d.decl_id,
                 convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
@@ -195,8 +195,16 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
     write!(
         w,
         "int main(void) {{
+            {}
             {}((struct t0){{}},(struct t0){{}});
         }}",
+        ast.variable_decls
+            .iter()
+            .format_with("", |d, f| f(&format_args!(
+                "g_{0}_{1}=init_g_{0}_{1}();",
+                d.decl_id,
+                convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
+            ))),
         ast.entry_point
     )
     .unwrap();
@@ -590,7 +598,7 @@ impl DisplayWithEnv for VariableId {
     fn fmt_with_env(&self, env: &Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VariableId::Global(d) => {
-                write!(f, "g_{d}_{}()", convert_name(&env.variable_names[self]))
+                write!(f, "g_{d}_{}", convert_name(&env.variable_names[self]))
             }
             VariableId::Local(d) => {
                 if let Some(d) = env.context.get(d) {
