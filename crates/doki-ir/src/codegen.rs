@@ -118,7 +118,7 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
         c_type_env.reffed_aggregates.iter().format_with("", |i, f| {
             let t = CType::Aggregate(*i);
             f(&format_args!(
-                "{t}* ref_t{i}({t} a) {{
+                "static {t}* ref_t{i}({t} a) {{
                     {t}* tmp = malloc(sizeof({t}));
                     *tmp = a;
                     return tmp;
@@ -128,7 +128,7 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
         mutted_types
             .iter()
             .format_with("", |(t, n), f| f(&format_args!(
-                "{t}* mut_{n}({t} a) {{
+                "static {t}* mut_{n}({t} a) {{
                 {t}* tmp = malloc(sizeof({t}));
                 *tmp = a;
                 return tmp;
@@ -143,7 +143,7 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
         ast.variable_decls
             .iter()
             .format_with("", |d, f| f(&format_args!(
-                "{} g_{}_{};",
+                "static {} g_{}_{};",
                 env.global_variable_types[&d.decl_id],
                 d.decl_id,
                 convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
@@ -152,7 +152,7 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
     .unwrap();
     write!(
         w,
-        "{0} __unit(){{
+        "static {0} __unit(){{
             return ({0}){{}};
         }}
         {1}{2}{3}",
@@ -167,7 +167,7 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
         intrinsic_variables
             .into_iter()
             .map(|(v, ret_t, arg_ts)| format!(
-                "{} intrinsic_{v}({}){{{}}}",
+                "static {} intrinsic_{v}({}){{{}}}",
                 ret_t,
                 arg_ts
                     .iter()
@@ -183,7 +183,7 @@ pub fn codegen(ast: Ast, w: &mut impl Write) {
         ast.variable_decls
             .iter()
             .format_with("", |d, f| f(&format_args!(
-                "{} init_g_{}_{}(){}",
+                "static {} init_g_{}_{}(){}",
                 env.global_variable_types[&d.decl_id],
                 d.decl_id,
                 convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
@@ -314,7 +314,7 @@ fn write_fns(
             };
             let (t, ct) = env.local_variable_types.get_type(function.parameter);
             f(&format_args!(
-                "{} {}({} {}/*{}*/,{} ctx)",
+                "static {} {}({} {}/*{}*/,{} ctx)",
                 env.get_type(function.ret),
                 function.id,
                 ct,
