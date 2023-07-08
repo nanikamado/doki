@@ -3,7 +3,7 @@ mod padded_type_map;
 #[cfg(debug_assertions)]
 pub use self::padded_type_map::JsonDebug;
 pub use self::padded_type_map::{PaddedTypeMap, ReplaceMap, Terminal, TypeId, TypePointer};
-use crate::intrinsics::{IntrinsicConstructor, IntrinsicType, IntrinsicVariable};
+use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariable};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::{Debug, Display};
@@ -182,14 +182,14 @@ impl TypeInfEnv {
                         Expr::I64(_) => {
                             self.type_map.insert_normal(
                                 t,
-                                TypeId::Intrinsic(IntrinsicType::I64),
+                                TypeId::Intrinsic(IntrinsicTypeTag::I64),
                                 Vec::new(),
                             );
                         }
                         Expr::Str(_) => {
                             self.type_map.insert_normal(
                                 t,
-                                TypeId::Intrinsic(IntrinsicType::String),
+                                TypeId::Intrinsic(IntrinsicTypeTag::String),
                                 Vec::new(),
                             );
                         }
@@ -270,12 +270,12 @@ impl TypeInfEnv {
                             args,
                             id: BasicFunction::Intrinsic(v),
                         } => {
+                            let mut arg_types = Vec::with_capacity(args.len());
                             for a in args {
                                 self.used_local_variables.insert(*a);
+                                arg_types.push(self.local_variable_types.get(*a));
                             }
-                            let ret_type = v.runtime_return_type();
-                            self.type_map
-                                .insert_normal(t, TypeId::Intrinsic(ret_type), Vec::new());
+                            v.insert_return_type(t, &mut self.type_map, &arg_types);
                         }
                     }
                     self.defined_local_variables.insert(*v);
@@ -501,7 +501,7 @@ impl Env {
         let (p, _, _) = env_next.type_map.get_fn(type_of_entry_point);
         env_next
             .type_map
-            .insert_normal(p, TypeId::Intrinsic(IntrinsicType::Unit), Vec::new());
+            .insert_normal(p, TypeId::Intrinsic(IntrinsicTypeTag::Unit), Vec::new());
         debug_assert!(!rec);
         let type_map = env_next.type_map;
         let local_variable_types_old = env_next.local_variable_types;

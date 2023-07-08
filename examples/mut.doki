@@ -1,0 +1,6 @@
+println = a: intrinsic_print_str (intrinsic_append_str a "\n")
+
+main = _:
+    let a = intrinsic_mut 0
+    in let _ = intrinsic_set a 1
+    in println (intrinsic_i64_to_string (intrinsic_get a))

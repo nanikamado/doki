@@ -92,3 +92,13 @@ fn taut() {
 fn recursive_env() {
     test_test_success("recursive_env.doki", "A\nA\n");
 }
+
+#[test]
+fn mut_list() {
+    test_test_success("mut_list.doki", "10\n");
+}
+
+#[test]
+fn r#mut() {
+    test_examples("mut.doki", "1\n");
+}

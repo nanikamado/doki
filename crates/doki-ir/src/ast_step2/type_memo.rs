@@ -1,7 +1,7 @@
 use super::{LambdaId, TypeIdTag};
 use crate::ast_step1::{ConstructorNames, PaddedTypeMap, Terminal, TypeId, TypePointer};
 use crate::id_generator::{self, IdGenerator};
-use crate::intrinsics::IntrinsicType;
+use crate::intrinsics::IntrinsicTypeTag;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;
@@ -166,7 +166,7 @@ impl BrokenLinkCheck for IndexOrPointer {
     fn contains_broken_link(&self, depth: u32) -> bool {
         match self {
             IndexOrPointer::Index(i) => *i >= depth,
-            IndexOrPointer::Pointer(_) => todo!(),
+            IndexOrPointer::Pointer(_) => unimplemented!(),
         }
     }
 }
@@ -433,7 +433,7 @@ impl TypeMemo {
         map: &mut PaddedTypeMap,
         for_hash: bool,
     ) -> IntermediateTypeUnit {
-        if let TypeId::Intrinsic(IntrinsicType::Fn) = id {
+        if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
             debug_assert_eq!(args.len(), 3);
             let mut args = args.iter();
             let a = self.get_type_inner(*args.next().unwrap(), trace, map, for_hash);
@@ -558,7 +558,7 @@ pub enum GetTagNormalResult {
 }
 
 pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
-    debug_assert_ne!(type_id, TypeId::Intrinsic(IntrinsicType::Fn));
+    debug_assert_ne!(type_id, TypeId::Intrinsic(IntrinsicTypeTag::Fn));
     let mut tag = 0;
     let mut result = None;
     for t in ot.ts.clone() {
@@ -731,7 +731,7 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeUnitOf<R> {
         use TypeUnitOf::*;
         match self {
             Normal { args, id } => {
-                debug_assert_ne!(*id, TypeId::Intrinsic(IntrinsicType::Fn));
+                debug_assert_ne!(*id, TypeId::Intrinsic(IntrinsicTypeTag::Fn));
                 match id {
                     TypeId::UserDefined(u) => {
                         write!(f, "{}", env.get(*u))?;
@@ -847,7 +847,7 @@ impl<R: TypeFamily> fmt::Debug for TypeUnitOf<R> {
         use TypeUnitOf::*;
         match self {
             Normal { args, id } => {
-                debug_assert_ne!(*id, TypeId::Intrinsic(IntrinsicType::Fn));
+                debug_assert_ne!(*id, TypeId::Intrinsic(IntrinsicTypeTag::Fn));
                 if args.is_empty() {
                     write!(f, "{id}")
                 } else {

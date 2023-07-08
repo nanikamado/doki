@@ -1,7 +1,7 @@
 use super::collector::Collector;
 use crate::ast_step1::TypeId;
 use crate::ast_step2::{Type, TypeInner, TypeInnerOf, TypeUnitOf};
-use crate::intrinsics::IntrinsicType;
+use crate::intrinsics::IntrinsicTypeTag;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::Display;
 
@@ -61,13 +61,23 @@ impl Env {
             use TypeUnitOf::*;
             match tu {
                 Normal { id, args } => match id {
-                    TypeId::Intrinsic(IntrinsicType::String)
-                    | TypeId::Intrinsic(IntrinsicType::I64) => {
+                    TypeId::Intrinsic(IntrinsicTypeTag::String)
+                    | TypeId::Intrinsic(IntrinsicTypeTag::I64) => {
                         let c_t = match id {
-                            TypeId::Intrinsic(IntrinsicType::String) => CType::String,
-                            TypeId::Intrinsic(IntrinsicType::I64) => CType::Int,
+                            TypeId::Intrinsic(IntrinsicTypeTag::String) => CType::String,
+                            TypeId::Intrinsic(IntrinsicTypeTag::I64) => CType::Int,
                             _ => panic!(),
                         };
+                        if single {
+                            debug_assert!(reserved_id.is_none());
+                            return c_t;
+                        }
+                        ts.push(c_t);
+                    }
+                    TypeId::Intrinsic(IntrinsicTypeTag::Mut) => {
+                        debug_assert_eq!(args.len(), 1);
+                        let arg_t = self.c_type_from_inner_type(&args[0], &type_stack);
+                        let c_t = CType::Ref(Box::new(arg_t));
                         if single {
                             debug_assert!(reserved_id.is_none());
                             return c_t;

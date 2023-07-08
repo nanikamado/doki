@@ -1,0 +1,17 @@
+data Unit 0
+
+println = a: intrinsic_print_str (intrinsic_append_str a "\n")
+
+seq = a: match a with
+        0 => Unit,
+        _ => intrinsic_mut (seq (intrinsic_minus a 1)),
+    end
+
+len = a: match a with
+        Unit => 0,
+        _ => intrinsic_plus (len (intrinsic_get a)) 1,
+    end
+
+main = _:
+    let a = len (seq 10)
+    in println (intrinsic_i64_to_string a)

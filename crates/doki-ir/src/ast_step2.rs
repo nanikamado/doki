@@ -13,9 +13,9 @@ use crate::ast_step1::{
 };
 use crate::ast_step2::type_memo::BrokenLinkCheck;
 use crate::id_generator::{self, IdGenerator};
-use crate::intrinsics::IntrinsicType;
+use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
 use itertools::Itertools;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::{Debug, Display};
 
 #[derive(Debug)]
@@ -29,6 +29,7 @@ pub struct Ast {
     pub constructor_names: ConstructorNames,
     pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
     pub local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
+    pub used_intrinsic_variables: FxHashSet<(IntrinsicVariable, Vec<Type>)>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -153,6 +154,7 @@ impl Ast {
                     constructor_names: memo.constructor_names,
                     type_id_generator: memo.type_id_generator,
                     local_variable_replace_map: memo.local_variable_replace_map,
+                    used_intrinsic_variables: memo.used_intrinsic_variables,
                 }
             }
             _ => panic!(),
@@ -181,6 +183,7 @@ pub struct Env {
     constructor_names: ConstructorNames,
     type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
     minimize_type: bool,
+    used_intrinsic_variables: FxHashSet<(IntrinsicVariable, Vec<Type>)>,
 }
 
 #[derive(Debug)]
@@ -220,6 +223,7 @@ impl Env {
             constructor_names,
             type_id_generator: Default::default(),
             minimize_type,
+            used_intrinsic_variables: Default::default(),
         }
     }
 
@@ -368,7 +372,7 @@ impl Env {
                 }
             }
             ast_step1::Instruction::Test(ast_step1::Tester::I64 { value }, l) => {
-                let type_id = TypeId::Intrinsic(IntrinsicType::I64);
+                let type_id = TypeId::Intrinsic(IntrinsicTypeTag::I64);
                 let a = self.downcast(l, root_t, type_id, replace_map, instructions, true);
                 match a {
                     Ok(a) => instructions.push(Instruction::Test(Tester::I64 { value }, a)),
@@ -379,7 +383,7 @@ impl Env {
                 false
             }
             ast_step1::Instruction::Test(ast_step1::Tester::Str { value }, a) => {
-                let type_id = TypeId::Intrinsic(IntrinsicType::String);
+                let type_id = TypeId::Intrinsic(IntrinsicTypeTag::String);
                 let a = self.downcast(a, root_t, type_id, replace_map, instructions, true);
                 match a {
                     Ok(a) => instructions.push(Instruction::Test(Tester::Str { value }, a)),
@@ -546,13 +550,13 @@ impl Env {
             ast_step1::Expr::I64(s) => self.add_tags_to_expr(
                 I64(s),
                 t,
-                TypeId::Intrinsic(IntrinsicType::I64),
+                TypeId::Intrinsic(IntrinsicTypeTag::I64),
                 instructions,
             ),
             ast_step1::Expr::Str(s) => self.add_tags_to_expr(
                 Str(s),
                 t,
-                TypeId::Intrinsic(IntrinsicType::String),
+                TypeId::Intrinsic(IntrinsicTypeTag::String),
                 instructions,
             ),
             ast_step1::Expr::Ident(v) => {
@@ -667,24 +671,30 @@ impl Env {
                 args,
                 id: BasicFunction::Intrinsic(id),
             } => {
-                let rt = id.runtime_return_type();
-                let arg_ts = id.runtime_arg_type_id();
-                let args = args
-                    .into_iter()
-                    .zip_eq(arg_ts)
-                    .map(|(a, param_t)| {
-                        self.downcast(a, root_t, param_t, replace_map, instructions, false)
-                    })
-                    .collect::<Result<_, _>>()?;
-                self.add_tags_to_expr(
-                    BasicCall {
-                        args,
-                        id: BasicFunction::Intrinsic(id),
-                    },
-                    t,
-                    TypeId::Intrinsic(rt),
-                    instructions,
-                )
+                let arg_restrictions = id.runtime_arg_type_restriction();
+                let mut args_new = Vec::with_capacity(args.len());
+                let mut arg_ts = Vec::with_capacity(args.len());
+                for (a, param_t) in args.into_iter().zip_eq(arg_restrictions) {
+                    let a = if let Some(param_t) = param_t {
+                        self.downcast(a, root_t, param_t, replace_map, instructions, false)?
+                    } else {
+                        VariableId::Local(self.get_defined_local_variable(a, root_t, replace_map))
+                    };
+                    args_new.push(a);
+                    arg_ts.push(match a {
+                        VariableId::Local(a) => self.local_variable_collector.get_type(a).clone(),
+                        VariableId::Global(_) => panic!(),
+                    });
+                }
+                self.used_intrinsic_variables.insert((id, arg_ts));
+                let e = BasicCall {
+                    args: args_new,
+                    id: BasicFunction::Intrinsic(id),
+                };
+                match id.runtime_return_type() {
+                    Some(rt) => self.add_tags_to_expr(e, t, TypeId::Intrinsic(rt), instructions),
+                    None => e,
+                }
             }
         };
         Ok(e)

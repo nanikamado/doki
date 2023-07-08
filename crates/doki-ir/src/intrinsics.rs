@@ -1,4 +1,5 @@
-use crate::{ast_step1, ast_step2};
+use crate::ast_step1::{self, PaddedTypeMap, TypePointer};
+use crate::{ast_step2, TypeId};
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
 use std::fmt::Display;
@@ -17,6 +18,9 @@ pub enum IntrinsicVariable {
     PrintStr,
     I64ToString,
     AppendStr,
+    Mut,
+    Set,
+    Get,
 }
 
 impl Display for IntrinsicVariable {
@@ -25,7 +29,7 @@ impl Display for IntrinsicVariable {
     }
 }
 
-const fn runtime_intrinsic_type(i: IntrinsicType) -> ast_step2::TypeUnitForHash {
+const fn runtime_intrinsic_type(i: IntrinsicTypeTag) -> ast_step2::TypeUnitForHash {
     ast_step2::TypeUnitOf::Normal {
         id: ast_step1::TypeId::Intrinsic(i),
         args: Vec::new(),
@@ -34,77 +38,92 @@ const fn runtime_intrinsic_type(i: IntrinsicType) -> ast_step2::TypeUnitForHash 
 
 impl IntrinsicVariable {
     pub fn parameter_len(self) -> usize {
+        use IntrinsicVariable::*;
         match self {
-            IntrinsicVariable::Minus
-            | IntrinsicVariable::Plus
-            | IntrinsicVariable::Percent
-            | IntrinsicVariable::Multi
-            | IntrinsicVariable::Div
-            | IntrinsicVariable::Lt
-            | IntrinsicVariable::Eq
-            | IntrinsicVariable::AppendStr => 2,
-            IntrinsicVariable::PrintStr | IntrinsicVariable::I64ToString => 1,
+            Minus | Plus | Percent | Multi | Div | Lt | Eq | AppendStr | Set => 2,
+            PrintStr | I64ToString | Mut | Get => 1,
         }
     }
 
-    pub fn runtime_return_type(self) -> IntrinsicType {
-        use IntrinsicType::*;
+    pub fn runtime_return_type(self) -> Option<IntrinsicTypeTag> {
+        use IntrinsicVariable::*;
         match self {
-            IntrinsicVariable::Minus
-            | IntrinsicVariable::Plus
-            | IntrinsicVariable::Percent
-            | IntrinsicVariable::Multi
-            | IntrinsicVariable::Div => I64,
-            IntrinsicVariable::Lt | IntrinsicVariable::Eq => I64,
-            IntrinsicVariable::PrintStr => Unit,
-            IntrinsicVariable::I64ToString => String,
-            IntrinsicVariable::AppendStr => String,
+            Minus | Plus | Percent | Multi | Div | Lt | Eq => Some(IntrinsicTypeTag::I64),
+            PrintStr | Set => Some(IntrinsicTypeTag::Unit),
+            I64ToString | AppendStr => Some(IntrinsicTypeTag::String),
+            Mut => Some(IntrinsicTypeTag::Mut),
+            Get => None,
         }
     }
 
-    pub fn runtime_arg_type_id(self) -> Vec<ast_step1::TypeId> {
-        use ast_step1::TypeId;
-        const I64: TypeId = TypeId::Intrinsic(IntrinsicType::I64);
-        const STRING: TypeId = TypeId::Intrinsic(IntrinsicType::String);
+    pub fn insert_return_type(
+        self,
+        t: TypePointer,
+        type_map: &mut PaddedTypeMap,
+        arg_types: &[TypePointer],
+    ) {
+        use IntrinsicVariable::*;
         match self {
-            IntrinsicVariable::Minus
-            | IntrinsicVariable::Plus
-            | IntrinsicVariable::Percent
-            | IntrinsicVariable::Multi
-            | IntrinsicVariable::Div
-            | IntrinsicVariable::Lt
-            | IntrinsicVariable::Eq => vec![I64, I64],
-            IntrinsicVariable::PrintStr => vec![STRING],
-            IntrinsicVariable::I64ToString => vec![I64],
-            IntrinsicVariable::AppendStr => vec![STRING, STRING],
+            Mut => {
+                debug_assert_eq!(arg_types.len(), 1);
+                type_map.insert_normal(
+                    t,
+                    TypeId::Intrinsic(IntrinsicTypeTag::Mut),
+                    vec![arg_types[0]],
+                )
+            }
+            Set => {
+                debug_assert_eq!(arg_types.len(), 2);
+                type_map.insert_normal(t, TypeId::Intrinsic(IntrinsicTypeTag::Unit), Vec::new());
+                type_map.insert_normal(
+                    arg_types[0],
+                    TypeId::Intrinsic(IntrinsicTypeTag::Mut),
+                    vec![arg_types[1]],
+                )
+            }
+            Get => {
+                debug_assert_eq!(arg_types.len(), 1);
+                type_map.insert_normal(
+                    arg_types[0],
+                    TypeId::Intrinsic(IntrinsicTypeTag::Mut),
+                    vec![t],
+                )
+            }
+            _ => {
+                let ret_type = self.runtime_return_type().unwrap();
+                type_map.insert_normal(t, TypeId::Intrinsic(ret_type), Vec::new());
+            }
         }
     }
 
-    pub fn runtime_arg_type(self) -> Vec<ast_step2::Type> {
-        self.runtime_arg_type_id()
-            .into_iter()
-            .map(|id| {
-                ast_step2::TypeUnitOf::Normal {
-                    id,
-                    args: Vec::new(),
-                }
-                .into()
-            })
-            .collect()
+    pub fn runtime_arg_type_restriction(self) -> Vec<Option<ast_step1::TypeId>> {
+        use IntrinsicVariable::*;
+        const I64: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::I64));
+        const STRING: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::String));
+        match self {
+            Minus | Plus | Percent | Multi | Div | Lt | Eq => vec![I64, I64],
+            PrintStr => vec![STRING],
+            I64ToString => vec![I64],
+            AppendStr => vec![STRING, STRING],
+            Mut => vec![None],
+            Set => vec![Some(TypeId::Intrinsic(IntrinsicTypeTag::Mut)), None],
+            Get => vec![Some(TypeId::Intrinsic(IntrinsicTypeTag::Mut))],
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum IntrinsicType {
+pub enum IntrinsicTypeTag {
     String,
     I64,
     Unit,
     True,
     False,
     Fn,
+    Mut,
 }
 
-impl IntrinsicType {
+impl IntrinsicTypeTag {
     pub fn parameter_len(self) -> usize {
         if let Self::Fn = self {
             2
@@ -114,14 +133,14 @@ impl IntrinsicType {
     }
 }
 
-pub static INTRINSIC_TYPES: Lazy<FxHashMap<&'static str, IntrinsicType>> = Lazy::new(|| {
+pub static INTRINSIC_TYPES: Lazy<FxHashMap<&'static str, IntrinsicTypeTag>> = Lazy::new(|| {
     [
-        ("String", IntrinsicType::String),
-        ("I64", IntrinsicType::I64),
-        ("()", IntrinsicType::Unit),
-        ("True", IntrinsicType::True),
-        ("False", IntrinsicType::False),
-        ("->", IntrinsicType::Fn),
+        ("String", IntrinsicTypeTag::String),
+        ("I64", IntrinsicTypeTag::I64),
+        ("()", IntrinsicTypeTag::Unit),
+        ("True", IntrinsicTypeTag::True),
+        ("False", IntrinsicTypeTag::False),
+        ("->", IntrinsicTypeTag::Fn),
     ]
     .map(|(n, t)| (n, t))
     .iter()
@@ -169,7 +188,7 @@ impl IntrinsicConstructor {
     }
 }
 
-impl From<IntrinsicConstructor> for IntrinsicType {
+impl From<IntrinsicConstructor> for IntrinsicTypeTag {
     fn from(c: IntrinsicConstructor) -> Self {
         match c {
             IntrinsicConstructor::Unit => Self::Unit,

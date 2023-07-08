@@ -2,7 +2,7 @@ mod minimize;
 
 pub use self::replace_map::ReplaceMap;
 use super::{ConstructorId, LambdaId};
-use crate::intrinsics::IntrinsicType;
+use crate::intrinsics::IntrinsicTypeTag;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 #[cfg(debug_assertions)]
@@ -14,7 +14,7 @@ use std::mem;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TypeId {
     UserDefined(ConstructorId),
-    Intrinsic(IntrinsicType),
+    Intrinsic(IntrinsicTypeTag),
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Copy, Hash)]
@@ -114,7 +114,7 @@ impl PaddedTypeMap {
         let Terminal::TypeMap(t) = t else {
             panic!()
         };
-        if let Some(f) = t.normals.get(&TypeId::Intrinsic(IntrinsicType::Fn)) {
+        if let Some(f) = t.normals.get(&TypeId::Intrinsic(IntrinsicTypeTag::Fn)) {
             let f_0 = f[0];
             let f_1 = f[1];
             let f_2 = f[2];
@@ -122,8 +122,10 @@ impl PaddedTypeMap {
             self.union(f_1, ret);
             self.union(f_2, fn_id);
         } else {
-            t.normals
-                .insert(TypeId::Intrinsic(IntrinsicType::Fn), vec![arg, ret, fn_id]);
+            t.normals.insert(
+                TypeId::Intrinsic(IntrinsicTypeTag::Fn),
+                vec![arg, ret, fn_id],
+            );
         }
     }
 
@@ -183,7 +185,7 @@ impl PaddedTypeMap {
         let p = self.find(p);
         if let Terminal::TypeMap(t) = &self.dereference_without_find(p) {
             t.normals
-                .get(&TypeId::Intrinsic(IntrinsicType::Fn))
+                .get(&TypeId::Intrinsic(IntrinsicTypeTag::Fn))
                 .map(|f| (f[0], f[1], f[2]))
         } else {
             panic!()
