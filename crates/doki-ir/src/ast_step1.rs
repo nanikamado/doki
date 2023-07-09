@@ -105,7 +105,7 @@ pub enum BasicFunction {
 
 struct TypeInfEnv {
     type_map: PaddedTypeMap,
-    global_variable_types: FxHashMap<GlobalVariable, TypePointer>,
+    global_variable_types: FxHashMap<GlobalVariable, GlobalVariableType>,
     local_variable_types: LocalVariableTypes,
     global_variables_before_type_inf: FxHashMap<GlobalVariable, VariableDecl>,
     global_variables_done: Vec<VariableDecl>,
@@ -113,14 +113,37 @@ struct TypeInfEnv {
     field_len: Vec<usize>,
     used_local_variables: FxHashSet<LocalVariable>,
     defined_local_variables: FxHashSet<LocalVariable>,
+    unreplicatable_pointers: Vec<TypePointer>,
+    unfixed_unreplicatable_pointer_in_local_variables: FxHashMap<LocalVariable, Vec<TypePointer>>,
+    unfixed_unreplicatable_pointers: Vec<TypePointer>,
+}
+
+struct GlobalVariableType {
+    t: TypePointer,
+    unreplicatable: Vec<TypePointer>,
+    unfixed_unreplicatable_pointers: Vec<TypePointer>,
+}
+
+enum IsRecursive {
+    True,
+    False {
+        unreplicatable_pointers: Vec<TypePointer>,
+        unfixed_unreplicatable_pointers: Vec<TypePointer>,
+    },
 }
 
 impl TypeInfEnv {
-    fn get_type_global(&mut self, decl_id: GlobalVariable) -> (TypePointer, bool) {
+    fn get_type_global(&mut self, decl_id: GlobalVariable) -> (TypePointer, IsRecursive) {
         if let Some(p) = self.trace.get(&decl_id) {
-            (*p, true)
-        } else if let Some(p) = self.global_variable_types.get(&decl_id) {
-            (*p, false)
+            (*p, IsRecursive::True)
+        } else if let Some(t) = self.global_variable_types.get(&decl_id) {
+            (
+                t.t,
+                IsRecursive::False {
+                    unreplicatable_pointers: t.unreplicatable.clone(),
+                    unfixed_unreplicatable_pointers: t.unfixed_unreplicatable_pointers.clone(),
+                },
+            )
         } else {
             let mut d = self
                 .global_variables_before_type_inf
@@ -128,15 +151,39 @@ impl TypeInfEnv {
                 .unwrap();
             let root_t = self.local_variable_types.get(d.ret);
             self.trace.insert(decl_id, root_t);
-            self.block(&mut d.value, root_t);
+            let unreplicatable_pointers_tmp = std::mem::take(&mut self.unreplicatable_pointers);
+            let unfixed_unreplicatable_pointers_tmp =
+                std::mem::take(&mut self.unfixed_unreplicatable_pointers);
+            self.block(&mut d.value, root_t, true);
+            let unreplicatable_pointers = std::mem::replace(
+                &mut self.unreplicatable_pointers,
+                unreplicatable_pointers_tmp,
+            );
+            let unfixed_unreplicatable_pointers = std::mem::replace(
+                &mut self.unfixed_unreplicatable_pointers,
+                unfixed_unreplicatable_pointers_tmp,
+            );
             self.trace.remove(&decl_id);
-            self.global_variable_types.insert(decl_id, root_t);
+            self.global_variable_types.insert(
+                decl_id,
+                GlobalVariableType {
+                    t: root_t,
+                    unreplicatable: unreplicatable_pointers.clone(),
+                    unfixed_unreplicatable_pointers: unfixed_unreplicatable_pointers.clone(),
+                },
+            );
             self.global_variables_done.push(d);
-            (root_t, false)
+            (
+                root_t,
+                IsRecursive::False {
+                    unreplicatable_pointers,
+                    unfixed_unreplicatable_pointers,
+                },
+            )
         }
     }
 
-    fn block(&mut self, block: &mut Block, root_t: TypePointer) {
+    fn block(&mut self, block: &mut Block, root_t: TypePointer, outside_of_fn: bool) {
         for i in &mut block.instructions {
             match i {
                 Instruction::Assign(v, e) => {
@@ -157,7 +204,7 @@ impl TypeInfEnv {
                             let arg = self.local_variable_types.get(*parameter);
                             let ret = self.local_variable_types.get(*ret);
                             let fn_id = self.type_map.new_lambda_id_pointer();
-                            self.block(body, root_t);
+                            self.block(body, root_t, false);
                             *context = self
                                 .used_local_variables
                                 .iter()
@@ -201,18 +248,39 @@ impl TypeInfEnv {
                                 Vec::new(),
                             );
                         }
-                        Expr::Ident(VariableId::Global(decl_id, replace_map_p, pp)) => {
+                        Expr::Ident(VariableId::Global(decl_id, replace_map, pp)) => {
+                            debug_assert!(replace_map.is_empty());
                             let (p, is_recursive) = self.get_type_global(*decl_id);
-                            if is_recursive {
-                                self.type_map.union(p, t);
-                                *pp = p;
-                            } else {
-                                let mut replace_map = Default::default();
-                                let v_cloned = self.type_map.clone_pointer(p, &mut replace_map);
-                                self.type_map.union(t, v_cloned);
-                                *pp = t;
-                                *replace_map_p = replace_map;
-                            };
+                            match is_recursive {
+                                IsRecursive::True => {
+                                    self.type_map.union(p, t);
+                                    *pp = p;
+                                }
+                                IsRecursive::False {
+                                    unreplicatable_pointers,
+                                    unfixed_unreplicatable_pointers,
+                                } => {
+                                    replace_map.add_unreplicatable(
+                                        unreplicatable_pointers
+                                            .iter()
+                                            .map(|p| self.type_map.find(*p)),
+                                    );
+                                    let v_cloned = self.type_map.clone_pointer(p, replace_map);
+                                    self.type_map.union(t, v_cloned);
+                                    *pp = t;
+                                    let mut unfixed_unreplicatable_pointers =
+                                        unfixed_unreplicatable_pointers
+                                            .into_iter()
+                                            .map(|p| self.type_map.clone_pointer(p, replace_map))
+                                            .collect_vec();
+                                    if !unfixed_unreplicatable_pointers.is_empty() {
+                                        self.unfixed_unreplicatable_pointer_in_local_variables
+                                            .insert(*v, unfixed_unreplicatable_pointers.clone());
+                                    }
+                                    self.unfixed_unreplicatable_pointers
+                                        .append(&mut unfixed_unreplicatable_pointers);
+                                }
+                            }
                         }
                         Expr::Ident(VariableId::Local(d)) => {
                             self.used_local_variables.insert(*d);
@@ -220,6 +288,15 @@ impl TypeInfEnv {
                             self.type_map.union(t, t2);
                         }
                         Expr::Call { f, a } => {
+                            if let Some(unfixed_unreplicatables) = self
+                                .unfixed_unreplicatable_pointer_in_local_variables
+                                .get(f)
+                            {
+                                if outside_of_fn {
+                                    self.unreplicatable_pointers
+                                        .extend(unfixed_unreplicatables.iter())
+                                }
+                            }
                             self.used_local_variables.insert(*f);
                             self.used_local_variables.insert(*a);
                             let f_t = self.local_variable_types.get(*f);
@@ -283,7 +360,12 @@ impl TypeInfEnv {
                                 self.used_local_variables.insert(*a);
                                 arg_types.push(self.local_variable_types.get(*a));
                             }
-                            v.insert_return_type(t, &mut self.type_map, &arg_types);
+                            let mut p = Vec::new();
+                            v.insert_return_type(t, &mut self.type_map, &arg_types, &mut p);
+                            if outside_of_fn {
+                                self.unreplicatable_pointers.append(&mut p.clone())
+                            }
+                            self.unfixed_unreplicatable_pointers.append(&mut p);
                         }
                     }
                     self.defined_local_variables.insert(*v);
@@ -293,8 +375,8 @@ impl TypeInfEnv {
                 }
                 Instruction::FailTest | Instruction::Panic { .. } => (),
                 Instruction::TryCatch(a, b) => {
-                    self.block(a, root_t);
-                    self.block(b, root_t);
+                    self.block(a, root_t, outside_of_fn);
+                    self.block(b, root_t, outside_of_fn);
                 }
             }
         }
@@ -328,7 +410,6 @@ impl ConstructorNames {
 #[derive(Debug, Default)]
 pub struct Env {
     type_map: PaddedTypeMap,
-    global_variable_types: FxHashMap<GlobalVariable, TypePointer>,
     local_variable_types: LocalVariableTypes,
     lambda_count: u32,
     global_variable_count: usize,
@@ -496,7 +577,7 @@ impl Env {
     pub(crate) fn build(self, entry_point: GlobalVariable) -> Ast {
         let mut env_next = TypeInfEnv {
             type_map: self.type_map,
-            global_variable_types: self.global_variable_types,
+            global_variable_types: Default::default(),
             local_variable_types: self.local_variable_types,
             global_variables_before_type_inf: self.global_variables_done,
             trace: Default::default(),
@@ -504,13 +585,16 @@ impl Env {
             field_len: self.field_len,
             used_local_variables: Default::default(),
             defined_local_variables: Default::default(),
+            unreplicatable_pointers: Default::default(),
+            unfixed_unreplicatable_pointers: Default::default(),
+            unfixed_unreplicatable_pointer_in_local_variables: Default::default(),
         };
         let (type_of_entry_point, rec) = env_next.get_type_global(entry_point);
+        debug_assert!(matches!(rec, IsRecursive::False { .. }));
         let (p, _, _) = env_next.type_map.get_fn(type_of_entry_point);
         env_next
             .type_map
             .insert_normal(p, TypeId::Intrinsic(IntrinsicTypeTag::Unit), Vec::new());
-        debug_assert!(!rec);
         let type_map = env_next.type_map;
         let local_variable_types_old = env_next.local_variable_types;
         Ast {

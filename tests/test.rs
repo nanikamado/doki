@@ -107,3 +107,8 @@ fn r#mut() {
 fn variable_scope() {
     test_test_success("variable_scope.doki", "success\n");
 }
+
+#[test]
+fn global_variables() {
+    test_examples("global_variables.doki", "success\n");
+}

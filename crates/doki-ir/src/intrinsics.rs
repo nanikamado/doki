@@ -61,11 +61,13 @@ impl IntrinsicVariable {
         t: TypePointer,
         type_map: &mut PaddedTypeMap,
         arg_types: &[TypePointer],
+        pointer_of_mut: &mut Vec<TypePointer>,
     ) {
         use IntrinsicVariable::*;
         match self {
             Mut => {
                 debug_assert_eq!(arg_types.len(), 1);
+                pointer_of_mut.push(arg_types[0]);
                 type_map.insert_normal(
                     t,
                     TypeId::Intrinsic(IntrinsicTypeTag::Mut),

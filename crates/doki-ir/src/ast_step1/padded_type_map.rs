@@ -167,7 +167,7 @@ impl PaddedTypeMap {
         }
     }
 
-    fn find(&mut self, p: TypePointer) -> TypePointer {
+    pub fn find(&mut self, p: TypePointer) -> TypePointer {
         let next_p = match &self.map[p.0] {
             Node::Pointer(p) => *p,
             Node::Terminal(_) => {
@@ -420,6 +420,14 @@ mod replace_map {
             let o = self.map.insert(from, to);
             debug_assert!(o.is_none());
             self.replaced.insert(to);
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.map.is_empty() && self.replaced.is_empty()
+        }
+
+        pub fn add_unreplicatable(&mut self, i: impl IntoIterator<Item = TypePointer>) {
+            self.replaced.extend(i)
         }
     }
 }
