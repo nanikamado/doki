@@ -3,7 +3,7 @@ mod run_c;
 use clap::Parser;
 use compiler::gen_c;
 use std::fs;
-use std::io::{stderr, stdout};
+use std::io::stderr;
 use std::process::exit;
 
 #[derive(Parser, Debug)]
@@ -40,9 +40,8 @@ fn main() {
         match compiler::parse(&src) {
             Ok(ast) => {
                 if args.emit_c {
-                    gen_c(ast, !args.not_type_minimization, &mut stdout());
-                } else if let Ok(exit_status) =
-                    run_c::run(|w| gen_c(ast, !args.not_type_minimization, w))
+                    print!("{}", gen_c(ast, !args.not_type_minimization));
+                } else if let Ok(exit_status) = run_c::run(gen_c(ast, !args.not_type_minimization))
                 {
                     exit(exit_status.code().unwrap());
                 } else {

@@ -22,8 +22,8 @@ impl<T> LocalVariableCollector<T> {
         &self.0[i.0]
     }
 
-    pub fn map<U>(self, f: impl FnMut(T) -> U) -> LocalVariableCollector<U> {
-        LocalVariableCollector(self.0.into_iter().map(f).collect())
+    pub fn map<'a, U>(&'a self, f: impl FnMut(&'a T) -> U) -> LocalVariableCollector<U> {
+        LocalVariableCollector(self.0.iter().map(f).collect())
     }
 }
 

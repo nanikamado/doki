@@ -12,13 +12,14 @@ pub use crate::ast_step2::{
     DisplayTypeWithEnvStruct as DisplayTypeWithEnv, LocalVariable as LocalVariable2, Type,
     TypeForHash,
 };
-use std::io::Write;
+use codegen::Codegen;
+use std::fmt::Display;
 
 impl Env {
-    pub fn gen_c(self, entry_point: GlobalVariable, minimize_type: bool, w: &mut impl Write) {
+    pub fn gen_c(self, entry_point: GlobalVariable, minimize_type: bool) -> impl Display {
         let ast = self.build(entry_point);
         let ast = ast_step2::Ast::from(ast, minimize_type);
-        codegen::codegen(ast, w)
+        Codegen(ast)
     }
 
     pub fn build_ast_step2(

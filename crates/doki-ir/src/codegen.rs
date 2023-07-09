@@ -12,210 +12,211 @@ use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::Display;
-use std::io::Write;
 use stripmargin::StripMargin;
 use unic_ucd_category::GeneralCategory;
 
-pub fn codegen(ast: Ast, w: &mut impl Write) {
-    let mut c_type_env = c_type::Env {
-        aggregate_types: Default::default(),
-        memo: Default::default(),
-        reffed_aggregates: Default::default(),
-    };
-    let local_variable_types: LocalVariableCollector<(Type, CType)> = ast.variable_types.map(|t| {
-        let ct = c_type_env.c_type(&t, None);
-        (t, ct)
-    });
-    let global_variable_types = ast
-        .variable_decls
-        .iter()
-        .map(|d| (d.decl_id, c_type_env.c_type(&d.t, None)))
-        .collect();
-    let env = Env {
-        context: &Default::default(),
-        variable_names: &ast.variable_names,
-        local_variable_types: &local_variable_types,
-        global_variable_types: &global_variable_types,
-        constructor_names: &ast.constructor_names,
-    };
-    let mut mutted_types = Collector::default();
-    let intrinsic_variables = ast
-        .used_intrinsic_variables
-        .iter()
-        .map(|(v, arg_ts)| {
-            let arg_ts_c = arg_ts
-                .iter()
-                .map(|t| c_type_env.c_type(t, None))
-                .collect_vec();
-            use IntrinsicVariable::*;
-            let ret_t = match *v {
-                Mut => {
-                    let t = &arg_ts_c[0];
-                    mutted_types.get_or_insert(t.clone());
-                    CType::Ref(Box::new(t.clone()))
-                }
-                Get => {
-                    let t = &arg_ts_c[0];
-                    let t = if let CType::Ref(t) = t { t } else { panic!() };
-                    (**t).clone()
-                }
-                _ => {
-                    let env: &mut c_type::Env = &mut c_type_env;
-                    let t = TypeUnitOf::Normal {
-                        id: TypeId::Intrinsic(v.runtime_return_type().unwrap()),
-                        args: Vec::new(),
+pub struct Codegen(pub Ast);
+
+impl Display for Codegen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ast = &self.0;
+        let mut c_type_env = c_type::Env {
+            aggregate_types: Default::default(),
+            memo: Default::default(),
+            reffed_aggregates: Default::default(),
+        };
+        let local_variable_types: LocalVariableCollector<(&Type, CType)> =
+            ast.variable_types.map(|t| {
+                let ct = c_type_env.c_type(t, None);
+                (t, ct)
+            });
+        let global_variable_types = ast
+            .variable_decls
+            .iter()
+            .map(|d| (d.decl_id, c_type_env.c_type(&d.t, None)))
+            .collect();
+        let env = Env {
+            context: &Default::default(),
+            variable_names: &ast.variable_names,
+            local_variable_types: &local_variable_types,
+            global_variable_types: &global_variable_types,
+            constructor_names: &ast.constructor_names,
+        };
+        let mut mutted_types = Collector::default();
+        let intrinsic_variables = ast
+            .used_intrinsic_variables
+            .iter()
+            .map(|(v, arg_ts)| {
+                let arg_ts_c = arg_ts
+                    .iter()
+                    .map(|t| c_type_env.c_type(t, None))
+                    .collect_vec();
+                use IntrinsicVariable::*;
+                let ret_t = match *v {
+                    Mut => {
+                        let t = &arg_ts_c[0];
+                        mutted_types.get_or_insert(t.clone());
+                        CType::Ref(Box::new(t.clone()))
                     }
-                    .into();
-                    env.c_type(&t, None)
+                    Get => {
+                        let t = &arg_ts_c[0];
+                        let t = if let CType::Ref(t) = t { t } else { panic!() };
+                        (**t).clone()
+                    }
+                    _ => {
+                        let env: &mut c_type::Env = &mut c_type_env;
+                        let t = TypeUnitOf::Normal {
+                            id: TypeId::Intrinsic(v.runtime_return_type().unwrap()),
+                            args: Vec::new(),
+                        }
+                        .into();
+                        env.c_type(&t, None)
+                    }
+                };
+                (*v, ret_t, arg_ts_c)
+            })
+            .unique()
+            .collect_vec();
+        let mutted_types = mutted_types.as_raw();
+        let unit_t: Type = TypeUnitOf::Normal {
+            id: TypeId::Intrinsic(IntrinsicTypeTag::Unit),
+            args: Vec::new(),
+        }
+        .into();
+        let unit_t = c_type_env.c_type(&unit_t, None);
+        let c_type_env = c_type_env;
+        let aggregates: FxHashMap<_, _> = c_type_env
+            .aggregate_types
+            .as_raw()
+            .iter()
+            .map(|(a, b)| (*b, a))
+            .collect();
+        let sorted = sort_aggregates(&aggregates);
+        write!(
+            f,
+            "
+            #include <stdio.h>
+            #include <stdlib.h>
+            #include <string.h>
+            #include <stdint.h>
+            #include <inttypes.h>
+            #include <unistd.h>
+            {} {{
+                size_t _0;
+                char* _1;
+            }};
+            {}{}{}",
+            CType::String,
+            sorted.iter().format_with("", |(i, t), f| {
+                match t {
+                    CAggregateType::Struct(fields) => f(&format_args!(
+                        "{} {{{}}};\n",
+                        CType::Aggregate(*i),
+                        fields
+                            .iter()
+                            .enumerate()
+                            .format_with("", |(i, field), f| f(&format_args!("{field} _{i};",)))
+                    )),
+                    CAggregateType::Union(ts) => f(&format_args!(
+                        "union u{i} {{{}}};
+                            {} {{int tag;union u{i} value;}};",
+                        ts.iter()
+                            .enumerate()
+                            .format_with("", |(i, t), f| f(&format_args!("{t} _{i};"))),
+                        CType::Aggregate(*i),
+                    )),
                 }
-            };
-            (*v, ret_t, arg_ts_c)
-        })
-        .unique()
-        .collect_vec();
-    let mutted_types = mutted_types.as_raw();
-    let unit_t: Type = TypeUnitOf::Normal {
-        id: TypeId::Intrinsic(IntrinsicTypeTag::Unit),
-        args: Vec::new(),
-    }
-    .into();
-    let unit_t = c_type_env.c_type(&unit_t, None);
-    let c_type_env = c_type_env;
-    let aggregates: FxHashMap<_, _> = c_type_env
-        .aggregate_types
-        .as_raw()
-        .iter()
-        .map(|(a, b)| (*b, a))
-        .collect();
-    let sorted = sort_aggregates(&aggregates);
-    write!(
-        w,
-        "
-        #include <stdio.h>
-        #include <stdlib.h>
-        #include <string.h>
-        #include <stdint.h>
-        #include <inttypes.h>
-        #include <unistd.h>
-        {} {{
-            size_t _0;
-            char* _1;
-        }};
-        {}{}{}",
-        CType::String,
-        sorted.iter().format_with("", |(i, t), f| {
-            match t {
-                CAggregateType::Struct(fields) => f(&format_args!(
-                    "{} {{{}}};\n",
-                    CType::Aggregate(*i),
-                    fields
-                        .iter()
-                        .enumerate()
-                        .format_with("", |(i, field), f| f(&format_args!("{field} _{i};",)))
-                )),
-                CAggregateType::Union(ts) => f(&format_args!(
-                    "union u{i} {{{}}};
-                        {} {{int tag;union u{i} value;}};",
-                    ts.iter()
-                        .enumerate()
-                        .format_with("", |(i, t), f| f(&format_args!("{t} _{i};"))),
-                    CType::Aggregate(*i),
-                )),
-            }
-        }),
-        c_type_env.reffed_aggregates.iter().format_with("", |i, f| {
-            let t = CType::Aggregate(*i);
-            f(&format_args!(
-                "static {t}* ref_t{i}({t} a) {{
+            }),
+            c_type_env.reffed_aggregates.iter().format_with("", |i, f| {
+                let t = CType::Aggregate(*i);
+                f(&format_args!(
+                    "static {t}* ref_t{i}({t} a) {{
+                        {t}* tmp = malloc(sizeof({t}));
+                        *tmp = a;
+                        return tmp;
+                    }}"
+                ))
+            }),
+            mutted_types
+                .iter()
+                .format_with("", |(t, n), f| f(&format_args!(
+                    "static {t}* mut_{n}({t} a) {{
                     {t}* tmp = malloc(sizeof({t}));
                     *tmp = a;
                     return tmp;
-                }}"
-            ))
-        }),
-        mutted_types
-            .iter()
-            .format_with("", |(t, n), f| f(&format_args!(
-                "static {t}* mut_{n}({t} a) {{
-                {t}* tmp = malloc(sizeof({t}));
-                *tmp = a;
-                return tmp;
-                }}"
-            )))
-    )
-    .unwrap();
-    write_fns(w, &ast.functions, &c_type_env, &env, false);
-    write!(
-        w,
-        "{}",
-        ast.variable_decls
-            .iter()
-            .format_with("", |d, f| f(&format_args!(
-                "static {} g_{}_{};",
-                env.global_variable_types[&d.decl_id],
-                d.decl_id,
-                convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
-            )))
-    )
-    .unwrap();
-    write!(
-        w,
-        "static {0} intrinsic_unit(){{
-            return ({0}){{}};
-        }}
-        {1}{2}{3}",
-        unit_t,
-        r#"
-        |int panic(char* msg){
-        |    fprintf(stderr, "error: %s\n", msg);
-        |    exit(1);
-        |}
-        |"#
-        .strip_margin(),
-        intrinsic_variables
-            .into_iter()
-            .map(|(v, ret_t, arg_ts)| format!(
-                "static {} intrinsic_{v}({}){{{}}}",
-                ret_t,
-                arg_ts
-                    .iter()
-                    .enumerate()
-                    .format_with(",", |(i, t), f| f(&format_args!("{t} _{i}"))),
-                PrimitiveDefPrint {
-                    i: v,
-                    arg_ts: &arg_ts,
-                    mutted_types
-                }
-            ))
-            .format(""),
-        ast.variable_decls
-            .iter()
-            .format_with("", |d, f| f(&format_args!(
-                "static {} init_g_{}_{}(){}",
-                env.global_variable_types[&d.decl_id],
-                d.decl_id,
-                convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
-                Dis(&TerminalBlock(&d.value, d.ret), &env)
-            ))),
-    )
-    .unwrap();
-    write_fns(w, &ast.functions, &c_type_env, &env, true);
-    write!(
-        w,
-        "int main(void) {{
-            {}
-            {}((struct t0){{}},(struct t0){{}});
-        }}",
-        ast.variable_decls
-            .iter()
-            .format_with("", |d, f| f(&format_args!(
-                "g_{0}_{1}=init_g_{0}_{1}();",
-                d.decl_id,
-                convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
-            ))),
-        ast.entry_point
-    )
-    .unwrap();
+                    }}"
+                )))
+        )?;
+        write_fns(f, &ast.functions, &c_type_env, &env, false);
+        write!(
+            f,
+            "{}",
+            ast.variable_decls
+                .iter()
+                .format_with("", |d, f| f(&format_args!(
+                    "static {} g_{}_{};",
+                    env.global_variable_types[&d.decl_id],
+                    d.decl_id,
+                    convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
+                )))
+        )?;
+        write!(
+            f,
+            "static {0} intrinsic_unit(){{
+                return ({0}){{}};
+            }}
+            {1}{2}{3}",
+            unit_t,
+            r#"
+            |int panic(char* msg){
+            |    fprintf(stderr, "error: %s\n", msg);
+            |    exit(1);
+            |}
+            |"#
+            .strip_margin(),
+            intrinsic_variables
+                .into_iter()
+                .map(|(v, ret_t, arg_ts)| format!(
+                    "static {} intrinsic_{v}({}){{{}}}",
+                    ret_t,
+                    arg_ts
+                        .iter()
+                        .enumerate()
+                        .format_with(",", |(i, t), f| f(&format_args!("{t} _{i}"))),
+                    PrimitiveDefPrint {
+                        i: v,
+                        arg_ts: &arg_ts,
+                        mutted_types
+                    }
+                ))
+                .format(""),
+            ast.variable_decls
+                .iter()
+                .format_with("", |d, f| f(&format_args!(
+                    "static {} init_g_{}_{}(){}",
+                    env.global_variable_types[&d.decl_id],
+                    d.decl_id,
+                    convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
+                    Dis(&TerminalBlock(&d.value, d.ret), &env)
+                ))),
+        )?;
+        write_fns(f, &ast.functions, &c_type_env, &env, true);
+        write!(
+            f,
+            "int main(void) {{
+                {}
+                {}((struct t0){{}},(struct t0){{}});
+            }}",
+            ast.variable_decls
+                .iter()
+                .format_with("", |d, f| f(&format_args!(
+                    "g_{0}_{1}=init_g_{0}_{1}();",
+                    d.decl_id,
+                    convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
+                ))),
+            ast.entry_point
+        )
+    }
 }
 
 struct PrimitiveDefPrint<'a> {
@@ -304,7 +305,7 @@ fn sort_aggregates_rec<'a>(
 }
 
 fn write_fns(
-    s: &mut impl Write,
+    s: &mut std::fmt::Formatter<'_>,
     functions: &[Function],
     c_type_env: &c_type::Env,
     env: &Env,
@@ -333,7 +334,7 @@ fn write_fns(
                 function.id,
                 ct,
                 Dis(&VariableId::Local(function.parameter), &env),
-                ast_step2::DisplayTypeWithEnvStruct(t, env.constructor_names),
+                ast_step2::DisplayTypeWithEnvStruct(*t, env.constructor_names),
                 CType::Aggregate(
                     c_type_env.aggregate_types.get(CAggregateType::Struct(
                         function
@@ -361,7 +362,7 @@ fn write_fns(
 struct Env<'a> {
     context: &'a FxHashMap<LocalVariable, usize>,
     variable_names: &'a FxHashMap<VariableId, String>,
-    local_variable_types: &'a LocalVariableCollector<(Type, CType)>,
+    local_variable_types: &'a LocalVariableCollector<(&'a Type, CType)>,
     global_variable_types: &'a FxHashMap<GlobalVariableId, CType>,
     constructor_names: &'a ConstructorNames,
 }
@@ -442,7 +443,7 @@ impl DisplayWithEnv for TerminalBlock<'_> {
                     f(&format_args!(
                         "{} /*{}*/ {};",
                         ct,
-                        ast_step2::DisplayTypeWithEnvStruct(t, env.constructor_names),
+                        ast_step2::DisplayTypeWithEnvStruct(*t, env.constructor_names),
                         Dis(&VariableId::Local(*v), env),
                     ))
                 }),

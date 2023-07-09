@@ -6,7 +6,7 @@ use itertools::Itertools;
 use parser::{Ast, Expr, ExprWithSpan, Pattern, Span};
 use rustc_hash::{FxHashMap, FxHasher};
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::fmt::Display;
 
 #[derive(Debug, Default)]
 struct Env<'a> {
@@ -90,10 +90,10 @@ fn build(ast: Ast) -> Env {
     env
 }
 
-pub fn gen_c(ast: Ast, minimize_type: bool, w: &mut impl Write) {
+pub fn gen_c(ast: Ast, minimize_type: bool) -> impl Display {
     let env = build(ast);
     let entry_point = env.global_variable_map["main"];
-    env.build_env.gen_c(entry_point, minimize_type, w)
+    env.build_env.gen_c(entry_point, minimize_type)
 }
 
 pub enum SpanMapEntry {

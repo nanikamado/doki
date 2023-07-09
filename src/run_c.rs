@@ -1,9 +1,10 @@
+use std::fmt::Display;
 use std::fs;
-use std::io::ErrorKind;
-use std::process::{self, ChildStdin, ExitStatus, Stdio};
+use std::io::{ErrorKind, Write};
+use std::process::{self, ExitStatus, Stdio};
 use tempfile::NamedTempFile;
 
-pub fn run(f: impl FnOnce(&mut ChildStdin)) -> Result<ExitStatus, ()> {
+pub fn run(f: impl Display) -> Result<ExitStatus, ()> {
     let tmp = NamedTempFile::new().unwrap();
     let tmp_path = tmp.path().to_str().unwrap().to_string();
     tmp.close().unwrap();
@@ -13,7 +14,12 @@ pub fn run(f: impl FnOnce(&mut ChildStdin)) -> Result<ExitStatus, ()> {
         .spawn()
     {
         Ok(mut child) => {
-            f(child.stdin.as_mut().unwrap());
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_fmt(format_args!("{f}"))
+                .unwrap();
             assert!(child.wait().unwrap().success());
             let e = process::Command::new(&tmp_path)
                 .spawn()
