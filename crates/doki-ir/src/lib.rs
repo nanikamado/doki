@@ -1,6 +1,7 @@
 mod ast_step1;
 mod ast_step2;
 mod codegen;
+mod collector;
 mod id_generator;
 pub mod intrinsics;
 

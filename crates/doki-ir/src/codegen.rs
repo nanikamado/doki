@@ -1,13 +1,12 @@
 mod c_type;
-mod collector;
 
 use self::c_type::{CAggregateType, CType};
-use self::collector::Collector;
 use crate::ast_step1::{ConstructorId, ConstructorNames, TypeId};
 use crate::ast_step2::{
     self, Ast, Block, Expr, Function, GlobalVariableId, Instruction, LocalVariable,
     LocalVariableCollector, Tester, Type, TypeUnitOf, VariableDecl, VariableId,
 };
+use crate::collector::Collector;
 use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -45,8 +44,9 @@ impl Display for Codegen {
         let mut mutted_types = Collector::default();
         let intrinsic_variables = ast
             .used_intrinsic_variables
+            .as_raw()
             .iter()
-            .map(|(v, arg_ts)| {
+            .map(|((v, arg_ts), id)| {
                 let arg_ts_c = arg_ts
                     .iter()
                     .map(|t| c_type_env.c_type(t, None))
@@ -73,7 +73,7 @@ impl Display for Codegen {
                         env.c_type(&t, None)
                     }
                 };
-                (*v, ret_t, arg_ts_c)
+                (*v, id, ret_t, arg_ts_c)
             })
             .unique()
             .collect_vec();
@@ -176,8 +176,8 @@ impl Display for Codegen {
             .strip_margin(),
             intrinsic_variables
                 .into_iter()
-                .map(|(v, ret_t, arg_ts)| format!(
-                    "static {} intrinsic_{v}({}){{{}}}",
+                .map(|(v, id, ret_t, arg_ts)| format!(
+                    "static {} intrinsic_{v}_{id}({}){{{}}}",
                     ret_t,
                     arg_ts
                         .iter()
@@ -538,11 +538,11 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 real_function,
             } => write!(f, "{real_function}({},{})", Dis(a, env), Dis(g, env)),
             Expr::BasicCall { args, id } => {
-                use crate::ast_step1::BasicFunction::*;
+                use crate::ast_step2::BasicFunction::*;
                 match id {
-                    Intrinsic(id) => write!(
+                    Intrinsic { v, id } => write!(
                         f,
-                        "intrinsic_{id}({})",
+                        "intrinsic_{v}_{id}({})",
                         args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                     ),
                     Construction(id) => {

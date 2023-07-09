@@ -8,14 +8,16 @@ pub use self::type_memo::{
     TypeInnerOf, TypeOf, TypeUnit, TypeUnitForHash, TypeUnitOf,
 };
 use crate::ast_step1::{
-    self, BasicFunction, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes,
-    PaddedTypeMap, ReplaceMap, TypeId, TypePointer,
+    self, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
+    ReplaceMap, TypeId, TypePointer,
 };
 use crate::ast_step2::type_memo::BrokenLinkCheck;
+use crate::collector::Collector;
 use crate::id_generator::{self, IdGenerator};
-use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
+use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariable};
+use crate::ConstructorId;
 use itertools::Itertools;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::fmt::{Debug, Display};
 
 #[derive(Debug)]
@@ -29,7 +31,7 @@ pub struct Ast {
     pub constructor_names: ConstructorNames,
     pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
     pub local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
-    pub used_intrinsic_variables: FxHashSet<(IntrinsicVariable, Vec<Type>)>,
+    pub used_intrinsic_variables: Collector<(IntrinsicVariable, Vec<Type>)>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -97,6 +99,20 @@ pub enum Expr {
     },
     Ref(VariableId),
     Deref(VariableId),
+}
+
+#[derive(Debug, PartialEq, Clone, Copy, Eq)]
+pub enum BasicFunction {
+    Intrinsic {
+        v: IntrinsicVariable,
+        id: usize,
+    },
+    Construction(ConstructorId),
+    IntrinsicConstruction(IntrinsicConstructor),
+    FieldAccessor {
+        constructor: ConstructorId,
+        field: usize,
+    },
 }
 
 #[derive(Debug, PartialEq, Hash, Clone, Copy, Eq)]
@@ -184,7 +200,7 @@ pub struct Env {
     constructor_names: ConstructorNames,
     type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
     minimize_type: bool,
-    used_intrinsic_variables: FxHashSet<(IntrinsicVariable, Vec<Type>)>,
+    used_intrinsic_variables: Collector<(IntrinsicVariable, Vec<Type>)>,
 }
 
 #[derive(Debug)]
@@ -621,7 +637,7 @@ impl Env {
             }
             ast_step1::Expr::BasicCall {
                 args,
-                id: BasicFunction::Construction(id),
+                id: ast_step1::BasicFunction::Construction(id),
             } => {
                 let args = args
                     .into_iter()
@@ -641,7 +657,7 @@ impl Env {
             }
             ast_step1::Expr::BasicCall {
                 args,
-                id: BasicFunction::IntrinsicConstruction(id),
+                id: ast_step1::BasicFunction::IntrinsicConstruction(id),
             } => {
                 debug_assert!(args.is_empty());
                 self.add_tags_to_expr(
@@ -656,11 +672,7 @@ impl Env {
             }
             ast_step1::Expr::BasicCall {
                 args,
-                id:
-                    id @ BasicFunction::FieldAccessor {
-                        constructor,
-                        field: _,
-                    },
+                id: ast_step1::BasicFunction::FieldAccessor { constructor, field },
             } => {
                 debug_assert_eq!(args.len(), 1);
                 let a = args.into_iter().next().unwrap();
@@ -672,11 +684,14 @@ impl Env {
                     instructions,
                     false,
                 )?;
-                BasicCall { args: vec![a], id }
+                BasicCall {
+                    args: vec![a],
+                    id: BasicFunction::FieldAccessor { constructor, field },
+                }
             }
             ast_step1::Expr::BasicCall {
                 args,
-                id: BasicFunction::Intrinsic(id),
+                id: ast_step1::BasicFunction::Intrinsic(id),
             } => {
                 let arg_restrictions = id.runtime_arg_type_restriction();
                 let mut args_new = Vec::with_capacity(args.len());
@@ -693,10 +708,10 @@ impl Env {
                         VariableId::Global(_) => panic!(),
                     });
                 }
-                self.used_intrinsic_variables.insert((id, arg_ts));
+                let count = self.used_intrinsic_variables.get_or_insert((id, arg_ts));
                 let e = BasicCall {
                     args: args_new,
-                    id: BasicFunction::Intrinsic(id),
+                    id: BasicFunction::Intrinsic { v: id, id: count },
                 };
                 match id.runtime_return_type() {
                     Some(rt) => self.add_tags_to_expr(e, t, TypeId::Intrinsic(rt), instructions),
