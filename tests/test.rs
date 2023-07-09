@@ -102,3 +102,8 @@ fn mut_list() {
 fn r#mut() {
     test_examples("mut.doki", "1\n");
 }
+
+#[test]
+fn variable_scope() {
+    test_test_success("variable_scope.doki", "success\n");
+}

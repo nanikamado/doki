@@ -1,0 +1,5 @@
+println = a: intrinsic_print_str (intrinsic_append_str a "\n")
+
+a = "success"
+
+main = _: println a

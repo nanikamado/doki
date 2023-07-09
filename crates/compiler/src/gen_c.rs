@@ -229,6 +229,8 @@ impl<'a> Env<'a> {
         for (name, v) in shadowed_variables {
             if let Some(v) = v {
                 self.local_variable_map.insert(name, v);
+            } else {
+                self.local_variable_map.remove(name);
             }
         }
     }
