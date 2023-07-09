@@ -41,7 +41,8 @@ fn main() {
             Ok(ast) => {
                 if args.emit_c {
                     print!("{}", gen_c(ast, !args.not_type_minimization));
-                } else if let Ok(exit_status) = run_c::run(gen_c(ast, !args.not_type_minimization))
+                } else if let Ok(exit_status) =
+                    run_c::run(gen_c(ast, !args.not_type_minimization).to_string())
                 {
                     exit(exit_status.code().unwrap());
                 } else {
