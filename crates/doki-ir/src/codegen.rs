@@ -168,7 +168,7 @@ impl Display for Codegen {
             {1}{2}{3}",
             unit_t,
             r#"
-            |int panic(char* msg){
+            |static int panic(char* msg){
             |    fprintf(stderr, "error: %s\n", msg);
             |    exit(1);
             |}
