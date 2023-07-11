@@ -16,8 +16,8 @@ impl IntrinsicVariable {
             IntrinsicVariable::I64ToString => "intrinsic_i64_to_string",
             IntrinsicVariable::AppendStr => "intrinsic_append_str",
             IntrinsicVariable::Mut => "intrinsic_mut",
-            IntrinsicVariable::Set => "intrinsic_set",
-            IntrinsicVariable::Get => "intrinsic_get",
+            IntrinsicVariable::SetMut => "intrinsic_set",
+            IntrinsicVariable::GetMut => "intrinsic_get",
         }
     }
 }

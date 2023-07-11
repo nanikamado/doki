@@ -58,7 +58,7 @@ impl Display for Codegen {
                         mutted_types.get_or_insert(t.clone());
                         CType::Ref(Box::new(t.clone()))
                     }
-                    Get => {
+                    GetMut => {
                         let t = &arg_ts_c[0];
                         let t = if let CType::Ref(t) = t { t } else { panic!() };
                         (**t).clone()
@@ -262,10 +262,10 @@ impl Display for PrimitiveDefPrint<'_> {
                 let n = self.mutted_types[&self.arg_ts[0]];
                 write!(f, "return mut_{n}(_0);")
             }
-            Set => {
+            SetMut => {
                 write!(f, "*_0 = _1;return intrinsic_unit();")
             }
-            Get => {
+            GetMut => {
                 write!(f, "return *_0;")
             }
         }

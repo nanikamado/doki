@@ -19,8 +19,8 @@ pub enum IntrinsicVariable {
     I64ToString,
     AppendStr,
     Mut,
-    Set,
-    Get,
+    SetMut,
+    GetMut,
 }
 
 impl Display for IntrinsicVariable {
@@ -40,8 +40,8 @@ impl IntrinsicVariable {
     pub fn parameter_len(self) -> usize {
         use IntrinsicVariable::*;
         match self {
-            Minus | Plus | Percent | Multi | Div | Lt | Eq | AppendStr | Set => 2,
-            PrintStr | I64ToString | Mut | Get => 1,
+            Minus | Plus | Percent | Multi | Div | Lt | Eq | AppendStr | SetMut => 2,
+            PrintStr | I64ToString | Mut | GetMut => 1,
         }
     }
 
@@ -49,10 +49,10 @@ impl IntrinsicVariable {
         use IntrinsicVariable::*;
         match self {
             Minus | Plus | Percent | Multi | Div | Lt | Eq => Some(IntrinsicTypeTag::I64),
-            PrintStr | Set => Some(IntrinsicTypeTag::Unit),
+            PrintStr | SetMut => Some(IntrinsicTypeTag::Unit),
             I64ToString | AppendStr => Some(IntrinsicTypeTag::String),
             Mut => Some(IntrinsicTypeTag::Mut),
-            Get => None,
+            GetMut => None,
         }
     }
 
@@ -74,7 +74,7 @@ impl IntrinsicVariable {
                     vec![arg_types[0]],
                 )
             }
-            Set => {
+            SetMut => {
                 debug_assert_eq!(arg_types.len(), 2);
                 type_map.insert_normal(t, TypeId::Intrinsic(IntrinsicTypeTag::Unit), Vec::new());
                 type_map.insert_normal(
@@ -83,7 +83,7 @@ impl IntrinsicVariable {
                     vec![arg_types[1]],
                 )
             }
-            Get => {
+            GetMut => {
                 debug_assert_eq!(arg_types.len(), 1);
                 type_map.insert_normal(
                     arg_types[0],
@@ -108,8 +108,8 @@ impl IntrinsicVariable {
             I64ToString => vec![I64],
             AppendStr => vec![STRING, STRING],
             Mut => vec![None],
-            Set => vec![Some(TypeId::Intrinsic(IntrinsicTypeTag::Mut)), None],
-            Get => vec![Some(TypeId::Intrinsic(IntrinsicTypeTag::Mut))],
+            SetMut => vec![Some(TypeId::Intrinsic(IntrinsicTypeTag::Mut)), None],
+            GetMut => vec![Some(TypeId::Intrinsic(IntrinsicTypeTag::Mut))],
         }
     }
 }
