@@ -262,12 +262,9 @@ impl Display for PrimitiveDefPrint<'_> {
                 let n = self.mutted_types[&self.arg_ts[0]];
                 write!(f, "return mut_{n}(_0);")
             }
-            SetMut => {
-                write!(f, "*_0 = _1;return intrinsic_unit();")
-            }
-            GetMut => {
-                write!(f, "return *_0;")
-            }
+            SetMut => write!(f, "*_0 = _1;return intrinsic_unit();"),
+            GetMut => write!(f, "return *_0;"),
+            GetChar => write!(f, "return getchar();"),
         }
     }
 }

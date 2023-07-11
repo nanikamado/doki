@@ -21,6 +21,7 @@ pub enum IntrinsicVariable {
     Mut,
     SetMut,
     GetMut,
+    GetChar,
 }
 
 impl Display for IntrinsicVariable {
@@ -41,14 +42,14 @@ impl IntrinsicVariable {
         use IntrinsicVariable::*;
         match self {
             Minus | Plus | Percent | Multi | Div | Lt | Eq | AppendStr | SetMut => 2,
-            PrintStr | I64ToString | Mut | GetMut => 1,
+            PrintStr | I64ToString | Mut | GetMut | GetChar => 1,
         }
     }
 
     pub fn runtime_return_type(self) -> Option<IntrinsicTypeTag> {
         use IntrinsicVariable::*;
         match self {
-            Minus | Plus | Percent | Multi | Div | Lt | Eq => Some(IntrinsicTypeTag::I64),
+            Minus | Plus | Percent | Multi | Div | Lt | Eq | GetChar => Some(IntrinsicTypeTag::I64),
             PrintStr | SetMut => Some(IntrinsicTypeTag::Unit),
             I64ToString | AppendStr => Some(IntrinsicTypeTag::String),
             Mut => Some(IntrinsicTypeTag::Mut),
@@ -110,6 +111,7 @@ impl IntrinsicVariable {
             Mut => vec![None],
             SetMut => vec![Some(TypeId::Intrinsic(IntrinsicTypeTag::Mut)), None],
             GetMut => vec![Some(TypeId::Intrinsic(IntrinsicTypeTag::Mut))],
+            GetChar => vec![I64],
         }
     }
 }

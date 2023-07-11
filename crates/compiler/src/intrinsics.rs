@@ -18,6 +18,7 @@ impl IntrinsicVariable {
             IntrinsicVariable::Mut => "intrinsic_mut",
             IntrinsicVariable::SetMut => "intrinsic_set",
             IntrinsicVariable::GetMut => "intrinsic_get",
+            IntrinsicVariable::GetChar => "intrinsic_getchar",
         }
     }
 }
