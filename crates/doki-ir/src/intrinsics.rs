@@ -1,7 +1,5 @@
 use crate::ast_step1::{self, PaddedTypeMap, TypePointer};
-use crate::{ast_step2, TypeId};
-use once_cell::sync::Lazy;
-use rustc_hash::FxHashMap;
+use crate::TypeId;
 use std::fmt::Display;
 use strum::EnumIter;
 pub use strum::IntoEnumIterator;
@@ -27,13 +25,6 @@ pub enum IntrinsicVariable {
 impl Display for IntrinsicVariable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(self, f)
-    }
-}
-
-const fn runtime_intrinsic_type(i: IntrinsicTypeTag) -> ast_step2::TypeUnitForHash {
-    ast_step2::TypeUnitOf::Normal {
-        id: ast_step1::TypeId::Intrinsic(i),
-        args: Vec::new(),
     }
 }
 
@@ -122,8 +113,6 @@ pub enum IntrinsicTypeTag {
     I64,
     U8,
     Unit,
-    True,
-    False,
     Fn,
     Mut,
 }
@@ -138,26 +127,9 @@ impl IntrinsicTypeTag {
     }
 }
 
-pub static INTRINSIC_TYPES: Lazy<FxHashMap<&'static str, IntrinsicTypeTag>> = Lazy::new(|| {
-    [
-        ("String", IntrinsicTypeTag::String),
-        ("I64", IntrinsicTypeTag::I64),
-        ("()", IntrinsicTypeTag::Unit),
-        ("True", IntrinsicTypeTag::True),
-        ("False", IntrinsicTypeTag::False),
-        ("->", IntrinsicTypeTag::Fn),
-    ]
-    .map(|(n, t)| (n, t))
-    .iter()
-    .cloned()
-    .collect()
-});
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, EnumIter)]
 pub enum IntrinsicConstructor {
     Unit,
-    True,
-    False,
 }
 
 impl Display for IntrinsicConstructor {
@@ -166,39 +138,10 @@ impl Display for IntrinsicConstructor {
     }
 }
 
-pub static INTRINSIC_CONSTRUCTORS: Lazy<FxHashMap<String, IntrinsicConstructor>> =
-    Lazy::new(|| {
-        [
-            ("()", IntrinsicConstructor::Unit),
-            ("True", IntrinsicConstructor::True),
-            ("False", IntrinsicConstructor::False),
-        ]
-        .map(|(n, t)| (n.to_string(), t))
-        .iter()
-        .cloned()
-        .collect()
-    });
-
-impl IntrinsicConstructor {
-    pub fn to_str(self) -> &'static str {
-        match self {
-            IntrinsicConstructor::Unit => "()",
-            IntrinsicConstructor::True => "True",
-            IntrinsicConstructor::False => "False",
-        }
-    }
-
-    pub fn to_runtime_type(self) -> ast_step2::TypeForHash {
-        runtime_intrinsic_type(self.into()).into()
-    }
-}
-
 impl From<IntrinsicConstructor> for IntrinsicTypeTag {
     fn from(c: IntrinsicConstructor) -> Self {
         match c {
             IntrinsicConstructor::Unit => Self::Unit,
-            IntrinsicConstructor::True => Self::True,
-            IntrinsicConstructor::False => Self::False,
         }
     }
 }
