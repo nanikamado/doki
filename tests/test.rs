@@ -1,7 +1,8 @@
 use assert_cmd::prelude::{CommandCargoExt, OutputAssertExt};
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
-fn test_examples(file_name: &str, stdout: &str) {
+fn test_example(file_name: &str, stdout: &str) {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
         .arg(["examples/", file_name].concat())
@@ -10,7 +11,20 @@ fn test_examples(file_name: &str, stdout: &str) {
         .success();
 }
 
-fn test_test_success(file_name: &str, stdout: &str) {
+fn positive_test_with_stdin(file_name: &str, stdin: &str, stdout: &str) {
+    let mut c = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .arg(["tests/success/", file_name].concat())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    c.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+    let output = c.wait_with_output().unwrap();
+    assert_eq!(&output.stdout, stdout.as_bytes());
+}
+
+fn positive_test(file_name: &str, stdout: &str) {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
         .arg(["tests/success/", file_name].concat())
@@ -19,7 +33,7 @@ fn test_test_success(file_name: &str, stdout: &str) {
         .success();
 }
 
-fn test_test_fail(file_name: &str) -> assert_cmd::assert::Assert {
+fn negative_test(file_name: &str) -> assert_cmd::assert::Assert {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
         .arg(["tests/fail/", file_name].concat())
@@ -28,56 +42,56 @@ fn test_test_fail(file_name: &str) -> assert_cmd::assert::Assert {
 
 #[test]
 fn bin_tree() {
-    test_examples("bin_tree.doki", "ok\n");
+    test_example("bin_tree.doki", "ok\n");
 }
 
 #[test]
 fn red_black_tree() {
-    test_examples("red_black_tree.doki", "ok\n");
+    test_example("red_black_tree.doki", "ok\n");
 }
 
 #[test]
 fn helloworld() {
-    test_examples("helloworld.doki", "Hello, world.\n");
+    test_example("helloworld.doki", "Hello, world.\n");
 }
 
 #[test]
 fn simple() {
-    test_examples("simple.doki", "Hello, world.\n");
+    test_example("simple.doki", "Hello, world.\n");
 }
 
 #[test]
 fn closure() {
-    test_examples("closure.doki", "a\n");
+    test_example("closure.doki", "a\n");
 }
 
 #[test]
 fn r#match() {
-    test_examples("match.doki", "True\n");
+    test_example("match.doki", "True\n");
 }
 
 #[test]
 fn fail_inexhaustive_match() {
-    test_test_fail("inexhaustive_match.doki")
+    negative_test("inexhaustive_match.doki")
         .stderr("error: match is not exhaustive\n")
         .code(1);
 }
 
 #[test]
 fn fn_union() {
-    test_examples("fn_union.doki", "Hello\n");
+    test_example("fn_union.doki", "Hello\n");
 }
 
 #[test]
 fn fail_not_a_function() {
-    test_test_fail("not_a_function.doki")
+    negative_test("not_a_function.doki")
         .stderr("error: not a function\n")
         .code(1);
 }
 
 #[test]
 fn literal_pattern() {
-    test_examples(
+    test_example(
         "literal_pattern.doki",
         "is not a zero\nis not a zero\nis zero\n",
     );
@@ -85,30 +99,35 @@ fn literal_pattern() {
 
 #[test]
 fn taut() {
-    test_examples("taut.doki", "True\nTrue\nFalse\nTrue\n");
+    test_example("taut.doki", "True\nTrue\nFalse\nTrue\n");
 }
 
 #[test]
 fn recursive_env() {
-    test_test_success("recursive_env.doki", "A\nA\n");
+    positive_test("recursive_env.doki", "A\nA\n");
 }
 
 #[test]
 fn mut_list() {
-    test_test_success("mut_list.doki", "10\n");
+    positive_test("mut_list.doki", "10\n");
 }
 
 #[test]
 fn r#mut() {
-    test_examples("mut.doki", "1\n");
+    test_example("mut.doki", "1\n");
 }
 
 #[test]
 fn variable_scope() {
-    test_test_success("variable_scope.doki", "success\n");
+    positive_test("variable_scope.doki", "success\n");
 }
 
 #[test]
 fn global_variables() {
-    test_examples("global_variables.doki", "success\n");
+    test_example("global_variables.doki", "success\n");
+}
+
+#[test]
+fn fib() {
+    positive_test_with_stdin("fib.doki", "10\n", "55\n");
 }
