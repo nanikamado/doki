@@ -33,7 +33,8 @@ pub enum Expr<'a> {
         expr: Box<ExprWithSpan<'a>>,
     },
     Call(Box<ExprWithSpan<'a>>, Box<ExprWithSpan<'a>>),
-    Num(&'a str),
+    I64(&'a str),
+    U8(&'a str),
     Str(String),
     Match {
         operand: Box<ExprWithSpan<'a>>,
@@ -157,7 +158,8 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
                 .map(|(e, _)| e),
             match_expr,
             let_expr,
-            int(10).map(Num),
+            int(10).then_ignore(just("u8")).map(U8),
+            int(10).map(I64),
             string.map(Str),
             ident
                 .then_ignore(

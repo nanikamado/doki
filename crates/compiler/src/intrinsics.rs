@@ -14,11 +14,16 @@ impl IntrinsicVariable {
             IntrinsicVariable::Eq => "intrinsic_eq",
             IntrinsicVariable::PrintStr => "intrinsic_print_str",
             IntrinsicVariable::I64ToString => "intrinsic_i64_to_string",
+            IntrinsicVariable::U8ToString => "intrinsic_u8_to_string",
             IntrinsicVariable::AppendStr => "intrinsic_append_str",
             IntrinsicVariable::Mut => "intrinsic_mut",
             IntrinsicVariable::SetMut => "intrinsic_set",
             IntrinsicVariable::GetMut => "intrinsic_get",
             IntrinsicVariable::GetChar => "intrinsic_getchar",
+            IntrinsicVariable::Malloc => "intrinsic_malloc",
+            IntrinsicVariable::LoadU8 => "intrinsic_load_u8",
+            IntrinsicVariable::StoreU8 => "intrinsic_store_u8",
+            IntrinsicVariable::AddPtr => "intrinsic_add_ptr",
         }
     }
 }

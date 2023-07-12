@@ -183,8 +183,11 @@ impl<'a> Env<'a> {
                 self.expr(*a, av, block);
                 self.build_env.call(fv, av, ret, block);
             }
-            Expr::Num(s) => {
+            Expr::I64(s) => {
                 self.build_env.i64(ret, s.to_string(), block);
+            }
+            Expr::U8(s) => {
+                self.build_env.u8(ret, s.parse().unwrap(), block);
             }
             Expr::Str(s) => {
                 self.build_env.string(ret, s, block);

@@ -473,6 +473,10 @@ impl Env {
         block.assign(ret, Expr::I64(a));
     }
 
+    pub fn u8(&mut self, ret: LocalVariable, a: u8, block: &mut Block) {
+        block.assign(ret, Expr::U8(a));
+    }
+
     pub fn local_variable(&mut self, ret: LocalVariable, a: LocalVariable, block: &mut Block) {
         block.assign(ret, Expr::Ident(VariableId::Local(a)));
     }

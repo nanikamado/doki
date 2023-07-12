@@ -253,6 +253,14 @@ impl Display for PrimitiveDefPrint<'_> {
                 return ({}){{l-1,s}};"#,
                 CType::String
             ),
+            U8ToString => write!(
+                f,
+                r#"int l = snprintf(NULL, 0, "%d", _0) + 1;
+                char* s = malloc(l);
+                snprintf(s, l, "%d", _0);
+                return ({}){{l-1,s}};"#,
+                CType::String
+            ),
             AppendStr => write!(
                 f,
                 r#"size_t l = _0._0 + _1._0;
@@ -269,6 +277,10 @@ impl Display for PrimitiveDefPrint<'_> {
             SetMut => write!(f, "*_0 = _1;return intrinsic_unit();"),
             GetMut => write!(f, "return *_0;"),
             GetChar => write!(f, "return getchar();"),
+            Malloc => write!(f, "return malloc(_0);"),
+            LoadU8 => write!(f, "return *(uint8_t*)_0;"),
+            StoreU8 => write!(f, "*(uint8_t*)_0 = _1;return intrinsic_unit();"),
+            AddPtr => write!(f, "return (uint8_t*)_0+_1;"),
         }
     }
 }
