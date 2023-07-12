@@ -53,7 +53,6 @@ pub enum Pattern<'a> {
         fields: Vec<Pattern<'a>>,
     },
     Or(Box<Pattern<'a>>, Box<Pattern<'a>>),
-    Str(String),
     Num(&'a str),
 }
 
@@ -93,20 +92,20 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
             },
         )),
     )));
-
     let string = none_of("\\\"")
         .or(escape)
         .repeated()
         .collect()
         .delimited_by(just('"'), just('"'));
-
     use Expr::*;
     let pattern = recursive(|pattern| {
         let p = choice((
             pattern.delimited_by(just('('), just(')')),
             just("_").to(Pattern::Wildcard),
-            int(10).map(Pattern::Num),
-            string.map(Pattern::Str),
+            just('-')
+                .or_not()
+                .then(text::int(10))
+                .map_slice(Pattern::Num),
             ident.map_with_span(|name, span| Pattern::Constructor {
                 name,
                 fields: Vec::new(),
@@ -159,7 +158,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
             match_expr,
             let_expr,
             int(10).then_ignore(just("u8")).map(U8),
-            int(10).map(I64),
+            just('-').or_not().then(text::int(10)).map_slice(I64),
             string.map(Str),
             ident
                 .then_ignore(

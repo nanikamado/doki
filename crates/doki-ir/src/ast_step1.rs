@@ -57,7 +57,6 @@ pub struct Block {
 pub enum Tester {
     Constructor { id: TypeId },
     I64 { value: String },
-    Str { value: String },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -78,7 +77,7 @@ pub enum Expr {
         ret: LocalVariable,
         context: Vec<LocalVariable>,
     },
-    I64(String),
+    I64(i64),
     U8(u8),
     Str(String),
     Ident(VariableId),
@@ -244,7 +243,7 @@ impl TypeInfEnv {
                         Expr::Str(_) => {
                             self.type_map.insert_normal(
                                 t,
-                                TypeId::Intrinsic(IntrinsicTypeTag::String),
+                                TypeId::Intrinsic(IntrinsicTypeTag::Ptr),
                                 Vec::new(),
                             );
                         }
@@ -469,7 +468,7 @@ impl Env {
         block.assign(ret, Expr::Str(a));
     }
 
-    pub fn i64(&mut self, ret: LocalVariable, a: String, block: &mut Block) {
+    pub fn i64(&mut self, ret: LocalVariable, a: i64, block: &mut Block) {
         block.assign(ret, Expr::I64(a));
     }
 
@@ -619,11 +618,6 @@ impl Block {
 
     fn assign(&mut self, v: LocalVariable, e: Expr) {
         self.instructions.push(Instruction::Assign(v, e));
-    }
-
-    pub fn test_string(&mut self, v: LocalVariable, value: String) {
-        self.instructions
-            .push(Instruction::Test(Tester::Str { value }, v));
     }
 
     pub fn test_number(&mut self, v: LocalVariable, value: String) {

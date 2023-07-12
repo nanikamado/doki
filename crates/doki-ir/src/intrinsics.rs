@@ -13,10 +13,7 @@ pub enum IntrinsicVariable {
     Div,
     Lt,
     Eq,
-    PrintStr,
-    I64ToString,
-    U8ToString,
-    AppendStr,
+    Write,
     Mut,
     SetMut,
     GetMut,
@@ -25,6 +22,8 @@ pub enum IntrinsicVariable {
     LoadU8,
     StoreU8,
     AddPtr,
+    U8ToI64,
+    I64ToU8,
 }
 
 impl Display for IntrinsicVariable {
@@ -34,24 +33,16 @@ impl Display for IntrinsicVariable {
 }
 
 impl IntrinsicVariable {
-    pub fn parameter_len(self) -> usize {
-        use IntrinsicVariable::*;
-        match self {
-            Minus | Plus | Percent | Multi | Div | Lt | Eq | AppendStr | SetMut | AddPtr
-            | StoreU8 => 2,
-            PrintStr | I64ToString | U8ToString | Mut | GetMut | GetChar | Malloc | LoadU8 => 1,
-        }
-    }
-
     pub fn runtime_return_type(self) -> Option<IntrinsicTypeTag> {
         use IntrinsicVariable::*;
         match self {
-            Minus | Plus | Percent | Multi | Div | Lt | Eq | GetChar => Some(IntrinsicTypeTag::I64),
-            PrintStr | SetMut | StoreU8 => Some(IntrinsicTypeTag::Unit),
-            I64ToString | U8ToString | AppendStr => Some(IntrinsicTypeTag::String),
+            Minus | Plus | Percent | Multi | Div | Lt | Eq | GetChar | U8ToI64 => {
+                Some(IntrinsicTypeTag::I64)
+            }
+            Write | SetMut | StoreU8 => Some(IntrinsicTypeTag::Unit),
             Mut => Some(IntrinsicTypeTag::Mut),
             Malloc | AddPtr => Some(IntrinsicTypeTag::Ptr),
-            LoadU8 => Some(IntrinsicTypeTag::U8),
+            LoadU8 | I64ToU8 => Some(IntrinsicTypeTag::U8),
             GetMut => None,
         }
     }
@@ -102,15 +93,13 @@ impl IntrinsicVariable {
         use IntrinsicVariable::*;
         const I64: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::I64));
         const U8: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::U8));
-        const STRING: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::String));
         const PTR: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::Ptr));
         const MUT: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::Mut));
         match self {
             Minus | Plus | Percent | Multi | Div | Lt | Eq => vec![I64, I64],
-            PrintStr => vec![STRING],
-            I64ToString | Malloc => vec![I64],
-            U8ToString => vec![U8],
-            AppendStr => vec![STRING, STRING],
+            Write => vec![PTR, I64],
+            Malloc | I64ToU8 => vec![I64],
+            U8ToI64 => vec![U8],
             Mut => vec![None],
             SetMut => vec![MUT, None],
             GetMut => vec![MUT],
@@ -124,7 +113,6 @@ impl IntrinsicVariable {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntrinsicTypeTag {
-    String,
     Ptr,
     I64,
     U8,

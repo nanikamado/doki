@@ -1,7 +1,12 @@
+print = Str l p: intrinsic_write p l
+
+println = a: let _ = print a
+    in print "\n"
+
 data True 0
 data False 0
 
-println = a: intrinsic_print_str (intrinsic_append_str (to_string a) "\n")
+p = a: println (to_string a)
 
 to_string = a: match a with
         True => "True",
@@ -21,8 +26,8 @@ taut = f: match f with
         _ => and (taut (f True)) (taut (f False)),
     end
 
-main = _: let _ = println (taut True)
-        in let _ = println (taut (_: True))
-        in let _ = println (taut (_: False))
-        in println (taut (_: _: True))
+main = _: let _ = p (taut True)
+        in let _ = p (taut (_: True))
+        in let _ = p (taut (_: False))
+        in p (taut (_: _: True))
 

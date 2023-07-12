@@ -57,7 +57,6 @@ pub struct Block {
 pub enum Tester {
     Tag { tag: u32 },
     I64 { value: String },
-    Str { value: String },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -75,7 +74,7 @@ pub enum Expr {
         lambda_id: FxLambdaId,
         context: Vec<LocalVariable>,
     },
-    I64(String),
+    I64(i64),
     U8(u8),
     Str(String),
     Ident(VariableId),
@@ -399,17 +398,6 @@ impl Env {
                 }
                 false
             }
-            ast_step1::Instruction::Test(ast_step1::Tester::Str { value }, a) => {
-                let type_id = TypeId::Intrinsic(IntrinsicTypeTag::String);
-                let a = self.downcast(a, root_t, type_id, replace_map, instructions, true);
-                match a {
-                    Ok(a) => instructions.push(Instruction::Test(Tester::Str { value }, a)),
-                    Err(_) => {
-                        instructions.push(Instruction::FailTest);
-                    }
-                }
-                false
-            }
             ast_step1::Instruction::Test(ast_step1::Tester::Constructor { id }, a) => {
                 let t = self
                     .map
@@ -579,7 +567,7 @@ impl Env {
             ast_step1::Expr::Str(s) => self.add_tags_to_expr(
                 Str(s),
                 t,
-                TypeId::Intrinsic(IntrinsicTypeTag::String),
+                TypeId::Intrinsic(IntrinsicTypeTag::Ptr),
                 instructions,
             ),
             ast_step1::Expr::Ident(v) => {

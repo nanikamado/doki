@@ -1,6 +1,9 @@
 data Unit 0
 
-println = a: intrinsic_print_str (intrinsic_append_str a "\n")
+print = Str l p: intrinsic_write p l
+
+println = a: let _ = print a
+    in print "\n"
 
 main = _: let a = "a"
     in let f = _: a

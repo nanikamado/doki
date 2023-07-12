@@ -4,26 +4,26 @@ use easy_ext::ext;
 #[ext(IntrinsicVariableExt)]
 impl IntrinsicVariable {
     pub fn to_str(self) -> &'static str {
+        use IntrinsicVariable::*;
         match self {
-            IntrinsicVariable::Minus => "intrinsic_minus",
-            IntrinsicVariable::Plus => "intrinsic_plus",
-            IntrinsicVariable::Percent => "intrinsic_rem",
-            IntrinsicVariable::Multi => "intrinsic_mul",
-            IntrinsicVariable::Div => "intrinsic_div",
-            IntrinsicVariable::Lt => "intrinsic_lt",
-            IntrinsicVariable::Eq => "intrinsic_eq",
-            IntrinsicVariable::PrintStr => "intrinsic_print_str",
-            IntrinsicVariable::I64ToString => "intrinsic_i64_to_string",
-            IntrinsicVariable::U8ToString => "intrinsic_u8_to_string",
-            IntrinsicVariable::AppendStr => "intrinsic_append_str",
-            IntrinsicVariable::Mut => "intrinsic_mut",
-            IntrinsicVariable::SetMut => "intrinsic_set",
-            IntrinsicVariable::GetMut => "intrinsic_get",
-            IntrinsicVariable::GetChar => "intrinsic_getchar",
-            IntrinsicVariable::Malloc => "intrinsic_malloc",
-            IntrinsicVariable::LoadU8 => "intrinsic_load_u8",
-            IntrinsicVariable::StoreU8 => "intrinsic_store_u8",
-            IntrinsicVariable::AddPtr => "intrinsic_add_ptr",
+            Minus => "intrinsic_minus",
+            Plus => "intrinsic_plus",
+            Percent => "intrinsic_rem",
+            Multi => "intrinsic_mul",
+            Div => "intrinsic_div",
+            Lt => "intrinsic_lt",
+            Eq => "intrinsic_eq",
+            Write => "intrinsic_write",
+            Mut => "intrinsic_mut",
+            SetMut => "intrinsic_set",
+            GetMut => "intrinsic_get",
+            GetChar => "intrinsic_getchar",
+            Malloc => "intrinsic_malloc",
+            LoadU8 => "intrinsic_load_u8",
+            StoreU8 => "intrinsic_store_u8",
+            AddPtr => "intrinsic_add_ptr",
+            I64ToU8 => "intrinsic_i64_to_u8",
+            U8ToI64 => "intrinsic_u8_to_i64",
         }
     }
 }

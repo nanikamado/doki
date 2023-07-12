@@ -1,4 +1,7 @@
-println = a: intrinsic_print_str (intrinsic_append_str (intrinsic_i64_to_string a) "\n")
+print = Str l p: intrinsic_write p l
+
+println = a: let _ = print a
+    in print "\n"
 
 data Sum 0
 

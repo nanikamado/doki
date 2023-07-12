@@ -1,7 +1,10 @@
+print = Str l p: intrinsic_write p l
+
+println = a: let _ = print a
+    in print "\n"
+
 data True 0
 data False 0
-
-println = a: intrinsic_print_str (intrinsic_append_str a "\n")
 
 main = a: println match True with
         _ => match True with

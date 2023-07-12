@@ -105,12 +105,7 @@ impl Display for Codegen {
             #include <stdint.h>
             #include <inttypes.h>
             #include <unistd.h>
-            {} {{
-                size_t _0;
-                char* _1;
-            }};
             {}{}{}",
-            CType::String,
             sorted.iter().format_with("", |(i, t), f| {
                 match t {
                     CAggregateType::Struct(fields) => f(&format_args!(
@@ -241,34 +236,9 @@ impl Display for PrimitiveDefPrint<'_> {
             Div => write!(f, "return _0 / _1;"),
             Lt => write!(f, "return _0 < _1;"),
             Eq => write!(f, "return _0 == _1;"),
-            PrintStr => write!(
+            Write => write!(
                 f,
-                r#"write(STDOUT_FILENO, _0._1, _0._0);return intrinsic_unit();"#
-            ),
-            I64ToString => write!(
-                f,
-                r#"int l = snprintf(NULL, 0, "%" PRId64, _0) + 1;
-                char* s = malloc(l);
-                snprintf(s, l, "%" PRId64, _0);
-                return ({}){{l-1,s}};"#,
-                CType::String
-            ),
-            U8ToString => write!(
-                f,
-                r#"int l = snprintf(NULL, 0, "%d", _0) + 1;
-                char* s = malloc(l);
-                snprintf(s, l, "%d", _0);
-                return ({}){{l-1,s}};"#,
-                CType::String
-            ),
-            AppendStr => write!(
-                f,
-                r#"size_t l = _0._0 + _1._0;
-                char* s = malloc(sizeof(char) * l);
-                memcpy(s, _0._1, _0._0);
-                memcpy(s + _0._0, _1._1, _1._0);
-                return ({}){{l,s}};"#,
-                CType::String
+                r#"write(STDOUT_FILENO, _0, _1);return intrinsic_unit();"#
             ),
             Mut => {
                 let n = self.mutted_types[&self.arg_ts[0]];
@@ -281,6 +251,8 @@ impl Display for PrimitiveDefPrint<'_> {
             LoadU8 => write!(f, "return *(uint8_t*)_0;"),
             StoreU8 => write!(f, "*(uint8_t*)_0 = _1;return intrinsic_unit();"),
             AddPtr => write!(f, "return (uint8_t*)_0+_1;"),
+            U8ToI64 => write!(f, "return _0;"),
+            I64ToU8 => write!(f, r#"if(_0<0||0xFF<=_0)panic("overflow");return _0;"#),
         }
     }
 }
@@ -495,14 +467,6 @@ impl DisplayWithEnv for Instruction {
                     env.catch_label
                 )
             }
-            Instruction::Test(Tester::Str { value }, e) => {
-                write!(
-                    f,
-                    "if({}!={value:?})goto label_{};",
-                    Dis(e, env),
-                    env.catch_label
-                )
-            }
             Instruction::FailTest => {
                 write!(f, "goto label_{};", env.catch_label)
             }
@@ -540,7 +504,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
             ),
             Expr::I64(a) => write!(f, "{a}"),
             Expr::U8(a) => write!(f, "{a}"),
-            Expr::Str(a) => write!(f, "({}){{{},{a:?}}}", CType::String, a.len()),
+            Expr::Str(a) => write!(f, "{a:?}"),
             Expr::Ident(i) => i.fmt_with_env(env, f),
             Expr::Call {
                 f: g,

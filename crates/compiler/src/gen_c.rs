@@ -1,12 +1,13 @@
 use crate::intrinsics::IntrinsicVariableExt;
 use crate::AnalyzedSrc;
 use doki_ir::intrinsics::IntoEnumIterator;
-use doki_ir::{Block, GlobalVariable, LocalVariable};
+use doki_ir::{Block, ConstructorId, GlobalVariable, LocalVariable};
 use itertools::Itertools;
-use parser::{Ast, Expr, ExprWithSpan, Pattern, Span};
+use parser::{Ast, DataDecl, Expr, ExprWithSpan, Pattern, Span};
 use rustc_hash::{FxHashMap, FxHasher};
 use std::collections::BTreeMap;
 use std::fmt::Display;
+use std::iter::once;
 
 #[derive(Debug, Default)]
 struct Env<'a> {
@@ -16,11 +17,15 @@ struct Env<'a> {
     build_env: doki_ir::Env,
     local_variable_span_map: BTreeMap<Span, LocalVariable>,
     global_variable_span_map: BTreeMap<Span, GlobalVariable>,
+    str_constructor_id: Option<ConstructorId>,
 }
 
 fn build(ast: Ast) -> Env {
     let mut env = Env::default();
-    for d in ast.data_decls {
+    for d in ast.data_decls.into_iter().chain(once(DataDecl {
+        name: "Str",
+        field_len: 2,
+    })) {
         let constructor_id = env
             .build_env
             .new_constructor(d.field_len, d.name.to_string());
@@ -47,6 +52,7 @@ fn build(ast: Ast) -> Env {
         };
         env.build_env.set_global_variable(d);
     }
+    env.str_constructor_id = Some(env.data_decl_map["Str"]);
     for d in doki_ir::intrinsics::IntrinsicVariable::iter() {
         let decl_id = env.build_env.new_global_variable();
         env.global_variable_map.insert(d.to_str(), decl_id);
@@ -55,7 +61,7 @@ fn build(ast: Ast) -> Env {
         let mut block = env.build_env.new_block();
         let mut b = &mut block;
         let mut args = Vec::new();
-        for _ in 0..d.parameter_len() {
+        for _ in d.runtime_arg_type_restriction() {
             let l = env.build_env.lambda(b, ret);
             b = l.body;
             ret = l.ret;
@@ -184,13 +190,22 @@ impl<'a> Env<'a> {
                 self.build_env.call(fv, av, ret, block);
             }
             Expr::I64(s) => {
-                self.build_env.i64(ret, s.to_string(), block);
+                self.build_env.i64(ret, s.parse().unwrap(), block);
             }
             Expr::U8(s) => {
                 self.build_env.u8(ret, s.parse().unwrap(), block);
             }
             Expr::Str(s) => {
-                self.build_env.string(ret, s, block);
+                let l = self.build_env.new_local_variable();
+                self.build_env.i64(l, s.len() as i64, block);
+                let p = self.build_env.new_local_variable();
+                self.build_env.string(p, s, block);
+                self.build_env.construction(
+                    ret,
+                    vec![l, p],
+                    self.str_constructor_id.unwrap(),
+                    block,
+                )
             }
             Expr::Match { operand, branches } => {
                 let operand_v = self.build_env.new_local_variable();
@@ -240,7 +255,7 @@ impl<'a> Env<'a> {
 
     fn find_field_less_constructor(&self, p: &mut Pattern<'a>) {
         match p {
-            Pattern::Wildcard | Pattern::Str(_) | Pattern::Num(_) => (),
+            Pattern::Wildcard | Pattern::Num(_) => (),
             Pattern::Constructor { name, fields, span } => {
                 if self.data_decl_map.contains_key(name) {
                     for f in fields {
@@ -278,7 +293,7 @@ impl<'a> Env<'a> {
                 };
                 self.local_variable_span_map.insert(*span, l);
             }
-            Pattern::Wildcard | Pattern::Num(_) | Pattern::Str(_) => (),
+            Pattern::Wildcard | Pattern::Num(_) => (),
             Pattern::Constructor {
                 name: _,
                 fields,
@@ -350,9 +365,6 @@ impl<'a> Env<'a> {
             }
             Pattern::Num(a) => {
                 block.test_number(operand, a.to_string());
-            }
-            Pattern::Str(a) => {
-                block.test_string(operand, a.clone());
             }
         }
     }

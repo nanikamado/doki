@@ -1,3 +1,8 @@
+print = Str l p: intrinsic_write p l
+
+println = a: let _ = print a
+    in print "\n"
+
 data True 0
 data False 0
 data Pair 2
@@ -6,8 +11,6 @@ lt = a: b: match intrinsic_lt a b with
         0 => False,
         _ => True,
     end
-
-println = a: intrinsic_print_str (intrinsic_append_str a "\n")
 
 not = a: match a with
         True => False,
