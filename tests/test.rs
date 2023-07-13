@@ -129,5 +129,5 @@ fn global_variables() {
 
 #[test]
 fn fib() {
-    positive_test_with_stdin("fib.doki", "10\n", "55\n");
+    positive_test_with_stdin("fib.doki", "10\n", "> 55\n");
 }

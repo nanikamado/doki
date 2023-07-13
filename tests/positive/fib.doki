@@ -51,4 +51,6 @@ fib = n: a: b:
         _ => fib (minus n 1) b (plus a b),
     end
 
-main = _: println (i64_to_string (fib (read_num 0) 0 1))
+main = _:
+    let _ = print "> "
+    in println (i64_to_string (fib (read_num 0) 0 1))
