@@ -17,7 +17,7 @@ struct Args {
     emit_c: bool,
     /// Do not minimize types
     #[arg(long)]
-    not_type_minimization: bool,
+    no_type_minimization: bool,
     /// start language server
     #[arg(short('l'), long)]
     language_server: bool,
@@ -31,7 +31,7 @@ fn main() {
     let args = Args::parse();
     if args.language_server {
         #[cfg(feature = "language-server")]
-        language_server::run(!args.not_type_minimization);
+        language_server::run(!args.no_type_minimization);
         #[cfg(not(feature = "language-server"))]
         panic!();
     } else {
@@ -40,9 +40,9 @@ fn main() {
         match compiler::parse(&src) {
             Ok(ast) => {
                 if args.emit_c {
-                    print!("{}", gen_c(ast, !args.not_type_minimization));
+                    print!("{}", gen_c(ast, !args.no_type_minimization));
                 } else if let Ok(exit_status) =
-                    run_c::run(gen_c(ast, !args.not_type_minimization).to_string())
+                    run_c::run(gen_c(ast, !args.no_type_minimization).to_string())
                 {
                     exit(exit_status.code().unwrap());
                 } else {
