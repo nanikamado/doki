@@ -353,7 +353,7 @@ impl TypeMemo {
             new_ids.insert(
                 id,
                 ctx.into_iter()
-                    .map(|c| self.get_type_inner(c, trace, map, true))
+                    .map(|c| self.get_type_inner(c, trace, map, for_hash))
                     .collect(),
             );
         }
