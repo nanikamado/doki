@@ -40,7 +40,6 @@ pub struct Env {
 
 impl Env {
     fn c_type_inner(&mut self, t: &Type, mut type_stack: Option<(usize, Type)>) -> CType {
-        debug_assert!(!t.reference);
         let single = if t.len() == 1 {
             match t.iter().next().unwrap() {
                 TypeUnitOf::Normal { .. } => true,
@@ -49,14 +48,14 @@ impl Env {
         } else {
             false
         };
-        let reserved_id;
-        if t.recursive && recurring(t) {
+        let reserved_id = if t.recursive && recurring(t) {
+            debug_assert!(!single);
             let i = self.aggregate_types.get_empty_id();
-            type_stack = Some((i, t.clone().get_ref()));
-            reserved_id = Some(i);
+            type_stack = Some((i, t.clone()));
+            Some(i)
         } else {
-            reserved_id = None;
-        }
+            None
+        };
         let mut ts = Vec::new();
         debug_assert!(!t.contains_broken_link_rec(type_stack.is_some() as u32));
         for tu in t.iter() {
@@ -73,7 +72,6 @@ impl Env {
                             _ => panic!(),
                         };
                         if single {
-                            debug_assert!(reserved_id.is_none());
                             return c_t;
                         }
                         ts.push(c_t);
@@ -83,7 +81,6 @@ impl Env {
                         let arg_t = self.c_type_from_inner_type(&args[0], &type_stack);
                         let c_t = CType::Ref(Box::new(arg_t));
                         if single {
-                            debug_assert!(reserved_id.is_none());
                             return c_t;
                         }
                         ts.push(c_t);
@@ -95,14 +92,7 @@ impl Env {
                                 .collect(),
                         );
                         if single {
-                            return match reserved_id {
-                                Some(i) => {
-                                    debug_assert!(ts.is_empty());
-                                    self.aggregate_types.insert_with_id(t, i);
-                                    CType::Aggregate(i)
-                                }
-                                None => CType::Aggregate(self.aggregate_types.get_or_insert(t)),
-                            };
+                            return CType::Aggregate(self.aggregate_types.get_or_insert(t));
                         }
                         ts.push(CType::Aggregate(self.aggregate_types.get_or_insert(t)));
                     }
@@ -114,14 +104,6 @@ impl Env {
                                 .map(|t| self.c_type_from_inner_type(t, &type_stack))
                                 .collect(),
                         );
-                        match reserved_id {
-                            Some(i) if single => {
-                                self.aggregate_types
-                                    .insert_with_id(CAggregateType::Union(ts), i);
-                                return CType::Aggregate(i);
-                            }
-                            _ => (),
-                        }
                         ts.push(CType::Aggregate(self.aggregate_types.get_or_insert(c_t)))
                     }
                 }
@@ -133,8 +115,10 @@ impl Env {
                 .insert_with_id(CAggregateType::Union(ts), i);
             CType::Aggregate(i)
         } else if ts.len() == 1 {
+            debug_assert!(!t.reference);
             ts.into_iter().next().unwrap()
         } else {
+            debug_assert!(!t.reference);
             CType::Aggregate(
                 self.aggregate_types
                     .get_or_insert(CAggregateType::Union(ts)),
@@ -161,7 +145,7 @@ impl Env {
 
     pub fn c_type(&mut self, t: &Type, type_stack: Option<(usize, Type)>) -> CType {
         debug_assert!(!t.contains_broken_link_rec(type_stack.is_some() as u32));
-        if t.reference {
+        if t.reference && !t.derefed {
             let t = self.c_type_memoize(&t.clone().deref(), type_stack);
             let i = if let CType::Aggregate(i) = t {
                 i
@@ -183,7 +167,12 @@ impl Env {
         match t {
             TypeInnerOf::RecursionPoint(d) => {
                 assert_eq!(*d, 0);
-                CType::Ref(Box::new(CType::Aggregate(type_stack.as_ref().unwrap().0)))
+                let s = type_stack.as_ref().unwrap();
+                if s.1.reference {
+                    CType::Ref(Box::new(CType::Aggregate(s.0)))
+                } else {
+                    CType::Aggregate(s.0)
+                }
             }
             TypeInnerOf::Type(t) => self.c_type(t, type_stack.clone()),
         }

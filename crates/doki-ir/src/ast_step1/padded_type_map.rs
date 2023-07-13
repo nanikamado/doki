@@ -198,7 +198,7 @@ impl PaddedTypeMap {
         })
     }
 
-    fn dereference(&mut self, p: TypePointer) -> &Terminal {
+    pub fn dereference(&mut self, p: TypePointer) -> &Terminal {
         let p = self.find(p);
         if let Node::Terminal(t) = &self.map[p.0] {
             t

@@ -117,11 +117,10 @@ impl Display for Codegen {
                             .format_with("", |(i, field), f| f(&format_args!("{field} _{i};",)))
                     )),
                     CAggregateType::Union(ts) => f(&format_args!(
-                        "union u{i} {{{}}};
-                            {} {{int tag;union u{i} value;}};",
+                        "union u{i}{{{}}};{}{{int tag;union u{i} value;}};",
                         ts.iter()
                             .enumerate()
-                            .format_with("", |(i, t), f| f(&format_args!("{t} _{i};"))),
+                            .format_with("", |(i, t), f| { f(&format_args!("{t} _{i};")) }),
                         CType::Aggregate(*i),
                     )),
                 }

@@ -13,6 +13,7 @@ pub struct TypeOf<T: TypeFamily> {
     ts: Vec<TypeUnitOf<T>>,
     pub recursive: bool,
     pub reference: bool,
+    pub derefed: bool,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
@@ -86,6 +87,7 @@ impl<T: TypeFamily> From<TypeUnitOf<T>> for TypeOf<T> {
             ts: once(value).collect(),
             recursive: false,
             reference: false,
+            derefed: false,
         }
     }
 }
@@ -109,16 +111,7 @@ impl<T: TypeFamily> TypeOf<T> {
         debug_assert!(self.recursive);
         debug_assert!(self.reference);
         Self {
-            reference: false,
-            ..self
-        }
-    }
-
-    pub fn get_ref(self) -> Self {
-        debug_assert!(self.recursive);
-        debug_assert!(!self.reference);
-        Self {
-            reference: true,
+            derefed: true,
             ..self
         }
     }
@@ -194,6 +187,8 @@ pub struct TypeMemo {
     type_memo: FxHashMap<TypePointer, IntermediateTypeInner>,
     type_memo_for_hash: FxHashMap<TypePointer, IntermediateTypeInner>,
     pub minimized_pointers: FxHashSet<TypePointer>,
+    pub ref_pointers: FxHashSet<TypePointer>,
+    ref_checked_pointers: FxHashSet<TypePointer>,
 }
 
 fn remove_pointer_from_type_inner_for_hash(t: IntermediateTypeInner) -> TypeInnerForHash {
@@ -206,6 +201,7 @@ fn remove_pointer_from_type_inner_for_hash(t: IntermediateTypeInner) -> TypeInne
             ts,
             recursive,
             reference,
+            derefed,
         }) => TypeInnerOf::Type(TypeOf {
             ts: ts
                 .into_iter()
@@ -213,6 +209,7 @@ fn remove_pointer_from_type_inner_for_hash(t: IntermediateTypeInner) -> TypeInne
                 .collect(),
             recursive,
             reference,
+            derefed,
         }),
     }
 }
@@ -249,6 +246,7 @@ fn remove_pointer_from_type_inner(
             ts,
             recursive,
             reference,
+            derefed,
         }) => TypeInnerOf::Type(TypeOf {
             ts: ts
                 .into_iter()
@@ -256,6 +254,7 @@ fn remove_pointer_from_type_inner(
                 .collect(),
             recursive,
             reference,
+            derefed,
         }),
     }
 }
@@ -396,6 +395,7 @@ impl TypeMemo {
                     ts,
                     recursive: false,
                     reference: false,
+                    derefed: false,
                 })
             }
             Terminal::LambdaId(_) => panic!(),
@@ -405,11 +405,25 @@ impl TypeMemo {
         if r.replaced {
             if let TypeInnerOf::Type(t) = &mut t {
                 t.recursive = true;
-                t.reference = true;
             } else {
                 panic!()
             }
         };
+        if self.ref_pointers.contains(&p) {
+            if let TypeInnerOf::Type(t) = &mut t {
+                t.reference = true;
+            } else {
+                panic!()
+            }
+        } else {
+            debug_assert!(self.ref_checked_pointers.contains(&p));
+            #[cfg(debug_assertions)]
+            if let TypeInnerOf::Type(t) = &mut t {
+                assert!(!t.reference);
+            } else {
+                panic!()
+            }
+        }
         if !r.contains_pointer {
             let o = if for_hash {
                 self.type_memo_for_hash.insert(p, t.clone())
@@ -445,6 +459,100 @@ impl TypeMemo {
                     .collect(),
             }
         }
+    }
+
+    pub fn collect_ref_pointers(&mut self, p: TypePointer, map: &mut PaddedTypeMap) {
+        self.collect_ref_pointers_aux(p, &Default::default(), &Default::default(), map)
+    }
+
+    fn collect_ref_pointers_aux(
+        &mut self,
+        p: TypePointer,
+        ref_candidates: &FxHashSet<TypePointer>,
+        trace: &FxHashSet<TypePointer>,
+        map: &mut PaddedTypeMap,
+    ) {
+        let p = map.find(p);
+        if self.ref_checked_pointers.contains(&p) {
+            return;
+        }
+        if trace.contains(&p) {
+            if ref_candidates.contains(&p) {
+                let new = self.ref_pointers.insert(p);
+                debug_assert!(new);
+                let new = self.ref_checked_pointers.insert(p);
+                debug_assert!(new);
+            }
+            return;
+        }
+        let mut trace = trace.clone();
+        trace.insert(p);
+        match map.dereference_without_find(p) {
+            Terminal::TypeMap(t) => {
+                let t = t.normals.clone();
+                let union = if t.len() == 1 {
+                    let (id, ts) = t.iter().next().unwrap();
+                    match id {
+                        TypeId::Intrinsic(IntrinsicTypeTag::Fn) => match map.dereference(ts[2]) {
+                            Terminal::TypeMap(_) => panic!(),
+                            Terminal::LambdaId(l) => l.len() > 1,
+                        },
+                        _ => false,
+                    }
+                } else {
+                    t.len() > 1
+                };
+                let mut new_ref_candidates;
+                let ref_candidates = if union {
+                    new_ref_candidates = ref_candidates.clone();
+                    new_ref_candidates.insert(p);
+                    &new_ref_candidates
+                } else {
+                    ref_candidates
+                };
+                for (id, ts) in t {
+                    match id {
+                        TypeId::Intrinsic(id) => match id {
+                            IntrinsicTypeTag::Fn => {
+                                self.collect_ref_pointers_aux(ts[2], ref_candidates, &trace, map);
+                                for t in &ts[..2] {
+                                    self.collect_ref_pointers_aux(
+                                        *t,
+                                        &Default::default(),
+                                        &trace,
+                                        map,
+                                    );
+                                }
+                            }
+                            _ => {
+                                for t in ts {
+                                    self.collect_ref_pointers_aux(
+                                        t,
+                                        &Default::default(),
+                                        &trace,
+                                        map,
+                                    );
+                                }
+                            }
+                        },
+                        TypeId::UserDefined(_) => {
+                            for t in ts {
+                                self.collect_ref_pointers_aux(t, ref_candidates, &trace, map);
+                            }
+                        }
+                    }
+                }
+            }
+            Terminal::LambdaId(l) => {
+                for (id, ctx) in l.clone() {
+                    for t in ctx {
+                        self.collect_ref_pointers_aux(t, ref_candidates, &trace, map);
+                    }
+                    self.collect_ref_pointers_aux(id.root_t, &Default::default(), &trace, map);
+                }
+            }
+        }
+        self.ref_checked_pointers.insert(p);
     }
 }
 
@@ -539,6 +647,7 @@ fn replace_pointer(
                     ts: new_t,
                     recursive: t.recursive,
                     reference: t.reference,
+                    derefed: t.derefed,
                 }),
                 replaced,
                 contains_pointer,
@@ -598,6 +707,7 @@ impl TypeInner {
                 ts,
                 recursive,
                 reference,
+                derefed,
             }) => TypeInnerOf::Type(TypeOf {
                 ts: ts
                     .into_iter()
@@ -605,6 +715,7 @@ impl TypeInner {
                     .collect(),
                 recursive,
                 reference,
+                derefed,
             }),
         }
     }

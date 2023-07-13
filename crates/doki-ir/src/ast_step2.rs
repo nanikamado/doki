@@ -314,7 +314,7 @@ impl Env {
             let t = self.local_variable_types_old.get(v);
             let t = self.map.clone_pointer(t, replace_map);
             let t = self.get_type(t);
-            self.local_variable_collector.new_variable(t)
+            self.new_variable(t)
         }
     }
 
@@ -758,12 +758,14 @@ impl Env {
 
     fn get_type(&mut self, p: TypePointer) -> Type {
         self.minimize(p);
+        self.type_memo.collect_ref_pointers(p, &mut self.map);
         self.type_memo
             .get_type(p, &mut self.map, &mut self.type_id_generator)
     }
 
     fn get_type_for_hash(&mut self, p: TypePointer) -> TypeForHash {
         self.minimize(p);
+        self.type_memo.collect_ref_pointers(p, &mut self.map);
         self.type_memo.get_type_for_hash(p, &mut self.map)
     }
 
