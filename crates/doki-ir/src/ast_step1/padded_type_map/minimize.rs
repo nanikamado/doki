@@ -1,9 +1,13 @@
 use super::{Node, PaddedTypeMap, Terminal, TypeMap, TypePointer};
 use crate::ast_step1::LambdaId;
 use multimap::MultiMap;
-use rustc_hash::{FxHashMap, FxHasher};
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 
-pub fn minimize(root: TypePointer, m: &mut PaddedTypeMap) -> FxHashMap<TypePointer, TypePointer> {
+pub fn minimize(
+    root: TypePointer,
+    m: &mut PaddedTypeMap,
+    minimized_pointers: &mut FxHashSet<TypePointer>,
+) {
     let map = m
         .map
         .clone()
@@ -68,17 +72,16 @@ pub fn minimize(root: TypePointer, m: &mut PaddedTypeMap) -> FxHashMap<TypePoint
     }
     let points_rev: MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> =
         points.into_iter().map(|(a, b)| (b, a)).collect();
-    let mut replace_map = FxHashMap::default();
     for (_, mut v) in points_rev {
         v.sort_unstable();
         if v.len() >= 2 {
             let p = TypePointer(v[0]);
+            minimized_pointers.insert(p);
             for p2 in &v[1..] {
-                replace_map.insert(TypePointer(*p2), p);
+                m.union(p, TypePointer(*p2));
             }
         }
     }
-    replace_map
 }
 
 fn collect_points(p: TypePointer, map: &PaddedTypeMap, points: &mut FxHashMap<usize, usize>) {

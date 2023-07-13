@@ -751,21 +751,8 @@ impl Env {
     }
 
     fn minimize(&mut self, p: TypePointer) {
-        if self.minimize_type && !self.type_memo.replace_map.contains_key(&p) {
-            use std::collections::hash_map::Entry::*;
-            for (from, to) in self.map.minimize(p) {
-                match self.type_memo.replace_map.entry(from) {
-                    Occupied(mut e) => {
-                        let v = e.get();
-                        if to < *v {
-                            e.insert(to);
-                        }
-                    }
-                    Vacant(e) => {
-                        e.insert(to);
-                    }
-                }
-            }
+        if self.minimize_type && !self.type_memo.minimized_pointers.contains(&p) {
+            self.map.minimize(p, &mut self.type_memo.minimized_pointers);
         }
     }
 

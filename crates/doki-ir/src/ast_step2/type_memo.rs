@@ -193,7 +193,7 @@ impl<T: BrokenLinkCheck> BrokenLinkCheck for Vec<T> {
 pub struct TypeMemo {
     type_memo: FxHashMap<TypePointer, IntermediateTypeInner>,
     type_memo_for_hash: FxHashMap<TypePointer, IntermediateTypeInner>,
-    pub replace_map: FxHashMap<TypePointer, TypePointer>,
+    pub minimized_pointers: FxHashSet<TypePointer>,
 }
 
 fn remove_pointer_from_type_inner_for_hash(t: IntermediateTypeInner) -> TypeInnerForHash {
@@ -328,15 +328,13 @@ impl TypeMemo {
 
     fn get_lambda_ids(
         &mut self,
-        mut p: TypePointer,
+        p: TypePointer,
         trace: &FxHashSet<TypePointer>,
         map: &mut PaddedTypeMap,
         for_hash: bool,
     ) -> BTreeMap<LambdaId<IntermediateTypeInner>, <IntermediateTypeF as TypeFamily>::LambdaCtx>
     {
-        while let Some(replaced) = self.replace_map.get(&p) {
-            p = *replaced;
-        }
+        let p = map.find(p);
         let Terminal::LambdaId(ids) = map.dereference_without_find(p) else {
             panic!()
         };
@@ -362,14 +360,12 @@ impl TypeMemo {
 
     fn get_type_inner(
         &mut self,
-        mut p: TypePointer,
+        p: TypePointer,
         trace: &FxHashSet<TypePointer>,
         map: &mut PaddedTypeMap,
         for_hash: bool,
     ) -> IntermediateTypeInner {
-        while let Some(replaced) = self.replace_map.get(&p) {
-            p = *replaced;
-        }
+        let p = map.find(p);
         if for_hash {
             if let Some(t) = self.type_memo_for_hash.get(&p) {
                 debug_assert!(!trace.contains(&p));

@@ -4,7 +4,6 @@ pub use self::replace_map::ReplaceMap;
 use super::{ConstructorId, LambdaId};
 use crate::intrinsics::IntrinsicTypeTag;
 use itertools::Itertools;
-use rustc_hash::FxHashMap;
 #[cfg(debug_assertions)]
 use rustc_hash::FxHashSet;
 use std::collections::BTreeMap;
@@ -268,8 +267,8 @@ impl PaddedTypeMap {
         new_p
     }
 
-    pub fn minimize(&mut self, root: TypePointer) -> FxHashMap<TypePointer, TypePointer> {
-        minimize::minimize(root, self)
+    pub fn minimize(&mut self, root: TypePointer, minimized_pointers: &mut FxHashSet<TypePointer>) {
+        minimize::minimize(root, self, minimized_pointers)
     }
 
     #[cfg(debug_assertions)]
