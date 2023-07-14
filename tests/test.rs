@@ -129,5 +129,15 @@ fn global_variables() {
 
 #[test]
 fn fib() {
-    positive_test_with_stdin("fib.doki", "10\n", "> 55\n");
+    positive_test_with_stdin("fib.doki", "92\n", "> 7540113804746346429\n");
+}
+
+#[test]
+fn fixed_point_fib() {
+    positive_test_with_stdin("fixed_point_fib.doki", "92\n", "> 7540113804746346429\n");
+}
+
+#[test]
+fn fixed_point_fib_lambda() {
+    positive_test_with_stdin("fixed_point_fib.doki", "92\n", "> 7540113804746346429\n");
 }
