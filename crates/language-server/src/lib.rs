@@ -184,25 +184,25 @@ pub async fn run(minimize_type: bool) {
 }
 
 fn make_hover_map(src: &str, minimize_type: bool) -> Option<HoverMap> {
-    let (char_to_utf16_map, utf16_to_char_map) = make_map(src);
+    let (utf8_to_utf16_map, utf16_to_utf8_map) = make_map(src);
     let r = compiler::token_map(src, minimize_type).ok()?;
     let mut span_map = r.span_map;
     let mut working_span_list: Vec<(Span, _)> = Vec::new();
     let mut cache: Option<Arc<Hover>> = None;
-    let utf16_to_token_map = utf16_to_char_map
+    let utf16_to_token_map = utf16_to_utf8_map
         .into_iter()
-        .map(|utf16_to_char_line| {
-            utf16_to_char_line
+        .map(|utf16_to_utf8_line| {
+            utf16_to_utf8_line
                 .into_iter()
-                .map(|char| {
-                    char.and_then(|char| -> Option<Arc<Hover>> {
+                .map(|utf8| {
+                    utf8.and_then(|utf8| -> Option<Arc<Hover>> {
                         let working_span_list_len = working_span_list.len();
-                        working_span_list.retain(|(s, _)| s.contains(char));
+                        working_span_list.retain(|(s, _)| s.contains(utf8));
                         if working_span_list.len() != working_span_list_len {
                             cache = None;
                         }
                         while let Some(e) = span_map.first_entry() {
-                            if e.key().contains(char) {
+                            if e.key().contains(utf8) {
                                 working_span_list.push(e.remove_entry());
                                 cache = None;
                             } else {
@@ -256,12 +256,12 @@ fn make_hover_map(src: &str, minimize_type: bool) -> Option<HoverMap> {
                                 }),
                                 range: Some(Range {
                                     start: Position {
-                                        line: char_to_utf16_map[span.start].0,
-                                        character: char_to_utf16_map[span.start].1,
+                                        line: utf8_to_utf16_map[span.start].0,
+                                        character: utf8_to_utf16_map[span.start].1,
                                     },
                                     end: Position {
-                                        line: char_to_utf16_map[span.end].0,
-                                        character: char_to_utf16_map[span.end].1,
+                                        line: utf8_to_utf16_map[span.end].0,
+                                        character: utf8_to_utf16_map[span.end].1,
                                     },
                                 }),
                             });
@@ -278,28 +278,32 @@ fn make_hover_map(src: &str, minimize_type: bool) -> Option<HoverMap> {
     Some(utf16_to_token_map)
 }
 
-type Utf16ToCharMap = Vec<Vec<Option<usize>>>;
+type Utf16ToUtf8Map = Vec<Vec<Option<usize>>>;
 
-fn make_map(src: &str) -> (Vec<(u32, u32)>, Utf16ToCharMap) {
-    let mut char_to_utf16_map = Vec::with_capacity(src.len());
-    let mut utf16_to_char_map = Vec::new();
-    let mut utf16_to_char_line = Vec::new();
-    char_to_utf16_map.push((0, 0));
+fn make_map(src: &str) -> (Vec<(u32, u32)>, Utf16ToUtf8Map) {
+    let mut utf8_to_utf16_map = Vec::with_capacity(src.len());
+    let mut utf16_to_utf8_map = Vec::new();
+    let mut utf16_to_utf8_line = Vec::new();
+    utf8_to_utf16_map.push((0, 0));
     let mut line = 0;
     let mut col_utf16 = 0;
-    for (char_i, c) in src.chars().enumerate() {
+    let mut utf8_i = 0;
+    for c in src.chars() {
         if c == '\n' {
-            utf16_to_char_map.push(utf16_to_char_line);
-            utf16_to_char_line = Vec::new();
+            utf16_to_utf8_map.push(utf16_to_utf8_line);
+            utf16_to_utf8_line = Vec::new();
             line += 1;
             col_utf16 = 0;
         } else {
-            utf16_to_char_line.resize(col_utf16 as usize, None);
+            utf16_to_utf8_line.resize(col_utf16 as usize, None);
             col_utf16 += c.len_utf16() as u32;
         }
-        utf16_to_char_line.push(Some(char_i));
-        char_to_utf16_map.push((line, col_utf16));
+        utf16_to_utf8_line.push(Some(utf8_i));
+        for _ in 0..c.len_utf8() {
+            utf8_to_utf16_map.push((line, col_utf16));
+        }
+        utf8_i += c.len_utf8();
     }
-    utf16_to_char_map.push(utf16_to_char_line);
-    (char_to_utf16_map, utf16_to_char_map)
+    utf16_to_utf8_map.push(utf16_to_utf8_line);
+    (utf8_to_utf16_map, utf16_to_utf8_map)
 }
