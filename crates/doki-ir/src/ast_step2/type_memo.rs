@@ -792,6 +792,7 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeOf<R> {
     ) -> std::fmt::Result {
         if self.recursive {
             write!(f, "rec ")?;
+            p = P::Strong;
         }
         if self.reference {
             write!(f, "&")?;
