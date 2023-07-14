@@ -24,9 +24,8 @@ impl<T: Eq + Hash> Collector<T> {
         self.len - 1
     }
 
-    pub fn insert_with_id(&mut self, t: T, id: usize) {
-        let o = self.map.insert(t, id);
-        debug_assert!(o.is_none());
+    pub fn get_or_insert_with_id(&mut self, t: T, id: usize) -> usize {
+        *self.map.entry(t).or_insert(id)
     }
 
     pub fn as_raw(&self) -> &FxHashMap<T, usize> {

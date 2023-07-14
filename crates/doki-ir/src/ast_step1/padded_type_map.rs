@@ -4,7 +4,6 @@ pub use self::replace_map::ReplaceMap;
 use super::{ConstructorId, LambdaId};
 use crate::intrinsics::IntrinsicTypeTag;
 use itertools::Itertools;
-#[cfg(debug_assertions)]
 use rustc_hash::FxHashSet;
 use std::collections::BTreeMap;
 use std::fmt::Display;

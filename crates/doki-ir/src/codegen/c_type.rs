@@ -48,8 +48,7 @@ impl Env {
         } else {
             false
         };
-        let reserved_id = if t.recursive && recurring(t) {
-            debug_assert!(!single);
+        let reserved_id = if t.recursive {
             let i = self.aggregate_types.get_empty_id();
             type_stack = Some((i, t.clone()));
             Some(i)
@@ -57,7 +56,9 @@ impl Env {
             None
         };
         let mut ts = Vec::new();
-        debug_assert!(!t.contains_broken_link_rec(type_stack.is_some() as u32));
+        if type_stack.is_none() {
+            debug_assert!(!t.contains_broken_link_rec(0));
+        }
         for tu in t.iter() {
             use TypeUnitOf::*;
             match tu {
@@ -109,14 +110,13 @@ impl Env {
                 }
             }
         }
-        if let Some(i) = reserved_id {
-            debug_assert!(ts.len() >= 2);
-            self.aggregate_types
-                .insert_with_id(CAggregateType::Union(ts), i);
-            CType::Aggregate(i)
-        } else if ts.len() == 1 {
-            debug_assert!(!t.reference);
+        if ts.len() == 1 {
             ts.into_iter().next().unwrap()
+        } else if let Some(i) = reserved_id {
+            let i = self
+                .aggregate_types
+                .get_or_insert_with_id(CAggregateType::Union(ts), i);
+            CType::Aggregate(i)
         } else {
             debug_assert!(!t.reference);
             CType::Aggregate(
@@ -144,7 +144,9 @@ impl Env {
     }
 
     pub fn c_type(&mut self, t: &Type, type_stack: Option<(usize, Type)>) -> CType {
-        debug_assert!(!t.contains_broken_link_rec(type_stack.is_some() as u32));
+        if type_stack.is_none() {
+            debug_assert!(!t.contains_broken_link_rec(0));
+        }
         if t.reference && !t.derefed {
             let t = self.c_type_memoize(&t.clone().deref(), type_stack);
             let i = if let CType::Aggregate(i) = t {
@@ -177,10 +179,6 @@ impl Env {
             TypeInnerOf::Type(t) => self.c_type(t, type_stack.clone()),
         }
     }
-}
-
-fn recurring(t: &Type) -> bool {
-    contains_index(t, -1)
 }
 
 fn contains_index(t: &Type, mut depth: i32) -> bool {
