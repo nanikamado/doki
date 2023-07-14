@@ -31,10 +31,18 @@ max = a: b: match (lt a b) with
     end
 
 i64_to_string = a:
-    let l = max 1 (log10 a)
-    in let s = intrinsic_malloc l
-    in let _ = i64_to_string_aux (intrinsic_add_ptr s l) a l
-    in Str l s
+    let negative = (lt a 0)
+    in let l = max 1 (log10 a)
+    in let str_l = plus l negative
+    in let s = intrinsic_malloc str_l
+    in let a = match negative with
+            0 => a,
+            _ =>
+                let _ = intrinsic_store_u8 s 45u8
+                in (minus 0 a),
+        end
+    in let _ = i64_to_string_aux (intrinsic_add_ptr s str_l) a l
+    in Str str_l s
 
 main = _:
     let a = intrinsic_mut 0
