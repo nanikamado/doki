@@ -13,6 +13,7 @@ impl IntrinsicVariable {
             Div => "intrinsic_div",
             Lt => "intrinsic_lt",
             Eq => "intrinsic_eq",
+            EqU8 => "intrinsic_eq_u8",
             Write => "intrinsic_write",
             Mut => "intrinsic_mut",
             SetMut => "intrinsic_set",

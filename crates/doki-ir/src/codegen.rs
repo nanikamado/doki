@@ -235,6 +235,7 @@ impl Display for PrimitiveDefPrint<'_> {
             Div => write!(f, "return _0 / _1;"),
             Lt => write!(f, "return _0 < _1;"),
             Eq => write!(f, "return _0 == _1;"),
+            EqU8 => write!(f, "return _0 == _1;"),
             Write => write!(
                 f,
                 r#"write(STDOUT_FILENO, _0, _1);return intrinsic_unit();"#

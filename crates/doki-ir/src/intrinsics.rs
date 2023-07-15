@@ -13,6 +13,7 @@ pub enum IntrinsicVariable {
     Div,
     Lt,
     Eq,
+    EqU8,
     Write,
     Mut,
     SetMut,
@@ -36,7 +37,7 @@ impl IntrinsicVariable {
     pub fn runtime_return_type(self) -> Option<IntrinsicTypeTag> {
         use IntrinsicVariable::*;
         match self {
-            Minus | Plus | Percent | Multi | Div | Lt | Eq | GetChar | U8ToI64 => {
+            Minus | Plus | Percent | Multi | Div | Lt | Eq | EqU8 | GetChar | U8ToI64 => {
                 Some(IntrinsicTypeTag::I64)
             }
             Write | SetMut | StoreU8 => Some(IntrinsicTypeTag::Unit),
@@ -97,6 +98,7 @@ impl IntrinsicVariable {
         const MUT: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::Mut));
         match self {
             Minus | Plus | Percent | Multi | Div | Lt | Eq => vec![I64, I64],
+            EqU8 => vec![U8, U8],
             Write => vec![PTR, I64],
             Malloc | I64ToU8 => vec![I64],
             U8ToI64 => vec![U8],
