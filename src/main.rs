@@ -1,10 +1,15 @@
+#![deny(clippy::allow_attributes_without_reason)]
+#![deny(clippy::exit)]
+#![deny(clippy::todo)]
+#![deny(clippy::semicolon_outside_block)]
+
 mod run_c;
 
 use clap::Parser;
 use compiler::gen_c;
 use std::fs;
 use std::io::stderr;
-use std::process::exit;
+use std::process::ExitCode;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -23,7 +28,7 @@ struct Args {
     language_server: bool,
 }
 
-fn main() {
+fn main() -> ExitCode {
     #[cfg(feature = "backtrace-on-stack-overflow")]
     unsafe {
         backtrace_on_stack_overflow::enable()
@@ -31,9 +36,12 @@ fn main() {
     let args = Args::parse();
     if args.language_server {
         #[cfg(feature = "language-server")]
-        language_server::run(!args.no_type_minimization);
+        {
+            language_server::run(!args.no_type_minimization);
+            ExitCode::SUCCESS
+        }
         #[cfg(not(feature = "language-server"))]
-        panic!();
+        panic!()
     } else {
         let file_name = args.file.unwrap();
         let src = fs::read_to_string(&file_name).unwrap();
@@ -41,17 +49,18 @@ fn main() {
             Ok(ast) => {
                 if args.emit_c {
                     print!("{}", gen_c(ast, !args.no_type_minimization));
+                    ExitCode::SUCCESS
                 } else if let Ok(exit_status) =
                     run_c::run(gen_c(ast, !args.no_type_minimization).to_string())
                 {
-                    exit(exit_status.code().unwrap());
+                    ExitCode::from(exit_status.code().unwrap() as u8)
                 } else {
-                    exit(1);
+                    ExitCode::FAILURE
                 }
             }
             Err(e) => {
                 e.write(stderr(), &file_name, &src).unwrap();
-                exit(1);
+                ExitCode::FAILURE
             }
         }
     }
