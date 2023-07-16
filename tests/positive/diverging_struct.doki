@@ -1,0 +1,34 @@
+data Unit 0
+
+print = Str l p: intrinsic_write p l
+
+println = a: let _ = print a
+    in print "\n"
+
+div = intrinsic_div
+plus = intrinsic_plus
+rem = intrinsic_rem
+minus = intrinsic_minus
+lt = intrinsic_lt
+mul = intrinsic_mul
+le = a: b: lt a (plus b 1)
+
+data Ok 1
+
+loop = n: k:
+    match n with
+        0 => Unit,
+        _ =>
+            let _ = println "#"
+            in loop (minus n 1) (a: k (Ok a)),
+    end
+
+read_num = a:
+    let c = intrinsic_getchar 0
+    in match (mul (le 48 c) (le c 57)) with
+            0 => a,
+            _ => read_num (plus (mul 10 a) (minus c 48)),
+        end
+
+main = _:
+    loop (read_num 0) (_: Unit)

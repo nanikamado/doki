@@ -12,6 +12,7 @@ pub enum CType {
     Ptr,
     Aggregate(usize),
     Ref(Box<CType>),
+    Diverge,
 }
 
 impl Display for CType {
@@ -22,6 +23,7 @@ impl Display for CType {
             CType::Ptr => write!(f, "void*"),
             CType::Aggregate(i) => write!(f, "struct t{i}"),
             CType::Ref(i) => write!(f, "{i}*"),
+            CType::Diverge => write!(f, "struct diverge"),
         }
     }
 }
@@ -40,14 +42,6 @@ pub struct Env {
 
 impl Env {
     fn c_type_inner(&mut self, t: &Type, mut type_stack: Option<(usize, Type)>) -> CType {
-        let single = if t.len() == 1 {
-            match t.iter().next().unwrap() {
-                TypeUnitOf::Normal { .. } => true,
-                TypeUnitOf::Fn(l, _, _) => l.len() == 1,
-            }
-        } else {
-            false
-        };
         let reserved_id = if t.recursive {
             let i = self.aggregate_types.get_empty_id();
             type_stack = Some((i, t.clone()));
@@ -72,18 +66,12 @@ impl Env {
                             TypeId::Intrinsic(IntrinsicTypeTag::Ptr) => CType::Ptr,
                             _ => panic!(),
                         };
-                        if single {
-                            return c_t;
-                        }
                         ts.push(c_t);
                     }
                     TypeId::Intrinsic(IntrinsicTypeTag::Mut) => {
                         debug_assert_eq!(args.len(), 1);
                         let arg_t = self.c_type_from_inner_type(&args[0], &type_stack);
                         let c_t = CType::Ref(Box::new(arg_t));
-                        if single {
-                            return c_t;
-                        }
                         ts.push(c_t);
                     }
                     _ => {
@@ -92,9 +80,6 @@ impl Env {
                                 .map(|t| self.c_type_from_inner_type(t, &type_stack))
                                 .collect(),
                         );
-                        if single {
-                            return CType::Aggregate(self.aggregate_types.get_or_insert(t));
-                        }
                         ts.push(CType::Aggregate(self.aggregate_types.get_or_insert(t)));
                     }
                 },
@@ -111,7 +96,16 @@ impl Env {
             }
         }
         if ts.len() == 1 {
-            ts.into_iter().next().unwrap()
+            let ct = ts.into_iter().next().unwrap();
+            if let Some(i) = reserved_id {
+                if ct.contains_aggregate(i, &self.aggregate_types) {
+                    CType::Diverge
+                } else {
+                    ct
+                }
+            } else {
+                ct
+            }
         } else if let Some(i) = reserved_id {
             let i = self
                 .aggregate_types
@@ -195,4 +189,25 @@ fn contains_index(t: &Type, mut depth: i32) -> bool {
         TypeUnitOf::Normal { id: _, args } => check(args),
         TypeUnitOf::Fn(ls, _, _) => ls.iter().any(|(_, ctx)| check(ctx)),
     })
+}
+
+impl CType {
+    fn contains_aggregate(&self, i: usize, aggregate_types: &Collector<CAggregateType>) -> bool {
+        match self {
+            CType::I64 | CType::U8 | CType::Ptr => false,
+            CType::Aggregate(j) => {
+                i == *j
+                    || aggregate_types
+                        .get_rev(*j)
+                        .map(|t| match t {
+                            CAggregateType::Union(ts) | CAggregateType::Struct(ts) => {
+                                ts.iter().any(|t| t.contains_aggregate(i, aggregate_types))
+                            }
+                        })
+                        .unwrap_or(false)
+            }
+            CType::Ref(c) => c.contains_aggregate(i, aggregate_types),
+            CType::Diverge => false,
+        }
+    }
 }

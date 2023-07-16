@@ -89,12 +89,7 @@ impl Display for Codegen {
         .into();
         let unit_t = c_type_env.c_type(&unit_t, None);
         let c_type_env = c_type_env;
-        let aggregates: FxHashMap<_, _> = c_type_env
-            .aggregate_types
-            .as_raw()
-            .iter()
-            .map(|(a, b)| (*b, a))
-            .collect();
+        let aggregates: FxHashMap<_, _> = c_type_env.aggregate_types.rev_map_as_raw().clone();
         let sorted = sort_aggregates(&aggregates);
         write!(
             f,
@@ -105,6 +100,7 @@ impl Display for Codegen {
             #include <stdint.h>
             #include <inttypes.h>
             #include <unistd.h>
+            struct diverge{{}};
             {}{}{}",
             sorted.iter().format_with("", |(i, t), f| {
                 match t {
@@ -257,9 +253,7 @@ impl Display for PrimitiveDefPrint<'_> {
     }
 }
 
-fn sort_aggregates<'a>(
-    aggregates: &'a FxHashMap<usize, &'a CAggregateType>,
-) -> Vec<(usize, &'a CAggregateType)> {
+fn sort_aggregates(aggregates: &FxHashMap<usize, CAggregateType>) -> Vec<(usize, &CAggregateType)> {
     let mut done = FxHashSet::default();
     let mut sorted = Vec::with_capacity(aggregates.len());
     for i in aggregates.keys() {
@@ -269,23 +263,30 @@ fn sort_aggregates<'a>(
 }
 fn sort_aggregates_rec<'a>(
     i: usize,
-    h: &'a FxHashMap<usize, &CAggregateType>,
+    h: &'a FxHashMap<usize, CAggregateType>,
     done: &mut FxHashSet<usize>,
     sorted: &mut Vec<(usize, &'a CAggregateType)>,
-) {
+) -> bool {
     if !done.contains(&i) {
-        let a = &h[&i];
         done.insert(i);
-        let cs = match a {
-            CAggregateType::Union(cs) => cs,
-            CAggregateType::Struct(cs) => cs,
-        };
-        for c in cs {
-            if let CType::Aggregate(i) = c {
-                sort_aggregates_rec(*i, h, done, sorted);
+        if let Some(a) = &h.get(&i) {
+            let (CAggregateType::Union(cs) | CAggregateType::Struct(cs)) = a;
+            for c in cs {
+                if let CType::Aggregate(i) = c {
+                    let created = sort_aggregates_rec(*i, h, done, sorted);
+                    if !created {
+                        return false;
+                    }
+                }
             }
+            sorted.push((i, a));
+            true
+        } else {
+            // `i` cannot be created at runtime because of diverging.
+            false
         }
-        sorted.push((i, a));
+    } else {
+        true
     }
 }
 
@@ -447,7 +448,7 @@ impl DisplayWithEnv for Instruction {
                     f,
                     "{}={};",
                     Dis(&VariableId::Local(*d), env),
-                    Dis(&(e, t), env)
+                    Dis(&(*d, e, t), env)
                 )
             }
             Instruction::Test(Tester::Tag { tag }, e) => {
@@ -486,9 +487,9 @@ impl DisplayWithEnv for Instruction {
     }
 }
 
-impl DisplayWithEnv for (&Expr, &CType) {
+impl DisplayWithEnv for (LocalVariable, &Expr, &CType) {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (e, t) = self;
+        let (v_for_panic_cast, e, t) = self;
         match e {
             Expr::Lambda {
                 lambda_id: _,
@@ -520,13 +521,17 @@ impl DisplayWithEnv for (&Expr, &CType) {
                         args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                     ),
                     Construction(id) => {
-                        write!(
-                            f,
-                            "/*{}*/({}){{{}}}",
-                            Dis(id, env),
-                            t,
-                            args.iter().format_with(",", |a, f| f(&Dis(a, env)))
-                        )
+                        if let CType::Diverge = t {
+                            write!(f, "({}){{}}", CType::Diverge)
+                        } else {
+                            write!(
+                                f,
+                                "/*{}*/({}){{{}}}",
+                                Dis(id, env),
+                                t,
+                                args.iter().format_with(",", |a, f| f(&Dis(a, env)))
+                            )
+                        }
                     }
                     IntrinsicConstruction(id) => {
                         write!(
@@ -540,7 +545,16 @@ impl DisplayWithEnv for (&Expr, &CType) {
                         field,
                     } => {
                         debug_assert_eq!(args.len(), 1);
-                        write!(f, "{}._{field}", Dis(&args[0], env))
+                        let ct = env.get_type(args[0]);
+                        if let CType::Diverge = ct {
+                            write!(
+                                f,
+                                "(panic(\"unexpected\"),{})",
+                                Dis(&VariableId::Local(*v_for_panic_cast), env)
+                            )
+                        } else {
+                            write!(f, "{}._{field}", Dis(&args[0], env))
+                        }
                     }
                 }
             }

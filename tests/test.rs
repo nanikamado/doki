@@ -141,3 +141,8 @@ fn fixed_point_fib() {
 fn fixed_point_fib_lambda() {
     positive_test_with_stdin("fixed_point_fib.doki", "92\n", "> 7540113804746346429\n");
 }
+
+#[test]
+fn diverging_struct() {
+    positive_test_with_stdin("diverging_struct.doki", "3\n", "#\n#\n#\n");
+}
