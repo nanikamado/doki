@@ -44,7 +44,12 @@ i64_to_string = a:
     in let _ = i64_to_string_aux (intrinsic_add_ptr s str_l) a l
     in Str str_l s
 
+counter = let c = intrinsic_mut 0
+    in _: let i = intrinsic_get c
+        in let _ = intrinsic_set c (plus i 1)
+        in i
+
 main = _:
-    let a = intrinsic_mut 0
-    in let _ = intrinsic_set a 1
-    in println (i64_to_string (intrinsic_get a))
+    let _ = println (i64_to_string (counter Unit))
+    in let _ = println (i64_to_string (counter Unit))
+    in println (i64_to_string (counter Unit))

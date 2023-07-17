@@ -114,7 +114,7 @@ fn mut_list() {
 
 #[test]
 fn r#mut() {
-    test_example("mut.doki", "1\n");
+    test_example("mut.doki", "0\n1\n2\n");
 }
 
 #[test]
