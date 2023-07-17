@@ -1,0 +1,25 @@
+data Unit 0
+
+plus = intrinsic_plus
+
+minus = intrinsic_minus
+
+memcpy = dist: src: len: match len with
+        0 => Unit,
+        _ => let _ = intrinsic_store_u8 dist (intrinsic_load_u8 src)
+            in memcpy (intrinsic_add_ptr dist 1) (intrinsic_add_ptr src 1) (minus len 1),
+    end
+
+append_str = Str l1 p1: Str l2 p2:
+    let l = plus l1 l2
+    in let p = intrinsic_malloc l
+    in let _ = memcpy p p1 l1
+    in let _ = memcpy (intrinsic_add_ptr p l1) p2 l2
+    in Str l p
+
+print = Str l p: intrinsic_write p l
+
+println = a: let _ = print a
+    in print "\n"
+
+main = _: println (append_str "Hello, " "world.")

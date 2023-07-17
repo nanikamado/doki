@@ -146,3 +146,8 @@ fn fixed_point_fib_lambda() {
 fn diverging_struct() {
     positive_test_with_stdin("diverging_struct.doki", "3\n", "#\n#\n#\n");
 }
+
+#[test]
+fn memcpy() {
+    positive_test_with_stdin("memcpy.doki", "", "Hello, world.\n");
+}
