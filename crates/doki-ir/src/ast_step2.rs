@@ -40,8 +40,7 @@ pub struct GlobalVariableId(usize);
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct VariableDecl {
     pub name: String,
-    pub value: Block,
-    pub ret: VariableId,
+    pub value: FunctionBody,
     pub decl_id: GlobalVariableId,
     pub original_decl_id: GlobalVariable,
     pub t: Type,
@@ -49,8 +48,14 @@ pub struct VariableDecl {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct Block {
+pub struct FunctionBody {
+    pub basic_blocks: Vec<BasicBlock>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct BasicBlock {
     pub instructions: Vec<Instruction>,
+    pub end_instruction: EndInstruction,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -62,10 +67,18 @@ pub enum Tester {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Instruction {
     Assign(LocalVariable, Expr),
-    Test(Tester, VariableId),
-    FailTest,
+    Test {
+        tester: Tester,
+        operand: VariableId,
+        catch_label: usize,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum EndInstruction {
+    Ret(VariableId),
+    Goto { label: usize },
     Panic { msg: String },
-    TryCatch(Block, Block),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -125,7 +138,7 @@ pub struct Function {
     pub id: FxLambdaId,
     pub context: Vec<LocalVariable>,
     pub parameter: LocalVariable,
-    pub body: Block,
+    pub body: FunctionBody,
     pub ret: VariableId,
 }
 
@@ -148,7 +161,7 @@ impl Ast {
             variable_names.insert(VariableId::Global(v.decl_id), v.name.to_string());
         }
         let b = &memo.monomorphized_variables.last().unwrap().value;
-        match &b.instructions[0] {
+        match &b.basic_blocks[0].instructions[0] {
             Instruction::Assign(_, Expr::Lambda { lambda_id, context }) => {
                 debug_assert!(context.is_empty());
                 let entry_point = *lambda_id;
@@ -217,6 +230,30 @@ pub struct TypeIdTag;
 type TypeUnique = id_generator::Id<TypeIdTag>;
 type Root = (TypeUnique, ast_step1::GlobalVariable);
 
+struct BasicBlockEnv {
+    basic_blocks: Vec<Option<BasicBlock>>,
+    instructions: Vec<Instruction>,
+    current_basic_block: Option<usize>,
+}
+
+impl BasicBlockEnv {
+    fn new_label(&mut self) -> usize {
+        let l = self.basic_blocks.len();
+        self.basic_blocks.push(None);
+        l
+    }
+
+    fn end_current_block(&mut self, end_instruction: EndInstruction) {
+        let e = &mut self.basic_blocks[self.current_basic_block.unwrap()];
+        debug_assert!(e.is_none());
+        *e = Some(BasicBlock {
+            instructions: std::mem::take(&mut self.instructions),
+            end_instruction,
+        });
+        self.current_basic_block = None;
+    }
+}
+
 impl Env {
     pub fn new(
         variable_decls: Vec<ast_step1::VariableDecl>,
@@ -261,16 +298,13 @@ impl Env {
             self.global_variable_count += 1;
             let d = self.variable_decls.get(&decl_id).unwrap().clone();
             self.monomorphized_variable_map.insert(root, new_decl_id);
-            let (b, _) = self.block(d.value, root, replace_map);
+            let (instructions, _) = self.function_body(d.value, root, replace_map, d.ret);
             let d = VariableDecl {
-                value: b,
+                value: FunctionBody {
+                    basic_blocks: instructions,
+                },
                 decl_id: new_decl_id,
                 original_decl_id: decl_id,
-                ret: self.get_defined_variable_id(
-                    ast_step1::VariableId::Local(d.ret),
-                    root,
-                    replace_map,
-                ),
                 name: d.name,
                 t,
                 t_for_hash,
@@ -338,28 +372,70 @@ impl Env {
     fn block(
         &mut self,
         block: ast_step1::Block,
+        catch_label: usize,
         root_t: Root,
         replace_map: &mut ReplaceMap,
-    ) -> (Block, bool) {
-        let mut instructions = Vec::new();
-        let mut unreachable_block = false;
+        basic_block_env: &mut BasicBlockEnv,
+    ) -> Result<(), EndInstruction> {
         for i in block.instructions {
-            if self.instruction(i, root_t, replace_map, &mut instructions) {
-                unreachable_block = true;
-                break;
-            }
+            self.instruction(i, catch_label, root_t, replace_map, basic_block_env)?;
         }
-        (Block { instructions }, unreachable_block)
+        Ok(())
+    }
+
+    fn function_body(
+        &mut self,
+        block: ast_step1::Block,
+        root_t: Root,
+        replace_map: &mut ReplaceMap,
+        ret: ast_step1::LocalVariable,
+    ) -> (Vec<BasicBlock>, VariableId) {
+        let fallback = Some(BasicBlock {
+            instructions: Vec::new(),
+            end_instruction: EndInstruction::Panic {
+                msg: "pattern is not exhaustive".to_string(),
+            },
+        });
+        let mut block_env = BasicBlockEnv {
+            basic_blocks: vec![None, fallback],
+            instructions: Vec::new(),
+            current_basic_block: Some(0),
+        };
+        let (end, ret) =
+            if let Err(end) = self.block(block.clone(), 1, root_t, replace_map, &mut block_env) {
+                let t = self.local_variable_types_old.get(ret);
+                let t = self.map.clone_pointer(t, replace_map);
+                let t = self.get_type(t);
+                let ret = self.new_variable(t);
+                (end, VariableId::Local(ret))
+            } else {
+                let ret = self.get_defined_variable_id(
+                    ast_step1::VariableId::Local(ret),
+                    root_t,
+                    replace_map,
+                );
+                (EndInstruction::Ret(ret), ret)
+            };
+        block_env.end_current_block(end);
+        (
+            block_env
+                .basic_blocks
+                .into_iter()
+                .map(|a| a.unwrap())
+                .collect(),
+            ret,
+        )
     }
 
     // Returns true if exited with a error
     fn instruction(
         &mut self,
         instruction: ast_step1::Instruction,
+        catch_label: usize,
         root_t: Root,
         replace_map: &mut ReplaceMap,
-        instructions: &mut Vec<Instruction>,
-    ) -> bool {
+        basic_block_env: &mut BasicBlockEnv,
+    ) -> Result<(), EndInstruction> {
         match instruction {
             ast_step1::Instruction::Assign(v, e) => {
                 let t = self
@@ -367,7 +443,7 @@ impl Env {
                     .clone_pointer(self.local_variable_types_old.get(v), replace_map);
                 let t = self.map.clone_pointer(t, replace_map);
                 let t = self.get_type(t);
-                let e = self.expr(e, &t, root_t, replace_map, instructions);
+                let e = self.expr(e, &t, root_t, replace_map, basic_block_env, catch_label);
                 match e {
                     Ok(e) => {
                         let new_v =
@@ -378,25 +454,36 @@ impl Env {
                                 self.local_variable_replace_map.insert((v, root_t), new_v);
                                 new_v
                             };
-                        instructions.push(Instruction::Assign(new_v, e));
-                        false
+                        basic_block_env
+                            .instructions
+                            .push(Instruction::Assign(new_v, e));
+                        Ok(())
                     }
-                    Err(msg) => {
-                        instructions.push(Instruction::Panic { msg });
-                        true
-                    }
+                    Err(msg) => Err(EndInstruction::Panic { msg }),
                 }
             }
             ast_step1::Instruction::Test(ast_step1::Tester::I64 { value }, l) => {
                 let type_id = TypeId::Intrinsic(IntrinsicTypeTag::I64);
-                let a = self.downcast(l, root_t, type_id, replace_map, instructions, true);
+                let a = self.downcast(
+                    l,
+                    root_t,
+                    type_id,
+                    replace_map,
+                    &mut basic_block_env.instructions,
+                    true,
+                    catch_label,
+                );
                 match a {
-                    Ok(a) => instructions.push(Instruction::Test(Tester::I64 { value }, a)),
-                    Err(_) => {
-                        instructions.push(Instruction::FailTest);
+                    Ok(a) => {
+                        basic_block_env.instructions.push(Instruction::Test {
+                            tester: Tester::I64 { value },
+                            operand: a,
+                            catch_label,
+                        });
+                        Ok(())
                     }
+                    Err(_) => Err(EndInstruction::Goto { label: catch_label }),
                 }
-                false
             }
             ast_step1::Instruction::Test(ast_step1::Tester::Constructor { id }, a) => {
                 let t = self
@@ -406,33 +493,57 @@ impl Env {
                 let a = self.get_defined_local_variable(a, root_t, replace_map);
                 match get_tag_normal(&t, id) {
                     GetTagNormalResult::Tagged(tag, _untagged_t) => {
-                        let a = self.deref(VariableId::Local(a), &t, instructions);
-                        instructions.push(Instruction::Test(Tester::Tag { tag }, a));
+                        let a =
+                            self.deref(VariableId::Local(a), &t, &mut basic_block_env.instructions);
+                        basic_block_env.instructions.push(Instruction::Test {
+                            tester: Tester::Tag { tag },
+                            operand: a,
+                            catch_label,
+                        });
+                        Ok(())
                     }
-                    GetTagNormalResult::NotTagged => (),
+                    GetTagNormalResult::NotTagged => Ok(()),
                     GetTagNormalResult::Impossible => {
-                        instructions.push(Instruction::FailTest);
+                        Err(EndInstruction::Goto { label: catch_label })
                     }
                 }
-                false
             }
-            ast_step1::Instruction::TryCatch(b1, b2) => {
-                let (b1, u1) = self.block(b1, root_t, replace_map);
-                let (b2, u2) = self.block(b2, root_t, replace_map);
-                instructions.push(Instruction::TryCatch(b1, b2));
-                u1 && u2
+            ast_step1::Instruction::TryCatch(a, b) => {
+                let catch = basic_block_env.new_label();
+                let mut next = None;
+                let end_instruction =
+                    if let Err(end) = self.block(a, catch, root_t, replace_map, basic_block_env) {
+                        end
+                    } else {
+                        let l = basic_block_env.new_label();
+                        next = Some(l);
+                        EndInstruction::Goto { label: l }
+                    };
+                basic_block_env.end_current_block(end_instruction);
+                basic_block_env.current_basic_block = Some(catch);
+                let end_instruction = if let Err(end) =
+                    self.block(b, catch_label, root_t, replace_map, basic_block_env)
+                {
+                    end
+                } else {
+                    let l = next.unwrap_or_else(|| basic_block_env.new_label());
+                    next = Some(l);
+                    EndInstruction::Goto { label: l }
+                };
+                if let Some(next) = next {
+                    basic_block_env.end_current_block(end_instruction);
+                    basic_block_env.current_basic_block = Some(next);
+                    Ok(())
+                } else {
+                    Err(end_instruction)
+                }
             }
-            ast_step1::Instruction::FailTest => {
-                instructions.push(Instruction::FailTest);
-                false
-            }
-            ast_step1::Instruction::Panic { msg } => {
-                instructions.push(Instruction::Panic { msg });
-                true
-            }
+            ast_step1::Instruction::FailTest => Err(EndInstruction::Goto { label: catch_label }),
+            ast_step1::Instruction::Panic { msg } => Err(EndInstruction::Panic { msg }),
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn downcast(
         &mut self,
         a: ast_step1::LocalVariable,
@@ -441,6 +552,7 @@ impl Env {
         replace_map: &mut ReplaceMap,
         instructions: &mut Vec<Instruction>,
         test_instead_of_panic: bool,
+        catch_label: usize,
     ) -> Result<VariableId, String> {
         let t = self
             .map
@@ -452,7 +564,11 @@ impl Env {
             GetTagNormalResult::Tagged(tag, casted_t) => {
                 let casted_t: Type = casted_t.into();
                 if test_instead_of_panic {
-                    instructions.push(Instruction::Test(Tester::Tag { tag }, a));
+                    instructions.push(Instruction::Test {
+                        tester: Tester::Tag { tag },
+                        operand: a,
+                        catch_label,
+                    });
                 };
                 Ok(self.expr_to_variable(
                     Expr::Downcast {
@@ -479,7 +595,8 @@ impl Env {
         t: &Type,
         root_t: Root,
         replace_map: &mut ReplaceMap,
-        instructions: &mut Vec<Instruction>,
+        basic_block_env: &mut BasicBlockEnv,
+        catch_label: usize,
     ) -> Result<Expr, String> {
         use Expr::*;
         let e = match e {
@@ -496,15 +613,12 @@ impl Env {
                     .collect_vec();
                 let possible_functions = self.get_possible_functions(t);
                 let new_parameter = self.local_variable_def_replace(parameter, root_t, replace_map);
-                let (b, _) = self.block(body, root_t, replace_map);
-                let ret = self.get_defined_variable_id(
-                    ast_step1::VariableId::Local(ret),
-                    root_t,
-                    replace_map,
-                );
+                let (instructions, ret) = self.function_body(body, root_t, replace_map, ret);
                 let f = Function {
                     parameter: new_parameter,
-                    body: b,
+                    body: FunctionBody {
+                        basic_blocks: instructions,
+                    },
                     id: FxLambdaId(0),
                     context: context.clone(),
                     ret,
@@ -532,7 +646,7 @@ impl Env {
                         .unwrap();
                     let f = &possible_functions[i];
                     let d = self.new_variable(f.2.clone());
-                    instructions.push(Instruction::Assign(
+                    basic_block_env.instructions.push(Instruction::Assign(
                         d,
                         Lambda {
                             context,
@@ -546,7 +660,11 @@ impl Env {
                 };
                 if t.reference {
                     debug_assert!(t.recursive);
-                    let v = self.expr_to_variable(e, t.clone().deref(), instructions);
+                    let v = self.expr_to_variable(
+                        e,
+                        t.clone().deref(),
+                        &mut basic_block_env.instructions,
+                    );
                     Expr::Ref(v)
                 } else {
                     e
@@ -556,19 +674,19 @@ impl Env {
                 I64(s),
                 t,
                 TypeId::Intrinsic(IntrinsicTypeTag::I64),
-                instructions,
+                &mut basic_block_env.instructions,
             ),
             ast_step1::Expr::U8(s) => self.add_tags_to_expr(
                 U8(s),
                 t,
                 TypeId::Intrinsic(IntrinsicTypeTag::U8),
-                instructions,
+                &mut basic_block_env.instructions,
             ),
             ast_step1::Expr::Str(s) => self.add_tags_to_expr(
                 Str(s),
                 t,
                 TypeId::Intrinsic(IntrinsicTypeTag::Ptr),
-                instructions,
+                &mut basic_block_env.instructions,
             ),
             ast_step1::Expr::Ident(v) => {
                 Ident(self.get_defined_variable_id(v, root_t, replace_map))
@@ -579,7 +697,11 @@ impl Env {
                 let f_t = self.get_type(f_t);
                 let possible_functions = self.get_possible_functions(&f_t);
                 let f = self.get_defined_local_variable(f, root_t, replace_map);
-                let f = self.deref(VariableId::Local(f), &f_t, instructions);
+                let f = self.deref(
+                    VariableId::Local(f),
+                    &f_t,
+                    &mut basic_block_env.instructions,
+                );
                 let a = VariableId::Local(self.get_defined_local_variable(a, root_t, replace_map));
                 if possible_functions.is_empty() {
                     return Err("not a function".to_string());
@@ -592,13 +714,16 @@ impl Env {
                     }
                 } else {
                     let ret_v = self.new_variable(t.clone());
-                    let mut b = vec![Instruction::Panic {
-                        msg: "not a function".to_string(),
-                    }];
+                    let skip = basic_block_env.new_label();
                     for (tag, id, casted_t) in possible_functions {
-                        let mut b2 = vec![Instruction::Test(Tester::Tag { tag: tag as u32 }, f)];
+                        let next = basic_block_env.new_label();
+                        basic_block_env.instructions.push(Instruction::Test {
+                            tester: Tester::Tag { tag: tag as u32 },
+                            operand: f,
+                            catch_label: next,
+                        });
                         let new_f = self.new_variable(casted_t);
-                        b2.push(Instruction::Assign(
+                        basic_block_env.instructions.push(Instruction::Assign(
                             new_f,
                             Expr::Downcast {
                                 tag: tag as u32,
@@ -606,7 +731,7 @@ impl Env {
                                 check: false,
                             },
                         ));
-                        b2.push(Instruction::Assign(
+                        basic_block_env.instructions.push(Instruction::Assign(
                             ret_v,
                             Expr::Call {
                                 f: VariableId::Local(new_f),
@@ -614,12 +739,13 @@ impl Env {
                                 real_function: id,
                             },
                         ));
-                        b = vec![Instruction::TryCatch(
-                            Block { instructions: b2 },
-                            Block { instructions: b },
-                        )];
+                        basic_block_env.end_current_block(EndInstruction::Goto { label: skip });
+                        basic_block_env.current_basic_block = Some(next);
                     }
-                    instructions.append(&mut b);
+                    basic_block_env.end_current_block(EndInstruction::Panic {
+                        msg: "not a function".to_string(),
+                    });
+                    basic_block_env.current_basic_block = Some(skip);
                     Ident(VariableId::Local(ret_v))
                 }
             }
@@ -640,7 +766,7 @@ impl Env {
                     },
                     t,
                     TypeId::UserDefined(id),
-                    instructions,
+                    &mut basic_block_env.instructions,
                 )
             }
             ast_step1::Expr::BasicCall {
@@ -655,7 +781,7 @@ impl Env {
                     },
                     t,
                     TypeId::Intrinsic(id.into()),
-                    instructions,
+                    &mut basic_block_env.instructions,
                 )
             }
             ast_step1::Expr::BasicCall {
@@ -669,8 +795,9 @@ impl Env {
                     root_t,
                     TypeId::UserDefined(constructor),
                     replace_map,
-                    instructions,
+                    &mut basic_block_env.instructions,
                     false,
+                    catch_label,
                 )?;
                 BasicCall {
                     args: vec![a],
@@ -686,7 +813,15 @@ impl Env {
                 let mut arg_ts = Vec::with_capacity(args.len());
                 for (a, param_t) in args.into_iter().zip_eq(arg_restrictions) {
                     let a = if let Some(param_t) = param_t {
-                        self.downcast(a, root_t, param_t, replace_map, instructions, false)?
+                        self.downcast(
+                            a,
+                            root_t,
+                            param_t,
+                            replace_map,
+                            &mut basic_block_env.instructions,
+                            false,
+                            catch_label,
+                        )?
                     } else {
                         VariableId::Local(self.get_defined_local_variable(a, root_t, replace_map))
                     };
@@ -702,7 +837,12 @@ impl Env {
                     id: BasicFunction::Intrinsic { v: id, id: count },
                 };
                 match id.runtime_return_type() {
-                    Some(rt) => self.add_tags_to_expr(e, t, TypeId::Intrinsic(rt), instructions),
+                    Some(rt) => self.add_tags_to_expr(
+                        e,
+                        t,
+                        TypeId::Intrinsic(rt),
+                        &mut basic_block_env.instructions,
+                    ),
                     None => e,
                 }
             }

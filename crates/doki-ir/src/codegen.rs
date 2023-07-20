@@ -3,14 +3,13 @@ mod c_type;
 use self::c_type::{CAggregateType, CType};
 use crate::ast_step1::{ConstructorId, ConstructorNames, TypeId};
 use crate::ast_step2::{
-    self, Ast, Block, Expr, Function, GlobalVariableId, Instruction, LocalVariable,
-    LocalVariableCollector, Tester, Type, TypeUnitOf, VariableId,
+    self, Ast, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId, Instruction,
+    LocalVariable, LocalVariableCollector, Tester, Type, TypeUnitOf, VariableId,
 };
 use crate::collector::Collector;
 use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::RefCell;
 use std::fmt::Display;
 use stripmargin::StripMargin;
 use unic_ucd_category::GeneralCategory;
@@ -35,15 +34,12 @@ impl Display for Codegen {
             .iter()
             .map(|d| (d.decl_id, c_type_env.c_type(&d.t, None)))
             .collect();
-        let next_label = RefCell::new(1);
         let env = Env {
             context: &Default::default(),
             variable_names: &ast.variable_names,
             local_variable_types: &local_variable_types,
             global_variable_types: &global_variable_types,
             constructor_names: &ast.constructor_names,
-            catch_label: 0,
-            next_label: &next_label,
         };
         let mut mutted_types = Collector::default();
         let intrinsic_variables = ast
@@ -162,7 +158,7 @@ impl Display for Codegen {
             {1}{2}{3}",
             unit_t,
             r#"
-            |static int panic(char* msg){
+            |__attribute__ ((__noreturn__)) static int panic(char* msg){
             |    fprintf(stderr, "error: %s\n", msg);
             |    exit(1);
             |}
@@ -191,7 +187,7 @@ impl Display for Codegen {
                     env.global_variable_types[&d.decl_id],
                     d.decl_id,
                     convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
-                    Dis(&TerminalBlock(&d.value, d.ret), env)
+                    Dis(&d.value, env)
                 ))),
         )?;
         write_fns(f, &ast.functions, &c_type_env, &env, true);
@@ -301,7 +297,6 @@ fn write_fns(
         s,
         "{}",
         functions.iter().format_with("", |function, f| {
-            let next_label = RefCell::new(1);
             let env = Env {
                 context: &function
                     .context
@@ -313,8 +308,6 @@ fn write_fns(
                 local_variable_types: env.local_variable_types,
                 global_variable_types: env.global_variable_types,
                 constructor_names: env.constructor_names,
-                catch_label: 0,
-                next_label: &next_label,
             };
             let (t, ct) = env.local_variable_types.get_type(function.parameter);
             f(&format_args!(
@@ -335,10 +328,7 @@ fn write_fns(
                 )
             ))?;
             if write_body {
-                f(&format_args!(
-                    "{};",
-                    Dis(&TerminalBlock(&function.body, function.ret), env)
-                ))
+                f(&format_args!("{};", Dis(&function.body, env)))
             } else {
                 f(&";")
             }
@@ -354,8 +344,6 @@ struct Env<'a> {
     local_variable_types: &'a LocalVariableCollector<(&'a Type, CType)>,
     global_variable_types: &'a FxHashMap<GlobalVariableId, CType>,
     constructor_names: &'a ConstructorNames,
-    catch_label: u32,
-    next_label: &'a RefCell<u32>,
 }
 
 impl Env<'_> {
@@ -367,17 +355,12 @@ impl Env<'_> {
     }
 }
 
-fn collect_local_variables_block(b: &Block, vs: &mut FxHashSet<LocalVariable>) {
-    for i in &b.instructions {
-        match i {
-            Instruction::Assign(d, _) => {
+fn collect_local_variables_block(b: &FunctionBody, vs: &mut FxHashSet<LocalVariable>) {
+    for bb in &b.basic_blocks {
+        for b in &bb.instructions {
+            if let Instruction::Assign(d, _) = b {
                 vs.insert(*d);
             }
-            Instruction::TryCatch(a, b) => {
-                collect_local_variables_block(a, vs);
-                collect_local_variables_block(b, vs);
-            }
-            _ => (),
         }
     }
 }
@@ -394,48 +377,41 @@ trait DisplayWithEnv {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
 }
 
-struct TerminalBlock<'a>(&'a Block, VariableId);
-
-impl DisplayWithEnv for TerminalBlock<'_> {
+impl DisplayWithEnv for FunctionBody {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut vs = FxHashSet::default();
-        if let VariableId::Local(l) = self.1 {
-            vs.insert(l);
+        collect_local_variables_block(self, &mut vs);
+        write!(
+            f,
+            "{{{}",
+            vs.iter().format_with("", |v, f| {
+                let (t, ct) = env.local_variable_types.get_type(*v);
+                f(&format_args!(
+                    "{} /*{}*/ {};",
+                    ct,
+                    ast_step2::DisplayTypeWithEnvStruct(*t, env.constructor_names),
+                    Dis(&VariableId::Local(*v), env),
+                ))
+            })
+        )?;
+        for (i, bb) in self.basic_blocks.iter().enumerate() {
+            write!(f, "label_{i}:")?;
+            for b in &bb.instructions {
+                b.fmt_with_env(env, f)?;
+            }
+            match &bb.end_instruction {
+                EndInstruction::Ret(ret) => {
+                    write!(f, "return {};", Dis(ret, env))?;
+                }
+                EndInstruction::Goto { label } => {
+                    write!(f, "goto label_{label};")?;
+                }
+                EndInstruction::Panic { msg } => {
+                    write!(f, "panic({msg:?});")?;
+                }
+            }
         }
-        collect_local_variables_block(self.0, &mut vs);
-        if vs.is_empty() {
-            write!(
-                f,
-                "{{{}return {};label_0:panic(\"pattern is not exhaustive\");}}",
-                Dis(self.0, env),
-                Dis(&self.1, env)
-            )
-        } else {
-            write!(
-                f,
-                "{{{}{}return {};label_0:panic(\"pattern is not exhaustive\");}}",
-                vs.iter().format_with("", |v, f| {
-                    let (t, ct) = env.local_variable_types.get_type(*v);
-                    f(&format_args!(
-                        "{} /*{}*/ {};",
-                        ct,
-                        ast_step2::DisplayTypeWithEnvStruct(*t, env.constructor_names),
-                        Dis(&VariableId::Local(*v), env),
-                    ))
-                }),
-                Dis(self.0, env),
-                Dis(&self.1, env)
-            )
-        }
-    }
-}
-
-impl DisplayWithEnv for Block {
-    fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for i in &self.instructions {
-            i.fmt_with_env(env, f)?;
-        }
-        Ok(())
+        write!(f, "}}")
     }
 }
 
@@ -451,37 +427,25 @@ impl DisplayWithEnv for Instruction {
                     Dis(&(*d, e, t), env)
                 )
             }
-            Instruction::Test(Tester::Tag { tag }, e) => {
+            Instruction::Test {
+                tester: Tester::Tag { tag },
+                operand: e,
+                catch_label,
+            } => {
                 write!(
                     f,
                     "if({}.tag!={})goto label_{};",
                     Dis(e, env),
                     tag,
-                    env.catch_label
+                    catch_label
                 )
             }
-            Instruction::Test(Tester::I64 { value }, e) => {
-                write!(
-                    f,
-                    "if({}!={value})goto label_{};",
-                    Dis(e, env),
-                    env.catch_label
-                )
-            }
-            Instruction::FailTest => {
-                write!(f, "goto label_{};", env.catch_label)
-            }
-            Instruction::Panic { msg } => {
-                write!(f, "panic({msg:?});")
-            }
-            Instruction::TryCatch(a, b) => {
-                let catch_label = env.next_label.replace_with(|l| *l + 1);
-                write!(
-                    f,
-                    "{}goto label_skip_{catch_label};label_{catch_label}:{}label_skip_{catch_label}:",
-                    Dis(a, Env { catch_label, ..env }),
-                    Dis(b, env)
-                )
+            Instruction::Test {
+                tester: Tester::I64 { value },
+                operand: e,
+                catch_label,
+            } => {
+                write!(f, "if({}!={value})goto label_{};", Dis(e, env), catch_label)
             }
         }
     }
