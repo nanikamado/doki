@@ -151,3 +151,8 @@ fn diverging_struct() {
 fn memcpy() {
     positive_test_with_stdin("memcpy.doki", "", "Hello, world.\n");
 }
+
+#[test]
+fn oo() {
+    positive_test_with_stdin("oo.doki", "1\n10\n100", "> > > 111\n");
+}
