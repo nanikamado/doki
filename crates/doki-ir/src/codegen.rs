@@ -35,7 +35,6 @@ impl Display for Codegen {
             .map(|d| (d.decl_id, c_type_env.c_type(&d.t, None)))
             .collect();
         let env = Env {
-            context: &Default::default(),
             variable_names: &ast.variable_names,
             local_variable_types: &local_variable_types,
             global_variable_types: &global_variable_types,
@@ -183,11 +182,18 @@ impl Display for Codegen {
             ast.variable_decls
                 .iter()
                 .format_with("", |d, f| f(&format_args!(
-                    "static {} init_g_{}_{}(){}",
+                    "static {} init_g_{}_{}(){{{}}}",
                     env.global_variable_types[&d.decl_id],
                     d.decl_id,
                     convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
-                    Dis(&d.value, env)
+                    Dis(
+                        &FunctionBodyWithCtx {
+                            f: &d.value,
+                            ctx: &[],
+                            parameter: None
+                        },
+                        env
+                    )
                 ))),
         )?;
         write_fns(f, &ast.functions, &c_type_env, &env, true);
@@ -298,12 +304,6 @@ fn write_fns(
         "{}",
         functions.iter().format_with("", |function, f| {
             let env = Env {
-                context: &function
-                    .context
-                    .iter()
-                    .enumerate()
-                    .map(|(i, d)| (*d, i))
-                    .collect(),
                 variable_names: env.variable_names,
                 local_variable_types: env.local_variable_types,
                 global_variable_types: env.global_variable_types,
@@ -328,10 +328,16 @@ fn write_fns(
                 )
             ))?;
             if write_body {
-                f(&format_args!("{};", Dis(&function.body, env)))
-            } else {
-                f(&";")
+                f(&Dis(
+                    &FunctionBodyWithCtx {
+                        f: &function.body,
+                        ctx: &function.context,
+                        parameter: Some(function.parameter),
+                    },
+                    env,
+                ))?
             }
+            f(&";")
         })
     )
     .unwrap()
@@ -339,7 +345,6 @@ fn write_fns(
 
 #[derive(Debug, Clone, Copy)]
 struct Env<'a> {
-    context: &'a FxHashMap<LocalVariable, usize>,
     variable_names: &'a FxHashMap<VariableId, String>,
     local_variable_types: &'a LocalVariableCollector<(&'a Type, CType)>,
     global_variable_types: &'a FxHashMap<GlobalVariableId, CType>,
@@ -377,13 +382,25 @@ trait DisplayWithEnv {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
 }
 
-impl DisplayWithEnv for FunctionBody {
+struct FunctionBodyWithCtx<'a> {
+    f: &'a FunctionBody,
+    ctx: &'a [LocalVariable],
+    parameter: Option<LocalVariable>,
+}
+
+impl DisplayWithEnv for FunctionBodyWithCtx<'_> {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut vs = FxHashSet::default();
-        collect_local_variables_block(self, &mut vs);
+        collect_local_variables_block(self.f, &mut vs);
+        for c in self.ctx {
+            vs.insert(*c);
+        }
+        if let Some(p) = self.parameter {
+            vs.remove(&p);
+        }
         write!(
             f,
-            "{{{}",
+            "{{{}{}",
             vs.iter().format_with("", |v, f| {
                 let (t, ct) = env.local_variable_types.get_type(*v);
                 f(&format_args!(
@@ -392,9 +409,15 @@ impl DisplayWithEnv for FunctionBody {
                     ast_step2::DisplayTypeWithEnvStruct(*t, env.constructor_names),
                     Dis(&VariableId::Local(*v), env),
                 ))
-            })
+            }),
+            self.ctx.iter().enumerate().format_with("", |(i, v), f| {
+                f(&format_args!(
+                    "{}=ctx._{i};",
+                    Dis(&VariableId::Local(*v), env),
+                ))
+            }),
         )?;
-        for (i, bb) in self.basic_blocks.iter().enumerate() {
+        for (i, bb) in self.f.basic_blocks.iter().enumerate() {
             write!(f, "label_{i}:")?;
             for b in &bb.instructions {
                 b.fmt_with_env(env, f)?;
@@ -424,7 +447,7 @@ impl DisplayWithEnv for Instruction {
                     f,
                     "{}={};",
                     Dis(&VariableId::Local(*d), env),
-                    Dis(&(*d, e, t), env)
+                    Dis(&(e, t), env)
                 )
             }
             Instruction::Test {
@@ -451,9 +474,9 @@ impl DisplayWithEnv for Instruction {
     }
 }
 
-impl DisplayWithEnv for (LocalVariable, &Expr, &CType) {
+impl DisplayWithEnv for (&Expr, &CType) {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (v_for_panic_cast, e, t) = self;
+        let (e, t) = self;
         match e {
             Expr::Lambda {
                 lambda_id: _,
@@ -475,6 +498,7 @@ impl DisplayWithEnv for (LocalVariable, &Expr, &CType) {
                 f: g,
                 a,
                 real_function,
+                tail_call: _,
             } => write!(f, "{real_function}({},{})", Dis(a, env), Dis(g, env)),
             Expr::BasicCall { args, id } => {
                 use crate::ast_step2::BasicFunction::*;
@@ -504,18 +528,11 @@ impl DisplayWithEnv for (LocalVariable, &Expr, &CType) {
                             args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                         )
                     }
-                    FieldAccessor {
-                        constructor: _,
-                        field,
-                    } => {
+                    FieldAccessor { field } => {
                         debug_assert_eq!(args.len(), 1);
                         let ct = env.get_type(args[0]);
                         if let CType::Diverge = ct {
-                            write!(
-                                f,
-                                "(panic(\"unexpected\"),{})",
-                                Dis(&VariableId::Local(*v_for_panic_cast), env)
-                            )
+                            write!(f, "(panic(\"unexpected\"),*({t}*)NULL)",)
                         } else {
                             write!(f, "{}._{field}", Dis(&args[0], env))
                         }
@@ -569,11 +586,7 @@ impl DisplayWithEnv for VariableId {
                 write!(f, "g_{d}_{}", convert_name(&env.variable_names[self]))
             }
             VariableId::Local(d) => {
-                if let Some(d) = env.context.get(d) {
-                    write!(f, "ctx._{d}")
-                } else {
-                    write!(f, "l_{d}")
-                }
+                write!(f, "l_{d}")
             }
         }
     }

@@ -18,6 +18,7 @@ use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariabl
 use crate::ConstructorId;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 use std::fmt::{Debug, Display};
 
 #[derive(Debug)]
@@ -95,6 +96,7 @@ pub enum Expr {
         f: VariableId,
         a: VariableId,
         real_function: FxLambdaId,
+        tail_call: RefCell<bool>,
     },
     BasicCall {
         args: Vec<VariableId>,
@@ -115,16 +117,10 @@ pub enum Expr {
 
 #[derive(Debug, PartialEq, Clone, Copy, Eq)]
 pub enum BasicFunction {
-    Intrinsic {
-        v: IntrinsicVariable,
-        id: usize,
-    },
+    Intrinsic { v: IntrinsicVariable, id: usize },
     Construction(ConstructorId),
     IntrinsicConstruction(IntrinsicConstructor),
-    FieldAccessor {
-        constructor: ConstructorId,
-        field: usize,
-    },
+    FieldAccessor { field: usize },
 }
 
 #[derive(Debug, PartialEq, Hash, Clone, Copy, Eq)]
@@ -401,21 +397,21 @@ impl Env {
             instructions: Vec::new(),
             current_basic_block: Some(0),
         };
-        let (end, ret) =
-            if let Err(end) = self.block(block.clone(), 1, root_t, replace_map, &mut block_env) {
-                let t = self.local_variable_types_old.get(ret);
-                let t = self.map.clone_pointer(t, replace_map);
-                let t = self.get_type(t);
-                let ret = self.new_variable(t);
-                (end, VariableId::Local(ret))
-            } else {
-                let ret = self.get_defined_variable_id(
-                    ast_step1::VariableId::Local(ret),
-                    root_t,
-                    replace_map,
-                );
-                (EndInstruction::Ret(ret), ret)
-            };
+        let (end, ret) = if let Err(end) = self.block(block, 1, root_t, replace_map, &mut block_env)
+        {
+            let t = self.local_variable_types_old.get(ret);
+            let t = self.map.clone_pointer(t, replace_map);
+            let t = self.get_type(t);
+            let ret = self.new_variable(t);
+            (end, VariableId::Local(ret))
+        } else {
+            let ret = self.get_defined_variable_id(
+                ast_step1::VariableId::Local(ret),
+                root_t,
+                replace_map,
+            );
+            (EndInstruction::Ret(ret), ret)
+        };
         block_env.end_current_block(end);
         (
             block_env
@@ -711,6 +707,7 @@ impl Env {
                         f,
                         a,
                         real_function: possible_functions[0].1,
+                        tail_call: RefCell::new(false),
                     }
                 } else {
                     let ret_v = self.new_variable(t.clone());
@@ -737,6 +734,7 @@ impl Env {
                                 f: VariableId::Local(new_f),
                                 a,
                                 real_function: id,
+                                tail_call: RefCell::new(false),
                             },
                         ));
                         basic_block_env.end_current_block(EndInstruction::Goto { label: skip });
@@ -801,7 +799,7 @@ impl Env {
                 )?;
                 BasicCall {
                     args: vec![a],
-                    id: BasicFunction::FieldAccessor { constructor, field },
+                    id: BasicFunction::FieldAccessor { field },
                 }
             }
             ast_step1::Expr::BasicCall {

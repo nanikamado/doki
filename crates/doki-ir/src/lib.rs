@@ -4,6 +4,7 @@ mod codegen;
 mod collector;
 mod id_generator;
 pub mod intrinsics;
+mod tail_recursion_elimination;
 
 pub use crate::ast_step1::{
     Block, ConstructorId, ConstructorNames, Env, GlobalVariable, Lambda, LocalVariable, TypeId,
@@ -19,7 +20,8 @@ use std::fmt::Display;
 impl Env {
     pub fn gen_c(self, entry_point: GlobalVariable, minimize_type: bool) -> impl Display {
         let ast = self.build(entry_point);
-        let ast = ast_step2::Ast::from(ast, minimize_type);
+        let mut ast = ast_step2::Ast::from(ast, minimize_type);
+        tail_recursion_elimination::run(&mut ast);
         Codegen(ast)
     }
 

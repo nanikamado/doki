@@ -20,15 +20,15 @@ read_num = a:
             _ => read_num (plus (mul 10 a) (minus c 48)),
         end
 
-data S 1
+data Cons 3
 
 loop = n: k:
     match n with
         0 => Unit,
         _ =>
             let _ = println "#"
-            in loop (minus n 1) (a: k (S a)),
+            in loop (minus n 1) (a: k (Cons "1" 1 a)),
     end
 
 main = _:
-    loop (read_num 0) (_: Unit)
+    loop (read_num 0) (Cons a b _: a)
