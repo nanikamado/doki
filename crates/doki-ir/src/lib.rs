@@ -4,6 +4,7 @@ mod codegen;
 mod collector;
 mod id_generator;
 pub mod intrinsics;
+mod scc;
 mod tail_recursion_elimination;
 
 pub use crate::ast_step1::{
