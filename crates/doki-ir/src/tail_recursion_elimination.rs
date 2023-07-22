@@ -1,7 +1,6 @@
 use crate::ast_step2::{
     Ast, BasicBlock, EndInstruction, Expr, Function, FxLambdaId, Instruction, VariableId,
 };
-use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 
@@ -41,50 +40,51 @@ pub fn run(ast: &mut Ast) {
         tail_call_graph.insert(f.id, fs);
     }
     let mut recursions = FxHashMap::default();
+    let mut inlining_order_rev = Vec::new();
     let mut done = FxHashSet::default();
     for f in &ast.functions {
         collect_recursion(
             f.id,
             &tail_call_graph,
             &mut recursions,
+            &mut inlining_order_rev,
             &mut done,
             List::Nil,
         );
     }
-    let recursions = sort_tail_recursive_fns(recursions);
     let mut functions: FxHashMap<_, _> = ast.functions.iter_mut().map(|f| (f.id, f)).collect();
-    for (id, cycle) in &recursions {
-        let f = functions.remove(id).unwrap();
-        let original_block_len = f.body.basic_blocks.len();
-        let mut added_block_len = 0;
+    for id in inlining_order_rev.into_iter().rev() {
+        let cycle = &recursions[&id];
+        let f = functions.remove(&id).unwrap();
+        let mut free_label = f.body.basic_blocks.len();
         let mut inlining_queue = VecDeque::new();
-        let current_function = FnProperty {
-            id: *id,
+        let mut inlined_fns = FxHashMap::default();
+        let current_function = InlinedFn {
             context: &f.context,
             parameter: f.parameter,
+            label: 0,
         };
+        inlined_fns.insert(id, current_function);
         for bb in &mut f.body.basic_blocks {
             eliminate_from_basic_block(
                 bb,
                 &functions,
-                current_function,
                 cycle,
-                original_block_len,
-                &mut added_block_len,
+                &mut free_label,
                 &mut inlining_queue,
+                &mut inlined_fns,
             );
         }
-        while let Some((offset, inlined_fn)) = inlining_queue.pop_front() {
+        while let Some((inlined_fn, label)) = inlining_queue.pop_front() {
             let blocks = functions[&inlined_fn].body.basic_blocks.iter().map(|bb| {
-                let mut bb = add_offset_to_labels(bb, offset);
+                let mut bb = add_offset_to_labels(bb, label);
                 eliminate_from_basic_block(
                     &mut bb,
                     &functions,
-                    current_function,
                     cycle,
-                    original_block_len,
-                    &mut added_block_len,
+                    &mut free_label,
                     &mut inlining_queue,
+                    &mut inlined_fns,
                 );
                 bb
             });
@@ -94,20 +94,19 @@ pub fn run(ast: &mut Ast) {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct FnProperty<'a> {
-    id: FxLambdaId,
+struct InlinedFn<'a> {
     context: &'a [crate::LocalVariable2],
     parameter: crate::LocalVariable2,
+    label: usize,
 }
 
-fn eliminate_from_basic_block(
+fn eliminate_from_basic_block<'a>(
     bb: &mut BasicBlock,
-    functions: &FxHashMap<FxLambdaId, &mut Function>,
-    current_function: FnProperty,
-    inlining_target: &FxHashSet<FxLambdaId>,
-    original_block_len: usize,
-    added_block_len: &mut usize,
-    inlining_queue: &mut VecDeque<(usize, FxLambdaId)>,
+    functions: &'a FxHashMap<FxLambdaId, &mut Function>,
+    cycle: &FxHashSet<FxLambdaId>,
+    free_label: &mut usize,
+    inlining_queue: &mut VecDeque<(FxLambdaId, usize)>,
+    inlined_fns: &mut FxHashMap<FxLambdaId, InlinedFn<'a>>,
 ) {
     match bb.instructions.last() {
         Some(Instruction::Assign(
@@ -122,9 +121,9 @@ fn eliminate_from_basic_block(
             let ctx = *ctx;
             let a = *a;
             let f = *f;
-            if f == current_function.id {
+            if let Some(&f) = inlined_fns.get(&f) {
                 bb.instructions.pop();
-                for (i, ctx_v) in current_function.context.iter().enumerate() {
+                for (i, ctx_v) in f.context.iter().enumerate() {
                     bb.instructions.push(Instruction::Assign(
                         *ctx_v,
                         Expr::BasicCall {
@@ -133,12 +132,10 @@ fn eliminate_from_basic_block(
                         },
                     ))
                 }
-                bb.instructions.push(Instruction::Assign(
-                    current_function.parameter,
-                    Expr::Ident(a),
-                ));
-                bb.end_instruction = EndInstruction::Goto { label: 0 };
-            } else if inlining_target.contains(&f) {
+                bb.instructions
+                    .push(Instruction::Assign(f.parameter, Expr::Ident(a)));
+                bb.end_instruction = EndInstruction::Goto { label: f.label };
+            } else if cycle.contains(&f) {
                 bb.instructions.pop();
                 let called_fn = &functions[&f];
                 for (i, ctx_v) in called_fn.context.iter().enumerate() {
@@ -152,11 +149,17 @@ fn eliminate_from_basic_block(
                 }
                 bb.instructions
                     .push(Instruction::Assign(called_fn.parameter, Expr::Ident(a)));
-                bb.end_instruction = EndInstruction::Goto {
-                    label: original_block_len + *added_block_len,
-                };
-                *added_block_len += called_fn.body.basic_blocks.len();
-                inlining_queue.push_back((*added_block_len, f));
+                bb.end_instruction = EndInstruction::Goto { label: *free_label };
+                inlining_queue.push_back((f, *free_label));
+                inlined_fns.insert(
+                    f,
+                    InlinedFn {
+                        context: &called_fn.context,
+                        parameter: called_fn.parameter,
+                        label: *free_label,
+                    },
+                );
+                *free_label += called_fn.body.basic_blocks.len();
             }
         }
         _ => (),
@@ -220,6 +223,7 @@ fn collect_recursion(
     f: FxLambdaId,
     tail_call_graph: &FxHashMap<FxLambdaId, FxHashSet<FxLambdaId>>,
     recursions: &mut FxHashMap<FxLambdaId, FxHashSet<FxLambdaId>>,
+    inlining_order: &mut Vec<FxLambdaId>,
     done: &mut FxHashSet<FxLambdaId>,
     trace: List,
 ) {
@@ -229,31 +233,11 @@ fn collect_recursion(
     } else {
         let trace = List::Cons(f, &trace);
         for f in &tail_call_graph[&f] {
-            collect_recursion(*f, tail_call_graph, recursions, done, trace)
+            collect_recursion(*f, tail_call_graph, recursions, inlining_order, done, trace)
+        }
+        if recursions.contains_key(&f) {
+            inlining_order.push(f);
         }
         done.insert(f);
-    }
-}
-
-fn sort_tail_recursive_fns(
-    mut recursions: FxHashMap<FxLambdaId, FxHashSet<FxLambdaId>>,
-) -> Vec<(FxLambdaId, FxHashSet<FxLambdaId>)> {
-    let mut sorted = Vec::with_capacity(recursions.len());
-    for f in recursions.keys().copied().collect_vec() {
-        sort_tail_recursive_fns_aux(f, &mut sorted, &mut recursions);
-    }
-    sorted
-}
-
-fn sort_tail_recursive_fns_aux(
-    f: FxLambdaId,
-    sorted: &mut Vec<(FxLambdaId, FxHashSet<FxLambdaId>)>,
-    recursions: &mut FxHashMap<FxLambdaId, FxHashSet<FxLambdaId>>,
-) {
-    if let Some(c) = recursions.remove(&f) {
-        for f in &c {
-            sort_tail_recursive_fns_aux(*f, sorted, recursions);
-        }
-        sorted.push((f, c));
     }
 }

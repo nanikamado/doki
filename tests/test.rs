@@ -156,3 +156,13 @@ fn memcpy() {
 fn oo() {
     positive_test_with_stdin("oo.doki", "1\n10\n100", "> > > 111\n");
 }
+
+#[test]
+fn mod2() {
+    positive_test_with_stdin("mod2.doki", "111\n111\n", "> 1\n> 1\n");
+}
+
+#[test]
+fn mod3() {
+    positive_test_with_stdin("mod3.doki", "112\n112\n112", "> 1\n> 1\n> 1\n");
+}
