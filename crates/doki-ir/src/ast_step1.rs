@@ -107,7 +107,7 @@ struct TypeInfEnv {
     global_variable_types: FxHashMap<GlobalVariable, GlobalVariableType>,
     local_variable_types: LocalVariableTypes,
     global_variables_before_type_inf: FxHashMap<GlobalVariable, VariableDecl>,
-    global_variables_done: Vec<VariableDecl>,
+    global_variables: Vec<VariableDecl>,
     trace: FxHashMap<GlobalVariable, TypePointer>,
     field_len: Vec<usize>,
     used_local_variables: FxHashSet<LocalVariable>,
@@ -171,7 +171,7 @@ impl TypeInfEnv {
                     unfixed_unreplicatable_pointers: unfixed_unreplicatable_pointers.clone(),
                 },
             );
-            self.global_variables_done.push(d);
+            self.global_variables.push(d);
             (
                 root_t,
                 IsRecursive::False {
@@ -412,7 +412,7 @@ pub struct Env {
     local_variable_types: LocalVariableTypes,
     lambda_count: u32,
     global_variable_count: usize,
-    global_variables_done: FxHashMap<GlobalVariable, VariableDecl>,
+    global_variables: FxHashMap<GlobalVariable, VariableDecl>,
     field_len: Vec<usize>,
     constructor_names: ConstructorNames,
 }
@@ -568,7 +568,7 @@ impl Env {
     }
 
     pub fn set_global_variable(&mut self, d: VariableDecl) {
-        self.global_variables_done.insert(d.decl_id, d);
+        self.global_variables.insert(d.decl_id, d);
     }
 
     pub fn new_constructor(&mut self, field_len: usize, name: String) -> ConstructorId {
@@ -582,9 +582,9 @@ impl Env {
             type_map: self.type_map,
             global_variable_types: Default::default(),
             local_variable_types: self.local_variable_types,
-            global_variables_before_type_inf: self.global_variables_done,
+            global_variables_before_type_inf: self.global_variables,
             trace: Default::default(),
-            global_variables_done: Default::default(),
+            global_variables: Default::default(),
             field_len: self.field_len,
             used_local_variables: Default::default(),
             defined_local_variables: Default::default(),
@@ -601,7 +601,7 @@ impl Env {
         let type_map = env_next.type_map;
         let local_variable_types_old = env_next.local_variable_types;
         Ast {
-            variable_decls: env_next.global_variables_done,
+            variable_decls: env_next.global_variables,
             entry_point,
             type_of_entry_point,
             local_variable_types: local_variable_types_old,

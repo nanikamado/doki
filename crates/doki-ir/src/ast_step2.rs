@@ -93,9 +93,9 @@ pub enum Expr {
     Str(String),
     Ident(VariableId),
     Call {
-        f: VariableId,
+        ctx: VariableId,
         a: VariableId,
-        real_function: FxLambdaId,
+        f: FxLambdaId,
         tail_call: RefCell<bool>,
     },
     BasicCall {
@@ -704,9 +704,9 @@ impl Env {
                 }
                 if possible_functions.len() == 1 && possible_functions[0].0 == 0 {
                     Call {
-                        f,
+                        ctx: f,
                         a,
-                        real_function: possible_functions[0].1,
+                        f: possible_functions[0].1,
                         tail_call: RefCell::new(false),
                     }
                 } else {
@@ -731,9 +731,9 @@ impl Env {
                         basic_block_env.instructions.push(Instruction::Assign(
                             ret_v,
                             Expr::Call {
-                                f: VariableId::Local(new_f),
+                                ctx: VariableId::Local(new_f),
                                 a,
-                                real_function: id,
+                                f: id,
                                 tail_call: RefCell::new(false),
                             },
                         ));

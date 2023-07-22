@@ -475,14 +475,14 @@ impl DisplayWithEnv for Instruction {
 }
 
 impl DisplayWithEnv for (&Expr, &CType) {
-    fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt_with_env(&self, env: Env<'_>, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (e, t) = self;
         match e {
             Expr::Lambda {
                 lambda_id: _,
                 context,
             } => write!(
-                f,
+                fmt,
                 r#"({}){{{}}}"#,
                 t,
                 context.iter().format_with(",", |c, f| f(&format_args!(
@@ -490,30 +490,30 @@ impl DisplayWithEnv for (&Expr, &CType) {
                     Dis(&VariableId::Local(*c), env)
                 )))
             ),
-            Expr::I64(a) => write!(f, "{a}"),
-            Expr::U8(a) => write!(f, "{a}"),
-            Expr::Str(a) => write!(f, "{a:?}"),
-            Expr::Ident(i) => i.fmt_with_env(env, f),
+            Expr::I64(a) => write!(fmt, "{a}"),
+            Expr::U8(a) => write!(fmt, "{a}"),
+            Expr::Str(a) => write!(fmt, "{a:?}"),
+            Expr::Ident(i) => i.fmt_with_env(env, fmt),
             Expr::Call {
-                f: g,
+                ctx: g,
                 a,
-                real_function,
+                f,
                 tail_call: _,
-            } => write!(f, "{real_function}({},{})", Dis(a, env), Dis(g, env)),
+            } => write!(fmt, "{f}({},{})", Dis(a, env), Dis(g, env)),
             Expr::BasicCall { args, id } => {
                 use crate::ast_step2::BasicFunction::*;
                 match id {
                     Intrinsic { v, id } => write!(
-                        f,
+                        fmt,
                         "intrinsic_{v}_{id}({})",
                         args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                     ),
                     Construction(id) => {
                         if let CType::Diverge = t {
-                            write!(f, "({}){{}}", CType::Diverge)
+                            write!(fmt, "({}){{}}", CType::Diverge)
                         } else {
                             write!(
-                                f,
+                                fmt,
                                 "/*{}*/({}){{{}}}",
                                 Dis(id, env),
                                 t,
@@ -523,7 +523,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
                     }
                     IntrinsicConstruction(id) => {
                         write!(
-                            f,
+                            fmt,
                             "/*{id}*/({t}){{{}}}",
                             args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                         )
@@ -532,9 +532,9 @@ impl DisplayWithEnv for (&Expr, &CType) {
                         debug_assert_eq!(args.len(), 1);
                         let ct = env.get_type(args[0]);
                         if let CType::Diverge = ct {
-                            write!(f, "(panic(\"unexpected\"),*({t}*)NULL)",)
+                            write!(fmt, "(panic(\"unexpected\"),*({t}*)NULL)",)
                         } else {
-                            write!(f, "{}._{field}", Dis(&args[0], env))
+                            write!(fmt, "{}._{field}", Dis(&args[0], env))
                         }
                     }
                 }
@@ -545,7 +545,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 } else {
                     panic!()
                 };
-                write!(f, "({t}){{{tag},(union u{i}){}}}", Dis(value, env))
+                write!(fmt, "({t}){{{tag},(union u{i}){}}}", Dis(value, env))
             }
             Expr::Downcast {
                 tag,
@@ -553,7 +553,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 check: true,
             } => {
                 write!(
-                    f,
+                    fmt,
                     "({0}.tag=={tag}||panic(\"failed to downcast\"),{0}.value._{tag})",
                     Dis(value, env)
                 )
@@ -563,7 +563,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 value,
                 check: false,
             } => {
-                write!(f, "{0}.value._{tag}", Dis(value, env))
+                write!(fmt, "{0}.value._{tag}", Dis(value, env))
             }
             Expr::Ref(v) => {
                 let t = if let CType::Ref(t) = t { t } else { panic!() };
@@ -572,9 +572,9 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 } else {
                     panic!()
                 };
-                write!(f, "ref_t{i}({})", Dis(v, env))
+                write!(fmt, "ref_t{i}({})", Dis(v, env))
             }
-            Expr::Deref(v) => write!(f, "*{}", Dis(v, env)),
+            Expr::Deref(v) => write!(fmt, "*{}", Dis(v, env)),
         }
     }
 }

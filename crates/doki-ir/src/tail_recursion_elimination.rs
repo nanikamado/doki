@@ -14,9 +14,7 @@ pub fn run(ast: &mut Ast) {
             if let Some(Instruction::Assign(
                 v,
                 Expr::Call {
-                    real_function,
-                    tail_call,
-                    ..
+                    f: f_id, tail_call, ..
                 },
             )) = bb.instructions.last()
             {
@@ -36,7 +34,7 @@ pub fn run(ast: &mut Ast) {
                 };
                 if tc {
                     tail_call.replace(true);
-                    fs.insert(*real_function);
+                    fs.insert(*f_id);
                 }
             }
         }
@@ -115,22 +113,22 @@ fn eliminate_from_basic_block(
         Some(Instruction::Assign(
             _,
             Expr::Call {
-                real_function,
+                f,
                 tail_call,
-                f: f_ctx,
+                ctx,
                 a,
             },
         )) if *tail_call.borrow() => {
-            let f_ctx = *f_ctx;
+            let ctx = *ctx;
             let a = *a;
-            let real_function = *real_function;
-            if real_function == current_function.id {
+            let f = *f;
+            if f == current_function.id {
                 bb.instructions.pop();
-                for (i, ctx) in current_function.context.iter().enumerate() {
+                for (i, ctx_v) in current_function.context.iter().enumerate() {
                     bb.instructions.push(Instruction::Assign(
-                        *ctx,
+                        *ctx_v,
                         Expr::BasicCall {
-                            args: vec![f_ctx],
+                            args: vec![ctx],
                             id: crate::ast_step2::BasicFunction::FieldAccessor { field: i },
                         },
                     ))
@@ -140,14 +138,14 @@ fn eliminate_from_basic_block(
                     Expr::Ident(a),
                 ));
                 bb.end_instruction = EndInstruction::Goto { label: 0 };
-            } else if inlining_target.contains(&real_function) {
+            } else if inlining_target.contains(&f) {
                 bb.instructions.pop();
-                let called_fn = &functions[&real_function];
-                for (i, ctx) in called_fn.context.iter().enumerate() {
+                let called_fn = &functions[&f];
+                for (i, ctx_v) in called_fn.context.iter().enumerate() {
                     bb.instructions.push(Instruction::Assign(
-                        *ctx,
+                        *ctx_v,
                         Expr::BasicCall {
-                            args: vec![f_ctx],
+                            args: vec![ctx],
                             id: crate::ast_step2::BasicFunction::FieldAccessor { field: i },
                         },
                     ))
@@ -158,7 +156,7 @@ fn eliminate_from_basic_block(
                     label: original_block_len + *added_block_len,
                 };
                 *added_block_len += called_fn.body.basic_blocks.len();
-                inlining_queue.push_back((*added_block_len, real_function));
+                inlining_queue.push_back((*added_block_len, f));
             }
         }
         _ => (),
