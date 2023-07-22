@@ -22,8 +22,8 @@ use std::cell::RefCell;
 use std::fmt::{Debug, Display};
 
 #[derive(Debug)]
-pub struct Ast {
-    pub variable_decls: Vec<VariableDecl>,
+pub struct Ast<'a> {
+    pub variable_decls: Vec<VariableDecl<'a>>,
     pub entry_point: FxLambdaId,
     pub variable_names: FxHashMap<VariableId, String>,
     pub functions: Vec<Function>,
@@ -39,8 +39,8 @@ pub struct Ast {
 pub struct GlobalVariableId(usize);
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct VariableDecl {
-    pub name: String,
+pub struct VariableDecl<'a> {
+    pub name: &'a str,
     pub value: FunctionBody,
     pub decl_id: GlobalVariableId,
     pub original_decl_id: GlobalVariable,
@@ -62,7 +62,7 @@ pub struct BasicBlock {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Tester {
     Tag { tag: u32 },
-    I64 { value: String },
+    I64 { value: i64 },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -138,8 +138,8 @@ pub struct Function {
     pub ret: VariableId,
 }
 
-impl Ast {
-    pub fn from(ast: ast_step1::Ast, minimize_type: bool) -> Self {
+impl<'a> Ast<'a> {
+    pub fn from(ast: ast_step1::Ast<'a>, minimize_type: bool) -> Self {
         let mut memo = Env::new(
             ast.variable_decls,
             ast.local_variable_types,
@@ -194,10 +194,10 @@ struct FnId {
     lambda_id: LambdaId<TypeForHash>,
 }
 
-pub struct Env {
-    variable_decls: FxHashMap<GlobalVariable, ast_step1::VariableDecl>,
+pub struct Env<'a> {
+    variable_decls: FxHashMap<GlobalVariable, ast_step1::VariableDecl<'a>>,
     monomorphized_variable_map: FxHashMap<Root, GlobalVariableId>,
-    monomorphized_variables: Vec<VariableDecl>,
+    monomorphized_variables: Vec<VariableDecl<'a>>,
     map: PaddedTypeMap,
     functions: FxHashMap<LambdaId<TypeUnique>, FunctionEntry>,
     type_memo: TypeMemo,
@@ -250,9 +250,9 @@ impl BasicBlockEnv {
     }
 }
 
-impl Env {
+impl<'a> Env<'a> {
     pub fn new(
-        variable_decls: Vec<ast_step1::VariableDecl>,
+        variable_decls: Vec<ast_step1::VariableDecl<'a>>,
         local_variable_types: LocalVariableTypes,
         map: PaddedTypeMap,
         constructor_names: ConstructorNames,

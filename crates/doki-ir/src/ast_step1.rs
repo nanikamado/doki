@@ -10,8 +10,8 @@ use std::fmt::{Debug, Display};
 use std::mem;
 
 #[derive(Debug)]
-pub struct Ast {
-    pub variable_decls: Vec<VariableDecl>,
+pub struct Ast<'a> {
+    pub variable_decls: Vec<VariableDecl<'a>>,
     pub entry_point: GlobalVariable,
     pub type_of_entry_point: TypePointer,
     pub local_variable_types: LocalVariableTypes,
@@ -41,11 +41,11 @@ pub struct LambdaId<T> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct VariableDecl {
+pub struct VariableDecl<'a> {
     pub value: Block,
     pub ret: LocalVariable,
     pub decl_id: GlobalVariable,
-    pub name: String,
+    pub name: &'a str,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
@@ -56,7 +56,7 @@ pub struct Block {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Tester {
     Constructor { id: TypeId },
-    I64 { value: String },
+    I64 { value: i64 },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -102,12 +102,12 @@ pub enum BasicFunction {
     },
 }
 
-struct TypeInfEnv {
+struct TypeInfEnv<'a> {
     type_map: PaddedTypeMap,
     global_variable_types: FxHashMap<GlobalVariable, GlobalVariableType>,
     local_variable_types: LocalVariableTypes,
-    global_variables_before_type_inf: FxHashMap<GlobalVariable, VariableDecl>,
-    global_variables: Vec<VariableDecl>,
+    global_variables_before_type_inf: FxHashMap<GlobalVariable, VariableDecl<'a>>,
+    global_variables: Vec<VariableDecl<'a>>,
     trace: FxHashMap<GlobalVariable, TypePointer>,
     field_len: Vec<usize>,
     used_local_variables: FxHashSet<LocalVariable>,
@@ -131,7 +131,7 @@ enum IsRecursive {
     },
 }
 
-impl TypeInfEnv {
+impl TypeInfEnv<'_> {
     fn get_type_global(&mut self, decl_id: GlobalVariable) -> (TypePointer, IsRecursive) {
         if let Some(p) = self.trace.get(&decl_id) {
             (*p, IsRecursive::True)
@@ -407,17 +407,17 @@ impl ConstructorNames {
 }
 
 #[derive(Debug, Default)]
-pub struct Env {
+pub struct Env<'a> {
     type_map: PaddedTypeMap,
     local_variable_types: LocalVariableTypes,
     lambda_count: u32,
     global_variable_count: usize,
-    global_variables: FxHashMap<GlobalVariable, VariableDecl>,
+    global_variables: FxHashMap<GlobalVariable, VariableDecl<'a>>,
     field_len: Vec<usize>,
     constructor_names: ConstructorNames,
 }
 
-impl Env {
+impl<'a> Env<'a> {
     pub fn lambda<'b>(&mut self, block: &'b mut Block, assign_v: LocalVariable) -> Lambda<'b> {
         let parameter = self.new_local_variable();
         let lambda_id = LambdaId {
@@ -567,7 +567,7 @@ impl Env {
         Block::default()
     }
 
-    pub fn set_global_variable(&mut self, d: VariableDecl) {
+    pub fn set_global_variable(&mut self, d: VariableDecl<'a>) {
         self.global_variables.insert(d.decl_id, d);
     }
 
@@ -577,7 +577,7 @@ impl Env {
         ConstructorId(self.field_len.len() - 1)
     }
 
-    pub(crate) fn build(self, entry_point: GlobalVariable) -> Ast {
+    pub(crate) fn build(self, entry_point: GlobalVariable) -> Ast<'a> {
         let mut env_next = TypeInfEnv {
             type_map: self.type_map,
             global_variable_types: Default::default(),
@@ -620,7 +620,7 @@ impl Block {
         self.instructions.push(Instruction::Assign(v, e));
     }
 
-    pub fn test_number(&mut self, v: LocalVariable, value: String) {
+    pub fn test_number(&mut self, v: LocalVariable, value: i64) {
         self.instructions
             .push(Instruction::Test(Tester::I64 { value }, v));
     }

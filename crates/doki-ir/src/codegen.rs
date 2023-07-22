@@ -14,9 +14,9 @@ use std::fmt::Display;
 use stripmargin::StripMargin;
 use unic_ucd_category::GeneralCategory;
 
-pub struct Codegen(pub Ast);
+pub struct Codegen<'a>(pub Ast<'a>);
 
-impl Display for Codegen {
+impl Display for Codegen<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let ast = &self.0;
         let mut c_type_env = c_type::Env {

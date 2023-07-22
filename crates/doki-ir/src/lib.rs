@@ -17,8 +17,8 @@ pub use crate::ast_step2::{
 use codegen::Codegen;
 use std::fmt::Display;
 
-impl Env {
-    pub fn gen_c(self, entry_point: GlobalVariable, minimize_type: bool) -> impl Display {
+impl<'a> Env<'a> {
+    pub fn gen_c(self, entry_point: GlobalVariable, minimize_type: bool) -> impl Display + 'a {
         let ast = self.build(entry_point);
         let mut ast = ast_step2::Ast::from(ast, minimize_type);
         tail_recursion_elimination::run(&mut ast);
@@ -29,7 +29,7 @@ impl Env {
         self,
         entry_point: GlobalVariable,
         minimize_type: bool,
-    ) -> ast_step2::Ast {
+    ) -> ast_step2::Ast<'a> {
         let ast = self.build(entry_point);
         ast_step2::Ast::from(ast, minimize_type)
     }

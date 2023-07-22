@@ -14,7 +14,7 @@ struct Env<'a> {
     local_variable_map: FxHashMap<&'a str, LocalVariable>,
     global_variable_map: FxHashMap<&'a str, GlobalVariable>,
     data_decl_map: FxHashMap<&'a str, doki_ir::ConstructorId>,
-    build_env: doki_ir::Env,
+    build_env: doki_ir::Env<'a>,
     local_variable_span_map: BTreeMap<Span, LocalVariable>,
     global_variable_span_map: BTreeMap<Span, GlobalVariable>,
     str_constructor_id: Option<ConstructorId>,
@@ -48,7 +48,7 @@ fn build(ast: Ast) -> Env {
             value: block,
             ret: ret_global,
             decl_id,
-            name: d.name.to_string(),
+            name: d.name,
         };
         env.build_env.set_global_variable(d);
     }
@@ -72,7 +72,7 @@ fn build(ast: Ast) -> Env {
             value: block,
             ret: ret_global,
             decl_id,
-            name: d.to_str().to_string(),
+            name: d.to_str(),
         };
         env.build_env.set_global_variable(d);
     }
@@ -89,14 +89,14 @@ fn build(ast: Ast) -> Env {
             value: block,
             ret,
             decl_id: env.global_variable_map[d.name],
-            name: d.name.to_string(),
+            name: d.name,
         };
         env.build_env.set_global_variable(d);
     }
     env
 }
 
-pub fn gen_c(ast: Ast, minimize_type: bool) -> impl Display {
+pub fn gen_c(ast: Ast<'_>, minimize_type: bool) -> impl Display + '_ {
     let env = build(ast);
     let entry_point = env.global_variable_map["main"];
     env.build_env.gen_c(entry_point, minimize_type)
@@ -364,7 +364,7 @@ impl<'a> Env<'a> {
                 block.append(a_block.try_catch(b_block));
             }
             Pattern::Num(a) => {
-                block.test_number(operand, a.to_string());
+                block.test_number(operand, a.parse().unwrap());
             }
         }
     }
