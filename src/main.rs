@@ -5,10 +5,8 @@
 
 mod run_c;
 
-use clap::builder::PossibleValue;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use compiler::gen_c;
-use run_c::COptLevel;
 use std::fmt::{Debug, Display};
 use std::fs;
 use std::io::stderr;
@@ -30,25 +28,14 @@ enum Commands {
     #[command(alias("r"))]
     Run {
         file: String,
-        #[arg(value_enum, long, short('O'), default_value_t = COptLevel::O1)]
-        opt_level: COptLevel,
+        #[arg(long, short('C'))]
+        clang_options: Option<String>,
     },
     /// Output generated c code
     #[command(alias("c"))]
     EmitC { file: String },
     /// Start the language server
     LanguageServer,
-}
-
-impl ValueEnum for COptLevel {
-    fn value_variants<'a>() -> &'a [Self] {
-        use COptLevel::*;
-        &[O0, O1, O2, O3, Ofast, Os, Oz]
-    }
-
-    fn to_possible_value<'a>(&self) -> Option<PossibleValue> {
-        Some(PossibleValue::new(self.as_str()))
-    }
 }
 
 fn compile<'a>(
@@ -72,12 +59,17 @@ fn main() -> ExitCode {
     };
     let args = Args::parse();
     match args.command {
-        Commands::Run { file, opt_level } => {
+        Commands::Run {
+            file,
+            clang_options,
+        } => {
             let src = fs::read_to_string(&file).unwrap();
             let r = compile(&src, &file, args.no_type_minimization);
             match r {
                 Ok(c) => {
-                    if let Ok(exit_status) = run_c::run(c.to_string(), opt_level) {
+                    if let Ok(exit_status) =
+                        run_c::run(c.to_string(), clang_options.as_deref().unwrap_or(""))
+                    {
                         ExitCode::from(exit_status.code().unwrap() as u8)
                     } else {
                         ExitCode::FAILURE
