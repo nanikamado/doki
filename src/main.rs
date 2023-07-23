@@ -5,8 +5,11 @@
 
 mod run_c;
 
-use clap::Parser;
+use clap::builder::PossibleValue;
+use clap::{Parser, Subcommand, ValueEnum};
 use compiler::gen_c;
+use run_c::COptLevel;
+use std::fmt::{Debug, Display};
 use std::fs;
 use std::io::stderr;
 use std::process::ExitCode;
@@ -15,17 +18,51 @@ use std::process::ExitCode;
 #[command(version, about, long_about = None)]
 #[clap(arg_required_else_help(true))]
 struct Args {
-    #[arg(required(true), conflicts_with("language_server"))]
-    file: Option<String>,
-    /// Output generated c code
-    #[arg(short('c'), long, conflicts_with("language_server"))]
-    emit_c: bool,
     /// Do not minimize types
     #[arg(long)]
     no_type_minimization: bool,
-    /// start language server
-    #[arg(short('l'), long)]
-    language_server: bool,
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    #[command(alias("r"))]
+    Run {
+        file: String,
+        #[arg(value_enum, long, short('O'), default_value_t = COptLevel::O1)]
+        opt_level: COptLevel,
+    },
+    /// Output generated c code
+    #[command(alias("c"))]
+    EmitC { file: String },
+    /// Start the language server
+    LanguageServer,
+}
+
+impl ValueEnum for COptLevel {
+    fn value_variants<'a>() -> &'a [Self] {
+        use COptLevel::*;
+        &[O0, O1, O2, O3, Ofast, Os, Oz]
+    }
+
+    fn to_possible_value<'a>(&self) -> Option<PossibleValue> {
+        Some(PossibleValue::new(self.as_str()))
+    }
+}
+
+fn compile<'a>(
+    src: &'a str,
+    file_name: &str,
+    no_type_minimization: bool,
+) -> Result<impl Display + 'a, ()> {
+    match compiler::parse(src) {
+        Ok(ast) => Ok(gen_c(ast, !no_type_minimization)),
+        Err(e) => {
+            e.write(stderr(), file_name, src).unwrap();
+            Err(())
+        }
+    }
 }
 
 fn main() -> ExitCode {
@@ -34,34 +71,40 @@ fn main() -> ExitCode {
         backtrace_on_stack_overflow::enable()
     };
     let args = Args::parse();
-    if args.language_server {
-        #[cfg(feature = "language-server")]
-        {
-            language_server::run(!args.no_type_minimization);
-            ExitCode::SUCCESS
-        }
-        #[cfg(not(feature = "language-server"))]
-        panic!()
-    } else {
-        let file_name = args.file.unwrap();
-        let src = fs::read_to_string(&file_name).unwrap();
-        match compiler::parse(&src) {
-            Ok(ast) => {
-                if args.emit_c {
-                    print!("{}", gen_c(ast, !args.no_type_minimization));
-                    ExitCode::SUCCESS
-                } else if let Ok(exit_status) =
-                    run_c::run(gen_c(ast, !args.no_type_minimization).to_string())
-                {
-                    ExitCode::from(exit_status.code().unwrap() as u8)
-                } else {
-                    ExitCode::FAILURE
+    match args.command {
+        Commands::Run { file, opt_level } => {
+            let src = fs::read_to_string(&file).unwrap();
+            let r = compile(&src, &file, args.no_type_minimization);
+            match r {
+                Ok(c) => {
+                    if let Ok(exit_status) = run_c::run(c.to_string(), opt_level) {
+                        ExitCode::from(exit_status.code().unwrap() as u8)
+                    } else {
+                        ExitCode::FAILURE
+                    }
                 }
+                Err(()) => ExitCode::FAILURE,
             }
-            Err(e) => {
-                e.write(stderr(), &file_name, &src).unwrap();
-                ExitCode::FAILURE
+        }
+        Commands::EmitC { file } => {
+            let src = fs::read_to_string(&file).unwrap();
+            let r = compile(&src, &file, args.no_type_minimization);
+            match r {
+                Ok(c) => {
+                    print!("{}", c);
+                    ExitCode::SUCCESS
+                }
+                Err(()) => ExitCode::FAILURE,
             }
+        }
+        Commands::LanguageServer => {
+            #[cfg(feature = "language-server")]
+            {
+                language_server::run(!args.no_type_minimization);
+                ExitCode::SUCCESS
+            }
+            #[cfg(not(feature = "language-server"))]
+            panic!()
         }
     }
 }
