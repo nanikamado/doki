@@ -151,7 +151,7 @@ impl Display for Codegen<'_> {
         )?;
         write!(
             f,
-            "static {0} intrinsic_unit(){{
+            "static {0} intrinsic_unit(void){{
                 return ({0}){{}};
             }}
             {1}{2}{3}",
@@ -182,7 +182,7 @@ impl Display for Codegen<'_> {
             ast.variable_decls
                 .iter()
                 .format_with("", |d, f| f(&format_args!(
-                    "static {} init_g_{}_{}(){{{}}}",
+                    "static {} init_g_{}_{}(void){{{}}}",
                     env.global_variable_types[&d.decl_id],
                     d.decl_id,
                     convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
@@ -197,7 +197,7 @@ impl Display for Codegen<'_> {
                 ))),
         )?;
         write_fns(f, &ast.functions, &c_type_env, &env, true);
-        write!(
+        writeln!(
             f,
             "int main(void) {{
                 {}
@@ -335,9 +335,10 @@ fn write_fns(
                         parameter: Some(function.parameter),
                     },
                     env,
-                ))?
+                ))
+            } else {
+                f(&";")
             }
-            f(&";")
         })
     )
     .unwrap()
