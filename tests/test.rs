@@ -2,10 +2,14 @@ use assert_cmd::prelude::{CommandCargoExt, OutputAssertExt};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+const OPTIONS_FOR_CLANG: &str =
+    "-C=-Wpedantic -Wno-gnu-union-cast -Wno-gnu-empty-struct -Wno-gnu-empty-initializer";
+
 fn test_example(file_name: &str, stdout: &str) {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
         .arg("run")
+        .arg(OPTIONS_FOR_CLANG)
         .arg(["examples/", file_name].concat())
         .assert()
         .stdout(stdout.to_string())
@@ -16,6 +20,7 @@ fn positive_test_with_stdin(file_name: &str, stdin: &str, stdout: &str) {
     let mut c = Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
         .arg("run")
+        .arg(OPTIONS_FOR_CLANG)
         .arg(["tests/positive/", file_name].concat())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -24,15 +29,18 @@ fn positive_test_with_stdin(file_name: &str, stdin: &str, stdout: &str) {
     c.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
     let output = c.wait_with_output().unwrap();
     assert_eq!(&output.stdout, stdout.as_bytes());
+    assert!(output.stderr.is_empty());
 }
 
 fn positive_test(file_name: &str, stdout: &str) {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
         .arg("run")
+        .arg(OPTIONS_FOR_CLANG)
         .arg(["tests/positive/", file_name].concat())
         .assert()
         .stdout(stdout.to_string())
+        .stderr("")
         .success();
 }
 
@@ -40,6 +48,7 @@ fn negative_test(file_name: &str) -> assert_cmd::assert::Assert {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
         .arg("run")
+        .arg(OPTIONS_FOR_CLANG)
         .arg(["tests/negative/", file_name].concat())
         .assert()
 }
@@ -78,6 +87,7 @@ fn r#match() {
 fn fail_inexhaustive_match() {
     negative_test("inexhaustive_match.doki")
         .stderr("error: match is not exhaustive\n")
+        .stdout("")
         .code(1);
 }
 
@@ -90,6 +100,7 @@ fn fn_union() {
 fn fail_not_a_function() {
     negative_test("not_a_function.doki")
         .stderr("error: not a function\n")
+        .stdout("")
         .code(1);
 }
 
