@@ -182,7 +182,7 @@ fn add_offset_to_labels(b: &BasicBlock, offset: usize) -> BasicBlock {
                 operand,
                 catch_label,
             } => Instruction::Test {
-                tester: tester.clone(),
+                tester: *tester,
                 operand: *operand,
                 catch_label: catch_label + offset,
             },

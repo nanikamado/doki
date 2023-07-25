@@ -59,7 +59,7 @@ pub struct BasicBlock {
     pub end_instruction: EndInstruction,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Tester {
     Tag { tag: u32 },
     I64 { value: i64 },
