@@ -181,3 +181,23 @@ fn mod2() {
 fn mod3() {
     positive_test_with_stdin("mod3.doki", "112\n112\n112", "> 1\n> 1\n> 1\n");
 }
+
+#[test]
+fn diviter() {
+    positive_test_with_stdin("larceny_bench/diviter.doki", "1000\n", "500\n");
+}
+
+#[test]
+fn divrec() {
+    positive_test_with_stdin("larceny_bench/divrec.doki", "1000\n", "500\n");
+}
+
+#[test]
+fn tak() {
+    positive_test_with_stdin("larceny_bench/tak.doki", "32\n16\n8\n", "9\n");
+}
+
+#[test]
+fn takl() {
+    positive_test_with_stdin("larceny_bench/takl.doki", "32\n16\n8\n", "9\n");
+}
