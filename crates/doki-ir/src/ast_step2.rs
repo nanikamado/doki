@@ -608,17 +608,8 @@ impl<'a> Env<'a> {
                     .map(|v| self.get_defined_local_variable(v, root_t, replace_map))
                     .collect_vec();
                 let possible_functions = self.get_possible_functions(t);
-                let new_parameter = self.local_variable_def_replace(parameter, root_t, replace_map);
-                let (instructions, ret) = self.function_body(body, root_t, replace_map, ret);
-                let f = Function {
-                    parameter: new_parameter,
-                    body: FunctionBody {
-                        basic_blocks: instructions,
-                    },
-                    id: FxLambdaId(0),
-                    context: context.clone(),
-                    ret,
-                };
+                let parameter = self.local_variable_def_replace(parameter, root_t, replace_map);
+                let (basic_blocks, ret) = self.function_body(body, root_t, replace_map, ret);
                 let lambda_id = LambdaId {
                     id: lambda_id.id,
                     root_t: root_t.0,
@@ -629,7 +620,10 @@ impl<'a> Env<'a> {
                 };
                 *e = FunctionEntry::Function(Function {
                     id: fx_lambda_id,
-                    ..f
+                    parameter,
+                    body: FunctionBody { basic_blocks },
+                    context: context.clone(),
+                    ret,
                 });
                 let e = if possible_functions.len() == 1 && possible_functions[0].0 == 0 {
                     Lambda {
