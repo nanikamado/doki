@@ -578,7 +578,7 @@ impl<'a> Env<'a> {
             }
             GetTagNormalResult::NotTagged => Ok(a),
             GetTagNormalResult::Impossible => Err(format!(
-                "expected {type_id} but found {}. cannot downcast.",
+                "expected {type_id} but got {}. cannot downcast.",
                 DisplayTypeWithEnvStruct(&t, &self.constructor_names)
             )),
         }
