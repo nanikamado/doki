@@ -361,13 +361,48 @@ impl Env<'_> {
     }
 }
 
-fn collect_local_variables_block(b: &FunctionBody, vs: &mut FxHashSet<LocalVariable>) {
+fn collect_local_variables_in_block(b: &FunctionBody, vs: &mut FxHashSet<LocalVariable>) {
     for bb in &b.basic_blocks {
         for b in &bb.instructions {
-            if let Instruction::Assign(d, _) = b {
+            if let Instruction::Assign(d, e) = b {
                 vs.insert(*d);
+                collect_local_variables_in_expr(e, vs);
             }
         }
+        if let EndInstruction::Ret(VariableId::Local(l)) = bb.end_instruction {
+            vs.insert(l);
+        }
+    }
+}
+
+fn collect_local_variables_in_expr(e: &Expr, vs: &mut FxHashSet<LocalVariable>) {
+    match e {
+        Expr::Lambda { context, .. } => {
+            for l in context {
+                vs.insert(*l);
+            }
+        }
+        Expr::I64(_) | Expr::U8(_) | Expr::Str(_) => (),
+        Expr::Call { ctx, a, .. } => {
+            collect_local_variables_in_variable(*ctx, vs);
+            collect_local_variables_in_variable(*a, vs);
+        }
+        Expr::BasicCall { args, .. } => {
+            for a in args {
+                collect_local_variables_in_variable(*a, vs);
+            }
+        }
+        Expr::Ident(a)
+        | Expr::Ref(a)
+        | Expr::Deref(a)
+        | Expr::Downcast { value: a, .. }
+        | Expr::Upcast { value: a, .. } => collect_local_variables_in_variable(*a, vs),
+    }
+}
+
+fn collect_local_variables_in_variable(v: VariableId, vs: &mut FxHashSet<LocalVariable>) {
+    if let VariableId::Local(v) = v {
+        vs.insert(v);
     }
 }
 
@@ -392,7 +427,7 @@ struct FunctionBodyWithCtx<'a> {
 impl DisplayWithEnv for FunctionBodyWithCtx<'_> {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut vs = FxHashSet::default();
-        collect_local_variables_block(self.f, &mut vs);
+        collect_local_variables_in_block(self.f, &mut vs);
         for c in self.ctx {
             vs.insert(*c);
         }
