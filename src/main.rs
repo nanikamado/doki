@@ -7,6 +7,8 @@ mod run_c;
 
 use clap::{Parser, Subcommand};
 use compiler::gen_c;
+use log::LevelFilter;
+use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 use std::fmt::{Debug, Display};
 use std::fs;
 use std::io::stderr;
@@ -17,8 +19,10 @@ use std::process::ExitCode;
 #[clap(arg_required_else_help(true))]
 struct Args {
     /// Do not minimize types
-    #[arg(long)]
+    #[arg(long, global = true)]
     no_type_minimization: bool,
+    #[arg(long, short('q'), global = true)]
+    quiet: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -58,6 +62,24 @@ fn main() -> ExitCode {
         backtrace_on_stack_overflow::enable()
     };
     let args = Args::parse();
+    TermLogger::init(
+        if args.quiet {
+            LevelFilter::Off
+        } else {
+            LevelFilter::Trace
+        },
+        ConfigBuilder::new()
+            .set_location_level(LevelFilter::Error)
+            .set_time_level(LevelFilter::Off)
+            .set_thread_level(LevelFilter::Off)
+            .set_target_level(LevelFilter::Off)
+            .set_location_level(LevelFilter::Debug)
+            .set_max_level(LevelFilter::Debug)
+            .build(),
+        TerminalMode::Stderr,
+        ColorChoice::Auto,
+    )
+    .unwrap();
     match args.command {
         Commands::Run {
             file,

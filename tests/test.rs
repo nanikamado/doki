@@ -8,8 +8,7 @@ const OPTIONS_FOR_CLANG: &str =
 fn test_example(file_name: &str, stdout: &str) {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
-        .arg("run")
-        .arg(OPTIONS_FOR_CLANG)
+        .args(["-q", "run", OPTIONS_FOR_CLANG])
         .arg(["examples/", file_name].concat())
         .assert()
         .stdout(stdout.to_string())
@@ -19,8 +18,7 @@ fn test_example(file_name: &str, stdout: &str) {
 fn positive_test_with_stdin(file_name: &str, stdin: &str, stdout: &str) {
     let mut c = Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
-        .arg("run")
-        .arg(OPTIONS_FOR_CLANG)
+        .args(["-q", "run", OPTIONS_FOR_CLANG])
         .arg(["tests/positive/", file_name].concat())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -35,8 +33,7 @@ fn positive_test_with_stdin(file_name: &str, stdin: &str, stdout: &str) {
 fn positive_test(file_name: &str, stdout: &str) {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
-        .arg("run")
-        .arg(OPTIONS_FOR_CLANG)
+        .args(["-q", "run", OPTIONS_FOR_CLANG])
         .arg(["tests/positive/", file_name].concat())
         .assert()
         .stdout(stdout.to_string())
@@ -47,8 +44,7 @@ fn positive_test(file_name: &str, stdout: &str) {
 fn negative_test(file_name: &str) -> assert_cmd::assert::Assert {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
-        .arg("run")
-        .arg(OPTIONS_FOR_CLANG)
+        .args(["-q", "run", OPTIONS_FOR_CLANG])
         .arg(["tests/negative/", file_name].concat())
         .assert()
 }
