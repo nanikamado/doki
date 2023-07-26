@@ -3,7 +3,7 @@ use crate::AnalyzedSrc;
 use doki_ir::intrinsics::IntoEnumIterator;
 use doki_ir::{Block, ConstructorId, GlobalVariable, LocalVariable};
 use itertools::Itertools;
-use parser::{Ast, DataDecl, Expr, ExprWithSpan, Pattern, Span};
+use parser::{Ast, DataDecl, Expr, ExprWithSpan, Pattern, PatternWithSpan, Span};
 use rustc_hash::{FxHashMap, FxHasher};
 use std::collections::BTreeMap;
 use std::fmt::Display;
@@ -18,10 +18,17 @@ struct Env<'a> {
     local_variable_span_map: BTreeMap<Span, LocalVariable>,
     global_variable_span_map: BTreeMap<Span, GlobalVariable>,
     str_constructor_id: Option<ConstructorId>,
+    file_name: &'a str,
+    utf8_to_utf16_ln_col_map: Vec<(u32, u32)>,
 }
 
-fn build(ast: Ast) -> Env {
-    let mut env = Env::default();
+fn build<'a>(ast: Ast<'a>, file_name: &'a str, src: &'a str) -> Env<'a> {
+    let utf8_to_utf16_ln_col_map = utf8_to_utf16_ln_col(src);
+    let mut env = Env {
+        file_name,
+        utf8_to_utf16_ln_col_map,
+        ..Env::default()
+    };
     for d in ast.data_decls.into_iter().chain(once(DataDecl {
         name: "Str",
         field_len: 2,
@@ -96,8 +103,13 @@ fn build(ast: Ast) -> Env {
     env
 }
 
-pub fn gen_c(ast: Ast<'_>, minimize_type: bool) -> impl Display + '_ {
-    let env = build(ast);
+pub fn gen_c<'a>(
+    ast: Ast<'a>,
+    file_name: &'a str,
+    src: &'a str,
+    minimize_type: bool,
+) -> impl Display + 'a {
+    let env = build(ast, file_name, src);
     let entry_point = env.global_variable_map["main"];
     env.build_env.gen_c(entry_point, minimize_type)
 }
@@ -107,8 +119,8 @@ pub enum SpanMapEntry {
     GlobalVariable { ts: Vec<doki_ir::TypeForHash> },
 }
 
-pub fn token_map(ast: Ast, minimize_type: bool) -> AnalyzedSrc {
-    let env = build(ast);
+pub fn token_map(ast: Ast, src: &str, minimize_type: bool) -> AnalyzedSrc {
+    let env = build(ast, "", src);
     let entry_point = env.global_variable_map["main"];
     let ast = env.build_env.build_ast_step2(entry_point, minimize_type);
     let global_variables: multimap::MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> = ast
@@ -177,7 +189,11 @@ impl<'a> Env<'a> {
             Expr::Lambda { param, expr } => {
                 let l = self.build_env.lambda(block, ret);
                 let mut b = self.build_env.new_block();
-                b.panic("pattern is not exhaustive".to_string());
+                let (ln, col) = self.utf8_to_utf16_ln_col_map[param.1.start];
+                b.panic(format!(
+                    "pattern is not exhaustive\n{}:{ln}:{col}",
+                    self.file_name,
+                ));
                 let mut b2 = self.build_env.new_block();
                 self.let_in(l.ret, param, l.parameter, *expr, &mut b2);
                 l.body.append(b2.try_catch(b));
@@ -208,10 +224,14 @@ impl<'a> Env<'a> {
                 )
             }
             Expr::Match { operand, branches } => {
+                let (ln, col) = self.utf8_to_utf16_ln_col_map[operand.1.start];
                 let operand_v = self.build_env.new_local_variable();
                 self.expr(*operand, operand_v, block);
                 let mut b = Block::default();
-                b.panic("match is not exhaustive".to_string());
+                b.panic(format!(
+                    "match is not exhaustive\n{}:{ln}:{col}",
+                    self.file_name,
+                ));
                 for (p, e) in branches.into_iter().rev() {
                     let mut b2 = Block::default();
                     self.let_in(ret, p, operand_v, e, &mut b2);
@@ -223,7 +243,11 @@ impl<'a> Env<'a> {
                 let l = self.build_env.new_local_variable();
                 self.expr(*e1, l, block);
                 let mut b = self.build_env.new_block();
-                b.panic("pattern is not exhaustive".to_string());
+                let (ln, col) = self.utf8_to_utf16_ln_col_map[p.1.start];
+                b.panic(format!(
+                    "pattern is not exhaustive\n{}:{ln}:{col}",
+                    self.file_name,
+                ));
                 let mut b2 = self.build_env.new_block();
                 self.let_in(ret, p, l, *e2, &mut b2);
                 block.append(b2.try_catch(b));
@@ -234,12 +258,12 @@ impl<'a> Env<'a> {
     fn let_in(
         &mut self,
         ret: LocalVariable,
-        mut p: Pattern<'a>,
+        mut p: PatternWithSpan<'a>,
         v: LocalVariable,
         e: ExprWithSpan<'a>,
         block: &mut Block,
     ) {
-        self.find_field_less_constructor(&mut p);
+        self.find_field_less_constructor(&mut p.0);
         let mut shadowed_variables = FxHashMap::default();
         self.binds_in_pattern(&p, &mut shadowed_variables);
         self.pattern(&p, v, block);
@@ -256,33 +280,39 @@ impl<'a> Env<'a> {
     fn find_field_less_constructor(&self, p: &mut Pattern<'a>) {
         match p {
             Pattern::Wildcard | Pattern::Num(_) => (),
-            Pattern::Constructor { name, fields, span } => {
-                if self.data_decl_map.contains_key(name) {
-                    for f in fields {
+            Pattern::Constructor {
+                name,
+                fields,
+                span: _,
+            } => {
+                if *name == "_" {
+                    *p = Pattern::Wildcard
+                } else if self.data_decl_map.contains_key(name) {
+                    for (f, _) in fields {
                         self.find_field_less_constructor(f);
                     }
                 } else {
                     if !fields.is_empty() {
                         panic!("`{name}` is not a constructor");
                     }
-                    *p = Pattern::Bind(name, *span)
+                    *p = Pattern::Bind(name)
                 }
             }
             Pattern::Or(a, b) => {
-                self.find_field_less_constructor(a);
-                self.find_field_less_constructor(b);
+                self.find_field_less_constructor(&mut a.0);
+                self.find_field_less_constructor(&mut b.0);
             }
-            Pattern::Bind(_, _) => panic!(),
+            Pattern::Bind(_) => panic!(),
         }
     }
 
     fn binds_in_pattern(
         &mut self,
-        p: &Pattern<'a>,
+        (p, span): &PatternWithSpan<'a>,
         shadowed_variables: &mut FxHashMap<&'a str, Option<LocalVariable>>,
     ) {
         match p {
-            Pattern::Bind(name, span) => {
+            Pattern::Bind(name) => {
                 let l = if shadowed_variables.contains_key(name) {
                     self.local_variable_map[name]
                 } else {
@@ -336,9 +366,14 @@ impl<'a> Env<'a> {
         }
     }
 
-    fn pattern(&mut self, e: &Pattern<'a>, operand: LocalVariable, block: &mut Block) {
-        match e {
-            Pattern::Bind(name, _span) => {
+    fn pattern(
+        &mut self,
+        (p, _span): &PatternWithSpan<'a>,
+        operand: LocalVariable,
+        block: &mut Block,
+    ) {
+        match p {
+            Pattern::Bind(name) => {
                 let v = self.local_variable_map[name];
                 self.build_env.local_variable(v, operand, block);
             }
@@ -368,4 +403,23 @@ impl<'a> Env<'a> {
             }
         }
     }
+}
+
+fn utf8_to_utf16_ln_col(src: &str) -> Vec<(u32, u32)> {
+    let mut utf8_to_utf16_map = Vec::with_capacity(src.len());
+    utf8_to_utf16_map.push((1, 1));
+    let mut line = 1;
+    let mut col_utf16 = 1;
+    for c in src.chars() {
+        if c == '\n' {
+            line += 1;
+            col_utf16 = 1;
+        } else {
+            col_utf16 += c.len_utf16() as u32;
+        }
+        for _ in 0..c.len_utf8() {
+            utf8_to_utf16_map.push((line, col_utf16));
+        }
+    }
+    utf8_to_utf16_map
 }

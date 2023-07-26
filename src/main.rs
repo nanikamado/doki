@@ -40,11 +40,11 @@ enum Commands {
 
 fn compile<'a>(
     src: &'a str,
-    file_name: &str,
+    file_name: &'a str,
     no_type_minimization: bool,
 ) -> Result<impl Display + 'a, ()> {
     match compiler::parse(src) {
-        Ok(ast) => Ok(gen_c(ast, !no_type_minimization)),
+        Ok(ast) => Ok(gen_c(ast, file_name, src, !no_type_minimization)),
         Err(e) => {
             e.write(stderr(), file_name, src).unwrap();
             Err(())

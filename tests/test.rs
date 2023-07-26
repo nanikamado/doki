@@ -86,7 +86,7 @@ fn r#match() {
 #[test]
 fn fail_inexhaustive_match() {
     negative_test("inexhaustive_match.doki")
-        .stderr("error: match is not exhaustive\n")
+        .stderr("error: match is not exhaustive\ntests/negative/inexhaustive_match.doki:10:20\n")
         .stdout("")
         .code(1);
 }

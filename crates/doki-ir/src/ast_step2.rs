@@ -389,7 +389,7 @@ impl<'a> Env<'a> {
         let fallback = Some(BasicBlock {
             instructions: Vec::new(),
             end_instruction: EndInstruction::Panic {
-                msg: "pattern is not exhaustive".to_string(),
+                msg: "uncaught exception detected".to_string(),
             },
         });
         let mut block_env = BasicBlockEnv {

@@ -14,5 +14,5 @@ pub struct AnalyzedSrc {
 
 pub fn token_map(src: &str, minimize_type: bool) -> Result<AnalyzedSrc, ParseError> {
     let ast = parser::parse(src)?;
-    Ok(gen_c::token_map(ast, minimize_type))
+    Ok(gen_c::token_map(ast, src, minimize_type))
 }

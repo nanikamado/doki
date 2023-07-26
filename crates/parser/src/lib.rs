@@ -29,7 +29,7 @@ pub type ExprWithSpan<'a> = (Expr<'a>, Span);
 pub enum Expr<'a> {
     Ident(&'a str),
     Lambda {
-        param: Pattern<'a>,
+        param: PatternWithSpan<'a>,
         expr: Box<ExprWithSpan<'a>>,
     },
     Call(Box<ExprWithSpan<'a>>, Box<ExprWithSpan<'a>>),
@@ -38,21 +38,27 @@ pub enum Expr<'a> {
     Str(String),
     Match {
         operand: Box<ExprWithSpan<'a>>,
-        branches: Vec<(Pattern<'a>, ExprWithSpan<'a>)>,
+        branches: Vec<(PatternWithSpan<'a>, ExprWithSpan<'a>)>,
     },
-    Let(Pattern<'a>, Box<ExprWithSpan<'a>>, Box<ExprWithSpan<'a>>),
+    Let(
+        PatternWithSpan<'a>,
+        Box<ExprWithSpan<'a>>,
+        Box<ExprWithSpan<'a>>,
+    ),
 }
+
+pub type PatternWithSpan<'a> = (Pattern<'a>, Span);
 
 #[derive(Clone, Debug)]
 pub enum Pattern<'a> {
-    Bind(&'a str, Span),
+    Bind(&'a str),
     Wildcard,
     Constructor {
         name: &'a str,
         span: Span,
-        fields: Vec<Pattern<'a>>,
+        fields: Vec<PatternWithSpan<'a>>,
     },
-    Or(Box<Pattern<'a>>, Box<Pattern<'a>>),
+    Or(Box<PatternWithSpan<'a>>, Box<PatternWithSpan<'a>>),
     Num(&'a str),
 }
 
@@ -101,28 +107,45 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
     let pattern = recursive(|pattern| {
         let p = choice((
             pattern.delimited_by(just('('), just(')')),
-            just("_").to(Pattern::Wildcard),
+            just("_").map_with_span(|_, span| (Pattern::Wildcard, Span::from(span))),
             just('-')
                 .or_not()
                 .then(text::int(10))
-                .map_slice(Pattern::Num),
-            ident.map_with_span(|name, span| Pattern::Constructor {
-                name,
-                fields: Vec::new(),
-                span: Span::from(span),
+                .map_slice(Pattern::Num)
+                .map_with_span(|p, span| (p, Span::from(span))),
+            ident.map_with_span(|name, span| {
+                (
+                    Pattern::Constructor {
+                        name,
+                        fields: Vec::new(),
+                        span: Span::from(span),
+                    },
+                    Span::from(span),
+                )
             }),
         ));
         let p = ident
             .then(whitespace.ignore_then(p.clone()).repeated().collect())
-            .map_with_span(|(name, fields), span| Pattern::Constructor {
-                name,
-                fields,
-                span: Span::from(span),
+            .map_with_span(|(name, fields), span| {
+                (
+                    Pattern::Constructor {
+                        name,
+                        fields,
+                        span: Span::from(span),
+                    },
+                    Span::from(span),
+                )
             })
             .or(p);
         p.clone().foldl(
             just('|').padded_by(whitespace).ignore_then(p).repeated(),
-            |a, b| Pattern::Or(Box::new(a), Box::new(b)),
+            |a, b| {
+                let span = Span {
+                    start: a.1.start,
+                    end: b.1.end,
+                };
+                (Pattern::Or(Box::new(a), Box::new(b)), span)
+            },
         )
     });
     let expr = recursive(|expr| {
