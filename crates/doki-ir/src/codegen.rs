@@ -26,13 +26,13 @@ impl Display for Codegen<'_> {
         };
         let local_variable_types: LocalVariableCollector<(&Type, CType)> =
             ast.variable_types.map(|t| {
-                let ct = c_type_env.c_type(t, None);
+                let ct = c_type_env.c_type(t, &mut Vec::new());
                 (t, ct)
             });
         let global_variable_types = ast
             .variable_decls
             .iter()
-            .map(|d| (d.decl_id, c_type_env.c_type(&d.t, None)))
+            .map(|d| (d.decl_id, c_type_env.c_type(&d.t, &mut Vec::new())))
             .collect();
         let env = Env {
             variable_names: &ast.variable_names,
@@ -48,7 +48,7 @@ impl Display for Codegen<'_> {
             .map(|((v, arg_ts), id)| {
                 let arg_ts_c = arg_ts
                     .iter()
-                    .map(|t| c_type_env.c_type(t, None))
+                    .map(|t| c_type_env.c_type(t, &mut Vec::new()))
                     .collect_vec();
                 use IntrinsicVariable::*;
                 let ret_t = match *v {
@@ -69,7 +69,7 @@ impl Display for Codegen<'_> {
                             args: Vec::new(),
                         }
                         .into();
-                        env.c_type(&t, None)
+                        env.c_type(&t, &mut Vec::new())
                     }
                 };
                 (*v, id, ret_t, arg_ts_c)
@@ -82,10 +82,9 @@ impl Display for Codegen<'_> {
             args: Vec::new(),
         }
         .into();
-        let unit_t = c_type_env.c_type(&unit_t, None);
-        let c_type_env = c_type_env;
-        let aggregates: FxHashMap<_, _> = c_type_env.aggregate_types.rev_map_as_raw().clone();
-        let sorted = sort_aggregates(&aggregates);
+        let unit_t = c_type_env.c_type(&unit_t, &mut Vec::new());
+        let aggregates: &FxHashMap<_, _> = c_type_env.aggregate_types.rev_map_as_raw();
+        let sorted = sort_aggregates(aggregates);
         write!(
             f,
             "
@@ -197,11 +196,16 @@ impl Display for Codegen<'_> {
                 ))),
         )?;
         write_fns(f, &ast.functions, &c_type_env, &env, true);
+        let unit = CType::Aggregate(
+            c_type_env
+                .aggregate_types
+                .get(CAggregateType::Struct(Vec::new())),
+        );
         writeln!(
             f,
             "int main(void) {{
-                {}
-                {}((struct t0){{}},(struct t0){{}});
+                {0}
+                {1}(({2}){{}},({2}){{}});
             }}",
             ast.variable_decls
                 .iter()
@@ -210,7 +214,8 @@ impl Display for Codegen<'_> {
                     d.decl_id,
                     convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
                 ))),
-            ast.entry_point
+            ast.entry_point,
+            unit,
         )
     }
 }

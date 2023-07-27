@@ -12,15 +12,11 @@ pub struct IdGenerator<T, U>(FxHashMap<T, Id<U>>);
 
 impl<T: std::hash::Hash + Eq, U: Copy> IdGenerator<T, U> {
     pub fn get_or_insert(&mut self, value: T) -> Id<U> {
-        use std::collections::hash_map::Entry::*;
         let len = self.0.len();
-        match self.0.entry(value) {
-            Occupied(e) => *e.get(),
-            Vacant(e) => *e.insert(Id {
-                id: len,
-                phantom: PhantomData,
-            }),
-        }
+        *self.0.entry(value).or_insert(Id {
+            id: len,
+            phantom: PhantomData,
+        })
     }
 
     pub fn get(&self, value: &T) -> Option<Id<U>> {

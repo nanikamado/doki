@@ -41,16 +41,11 @@ pub struct Env {
 }
 
 impl Env {
-    fn c_type_inner(&mut self, t: &Type, mut type_stack: Option<(usize, Type)>) -> CType {
-        let reserved_id = if t.recursive {
-            let i = self.aggregate_types.get_empty_id();
-            type_stack = Some((i, t.clone()));
-            Some(i)
-        } else {
-            None
-        };
+    fn c_type_inner(&mut self, t: &Type, type_stack: &mut Vec<(usize, Type)>) -> CType {
+        let reserved_id = self.aggregate_types.get_empty_id();
+        type_stack.push((reserved_id, t.clone()));
         let mut ts = Vec::new();
-        if type_stack.is_none() {
+        if type_stack.is_empty() {
             debug_assert!(!t.contains_broken_link_rec(0));
         }
         for tu in t.iter() {
@@ -70,14 +65,14 @@ impl Env {
                     }
                     TypeId::Intrinsic(IntrinsicTypeTag::Mut) => {
                         debug_assert_eq!(args.len(), 1);
-                        let arg_t = self.c_type_from_inner_type(&args[0], &type_stack);
+                        let arg_t = self.c_type_from_inner_type(&args[0], type_stack);
                         let c_t = CType::Ref(Box::new(arg_t));
                         ts.push(c_t);
                     }
                     _ => {
                         let t = CAggregateType::Struct(
                             args.iter()
-                                .map(|t| self.c_type_from_inner_type(t, &type_stack))
+                                .map(|t| self.c_type_from_inner_type(t, type_stack))
                                 .collect(),
                         );
                         ts.push(CType::Aggregate(self.aggregate_types.get_or_insert(t)));
@@ -87,7 +82,7 @@ impl Env {
                     for ctx in lambda_id.values() {
                         let c_t = CAggregateType::Struct(
                             ctx.iter()
-                                .map(|t| self.c_type_from_inner_type(t, &type_stack))
+                                .map(|t| self.c_type_from_inner_type(t, type_stack))
                                 .collect(),
                         );
                         ts.push(CType::Aggregate(self.aggregate_types.get_or_insert(c_t)))
@@ -95,32 +90,23 @@ impl Env {
                 }
             }
         }
+        type_stack.pop().unwrap();
         if ts.len() == 1 {
             let ct = ts.into_iter().next().unwrap();
-            if let Some(i) = reserved_id {
-                if ct.contains_aggregate(i, &self.aggregate_types) {
-                    CType::Diverge
-                } else {
-                    ct
-                }
+            if ct.contains_aggregate_under_struct(reserved_id, &self.aggregate_types) {
+                CType::Diverge
             } else {
                 ct
             }
-        } else if let Some(i) = reserved_id {
+        } else {
             let i = self
                 .aggregate_types
-                .get_or_insert_with_id(CAggregateType::Union(ts), i);
+                .get_or_insert_with_id(CAggregateType::Union(ts), reserved_id);
             CType::Aggregate(i)
-        } else {
-            debug_assert!(!t.reference);
-            CType::Aggregate(
-                self.aggregate_types
-                    .get_or_insert(CAggregateType::Union(ts)),
-            )
         }
     }
 
-    fn c_type_memoize(&mut self, t: &Type, type_stack: Option<(usize, Type)>) -> CType {
+    fn c_type_memoize(&mut self, t: &Type, type_stack: &mut Vec<(usize, Type)>) -> CType {
         if let Some(t) = self.memo.get(t) {
             t.clone()
         } else {
@@ -137,8 +123,8 @@ impl Env {
         }
     }
 
-    pub fn c_type(&mut self, t: &Type, type_stack: Option<(usize, Type)>) -> CType {
-        if type_stack.is_none() {
+    pub fn c_type(&mut self, t: &Type, type_stack: &mut Vec<(usize, Type)>) -> CType {
+        if type_stack.is_empty() {
             debug_assert!(!t.contains_broken_link_rec(0));
         }
         if t.reference && !t.derefed {
@@ -158,27 +144,24 @@ impl Env {
     pub fn c_type_from_inner_type(
         &mut self,
         t: &TypeInner,
-        type_stack: &Option<(usize, Type)>,
+        type_stack: &mut Vec<(usize, Type)>,
     ) -> CType {
         match t {
             TypeInnerOf::RecursionPoint(d) => {
-                assert_eq!(*d, 0);
-                let s = type_stack.as_ref().unwrap();
+                let s = &type_stack[type_stack.len() - 1 - *d as usize];
                 if s.1.reference {
                     CType::Ref(Box::new(CType::Aggregate(s.0)))
                 } else {
                     CType::Aggregate(s.0)
                 }
             }
-            TypeInnerOf::Type(t) => self.c_type(t, type_stack.clone()),
+            TypeInnerOf::Type(t) => self.c_type(t, type_stack),
         }
     }
 }
 
 fn contains_index(t: &Type, mut depth: i32) -> bool {
-    if t.recursive {
-        depth += 1;
-    }
+    depth += 1;
     let check = |a: &[TypeInner]| {
         a.iter().any(|a| match a {
             TypeInnerOf::RecursionPoint(a) => *a as i32 == depth,
@@ -192,7 +175,11 @@ fn contains_index(t: &Type, mut depth: i32) -> bool {
 }
 
 impl CType {
-    fn contains_aggregate(&self, i: usize, aggregate_types: &Collector<CAggregateType>) -> bool {
+    fn contains_aggregate_under_struct(
+        &self,
+        i: usize,
+        aggregate_types: &Collector<CAggregateType>,
+    ) -> bool {
         match self {
             CType::I64 | CType::U8 | CType::Ptr => false,
             CType::Aggregate(j) => {
@@ -200,14 +187,14 @@ impl CType {
                     || aggregate_types
                         .get_rev(*j)
                         .map(|t| match t {
-                            CAggregateType::Union(ts) | CAggregateType::Struct(ts) => {
-                                ts.iter().any(|t| t.contains_aggregate(i, aggregate_types))
-                            }
+                            CAggregateType::Struct(ts) => ts
+                                .iter()
+                                .any(|t| t.contains_aggregate_under_struct(i, aggregate_types)),
+                            CAggregateType::Union(_) => false,
                         })
                         .unwrap_or(false)
             }
-            CType::Ref(c) => c.contains_aggregate(i, aggregate_types),
-            CType::Diverge => false,
+            CType::Diverge | CType::Ref(_) => false,
         }
     }
 }

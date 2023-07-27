@@ -5,7 +5,7 @@ pub use self::local_variable::{LocalVariable, LocalVariableCollector};
 use self::type_memo::{get_tag_normal, GetTagNormalResult, TypeMemo};
 pub use self::type_memo::{
     DisplayTypeWithEnv, DisplayTypeWithEnvStruct, Type, TypeForHash, TypeInner, TypeInnerForHash,
-    TypeInnerOf, TypeOf, TypeUnit, TypeUnitForHash, TypeUnitOf,
+    TypeInnerOf, TypeUnit, TypeUnitForHash, TypeUnitOf,
 };
 use crate::ast_step1::{
     self, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
@@ -177,7 +177,7 @@ impl<'a> Ast<'a> {
                     type_map: memo.map,
                     variable_types: memo.local_variable_collector,
                     constructor_names: memo.constructor_names,
-                    type_id_generator: memo.type_id_generator,
+                    type_id_generator: memo.type_memo.type_id_generator,
                     local_variable_replace_map: memo.local_variable_replace_map,
                     used_intrinsic_variables: memo.used_intrinsic_variables,
                 }
@@ -206,7 +206,6 @@ pub struct Env<'a> {
     local_variable_collector: LocalVariableCollector<Type>,
     global_variable_count: usize,
     constructor_names: ConstructorNames,
-    type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
     minimize_type: bool,
     used_intrinsic_variables: Collector<(IntrinsicVariable, Vec<Type>)>,
 }
@@ -270,7 +269,6 @@ impl<'a> Env<'a> {
             local_variable_collector: LocalVariableCollector::new(),
             global_variable_count: 0,
             constructor_names,
-            type_id_generator: Default::default(),
             minimize_type,
             used_intrinsic_variables: Default::default(),
         }
@@ -284,7 +282,10 @@ impl<'a> Env<'a> {
     ) -> GlobalVariableId {
         let p = self.map.clone_pointer(p, replace_map);
         let t_for_hash = self.get_type_for_hash(p);
-        let t_id = self.type_id_generator.get_or_insert(t_for_hash.clone());
+        let t_id = self
+            .type_memo
+            .type_id_generator
+            .get_or_insert(t_for_hash.clone());
         let t = self.get_type(p);
         let root = (t_id, decl_id);
         if let Some(d) = self.monomorphized_variable_map.get(&root) {
@@ -649,7 +650,6 @@ impl<'a> Env<'a> {
                     }
                 };
                 if t.reference {
-                    debug_assert!(t.recursive);
                     let v = self.expr_to_variable(
                         e,
                         t.clone().deref(),
@@ -846,11 +846,7 @@ impl<'a> Env<'a> {
         let mut fs = Vec::new();
         let mut tag = 0;
         for t in ot.iter() {
-            let t = if ot.recursive {
-                t.clone().replace_index(ot, 0)
-            } else {
-                t.clone()
-            };
+            let t = t.clone().replace_index(ot, 0);
             match t {
                 TypeUnitOf::Normal { .. } => {
                     tag += 1;
@@ -891,8 +887,7 @@ impl<'a> Env<'a> {
     fn get_type(&mut self, p: TypePointer) -> Type {
         self.minimize(p);
         self.type_memo.collect_ref_pointers(p, &mut self.map);
-        self.type_memo
-            .get_type(p, &mut self.map, &mut self.type_id_generator)
+        self.type_memo.get_type(p, &mut self.map)
     }
 
     fn get_type_for_hash(&mut self, p: TypePointer) -> TypeForHash {
@@ -949,7 +944,6 @@ impl<'a> Env<'a> {
             }
         };
         if t.reference {
-            debug_assert!(t.recursive);
             let d = self.new_variable(t.clone().deref());
             instructions.push(Instruction::Assign(d, e));
             Expr::Ref(VariableId::Local(d))

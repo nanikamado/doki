@@ -11,14 +11,13 @@ use std::iter::once;
 #[derive(PartialEq, Eq, PartialOrd, Ord, Default, Clone, Hash)]
 pub struct TypeOf<T: TypeFamily> {
     ts: Vec<TypeUnitOf<T>>,
-    pub recursive: bool,
     pub reference: bool,
     pub derefed: bool,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub enum TypeInnerOf<T: TypeFamily> {
-    RecursionPoint(T::RecursionPoint),
+    RecursionPoint(u32),
     Type(TypeOf<T>),
 }
 
@@ -36,14 +35,11 @@ pub enum TypeUnitOf<T: TypeFamily> {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
-struct IntermediateTypeF;
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub struct TypeForHashF;
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub struct NormalTypeF;
 
 pub trait TypeFamily {
-    type RecursionPoint: Eq + Ord + Clone + std::hash::Hash + std::fmt::Debug + BrokenLinkCheck;
     type LambdaTag: Eq
         + Ord
         + Clone
@@ -54,26 +50,16 @@ pub trait TypeFamily {
     type LambdaCtx: Eq + Ord + Clone + std::hash::Hash + DebugCtx + BrokenLinkCheck;
 }
 
-impl TypeFamily for IntermediateTypeF {
-    type RecursionPoint = IndexOrPointer;
-    type LambdaTag = TypeInnerOf<IntermediateTypeF>;
-    type LambdaCtx = Vec<TypeInnerOf<Self>>;
-}
-
 impl TypeFamily for TypeForHashF {
-    type RecursionPoint = u32;
     type LambdaTag = TypeInnerOf<Self>;
     type LambdaCtx = ();
 }
 
 impl TypeFamily for NormalTypeF {
-    type RecursionPoint = u32;
     type LambdaTag = id_generator::Id<TypeIdTag>;
     type LambdaCtx = Vec<TypeInnerOf<Self>>;
 }
 
-type IntermediateTypeUnit = TypeUnitOf<IntermediateTypeF>;
-type IntermediateTypeInner = TypeInnerOf<IntermediateTypeF>;
 pub type TypeForHash = TypeOf<TypeForHashF>;
 pub type TypeUnitForHash = TypeUnitOf<TypeForHashF>;
 pub type TypeInnerForHash = TypeInnerOf<TypeForHashF>;
@@ -85,17 +71,10 @@ impl<T: TypeFamily> From<TypeUnitOf<T>> for TypeOf<T> {
     fn from(value: TypeUnitOf<T>) -> Self {
         TypeOf {
             ts: once(value).collect(),
-            recursive: false,
             reference: false,
             derefed: false,
         }
     }
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
-enum IndexOrPointer {
-    Index(u32),
-    Pointer(TypePointer),
 }
 
 impl<T: TypeFamily> TypeOf<T> {
@@ -108,7 +87,6 @@ impl<T: TypeFamily> TypeOf<T> {
     }
 
     pub fn deref(self) -> Self {
-        debug_assert!(self.recursive);
         debug_assert!(self.reference);
         Self {
             derefed: true,
@@ -117,7 +95,7 @@ impl<T: TypeFamily> TypeOf<T> {
     }
 
     pub fn contains_broken_link_rec(&self, depth: u32) -> bool {
-        let depth = self.recursive as u32 + depth;
+        let depth = depth + 1;
         self.ts.iter().any(|t| match t {
             TypeUnitOf::Normal { id: _, args } => {
                 args.iter().any(|a| a.contains_broken_link(depth))
@@ -155,15 +133,6 @@ impl BrokenLinkCheck for u32 {
     }
 }
 
-impl BrokenLinkCheck for IndexOrPointer {
-    fn contains_broken_link(&self, depth: u32) -> bool {
-        match self {
-            IndexOrPointer::Index(i) => *i >= depth,
-            IndexOrPointer::Pointer(_) => unimplemented!(),
-        }
-    }
-}
-
 impl BrokenLinkCheck for id_generator::Id<TypeIdTag> {
     fn contains_broken_link(&self, _depth: u32) -> bool {
         false
@@ -184,128 +153,22 @@ impl<T: BrokenLinkCheck> BrokenLinkCheck for Vec<T> {
 
 #[derive(Debug, Default)]
 pub struct TypeMemo {
-    type_memo: FxHashMap<TypePointer, IntermediateTypeInner>,
-    type_memo_for_hash: FxHashMap<TypePointer, IntermediateTypeInner>,
+    type_memo: FxHashMap<TypePointer, TypeInner>,
+    type_memo_for_hash: FxHashMap<TypePointer, TypeInnerForHash>,
     pub minimized_pointers: FxHashSet<TypePointer>,
     pub ref_pointers: FxHashSet<TypePointer>,
     ref_checked_pointers: FxHashSet<TypePointer>,
-}
-
-fn remove_pointer_from_type_inner_for_hash(t: IntermediateTypeInner) -> TypeInnerForHash {
-    match t {
-        TypeInnerOf::RecursionPoint(IndexOrPointer::Pointer(_)) => {
-            panic!()
-        }
-        TypeInnerOf::RecursionPoint(IndexOrPointer::Index(d)) => TypeInnerOf::RecursionPoint(d),
-        TypeInnerOf::Type(TypeOf {
-            ts,
-            recursive,
-            reference,
-            derefed,
-        }) => TypeInnerOf::Type(TypeOf {
-            ts: ts
-                .into_iter()
-                .map(remove_pointer_from_type_unit_for_hash)
-                .collect(),
-            recursive,
-            reference,
-            derefed,
-        }),
-    }
-}
-
-fn remove_pointer_from_type_unit_for_hash(t: TypeUnitOf<IntermediateTypeF>) -> TypeUnitForHash {
-    match t {
-        TypeUnitOf::Normal { id, args } => TypeUnitOf::Normal {
-            id,
-            args: args
-                .into_iter()
-                .map(remove_pointer_from_type_inner_for_hash)
-                .collect(),
-        },
-        TypeUnitOf::Fn(id, a, b) => TypeUnitOf::Fn(
-            id.into_keys()
-                .map(|l| (l.map_type(remove_pointer_from_type_inner_for_hash), ()))
-                .collect(),
-            remove_pointer_from_type_inner_for_hash(a),
-            remove_pointer_from_type_inner_for_hash(b),
-        ),
-    }
-}
-
-fn remove_pointer_from_type_inner(
-    t: IntermediateTypeInner,
-    type_id_generator: &mut IdGenerator<TypeForHash, TypeIdTag>,
-) -> TypeInner {
-    match t {
-        TypeInnerOf::RecursionPoint(IndexOrPointer::Pointer(_)) => {
-            panic!()
-        }
-        TypeInnerOf::RecursionPoint(IndexOrPointer::Index(d)) => TypeInnerOf::RecursionPoint(d),
-        TypeInnerOf::Type(TypeOf {
-            ts,
-            recursive,
-            reference,
-            derefed,
-        }) => TypeInnerOf::Type(TypeOf {
-            ts: ts
-                .into_iter()
-                .map(|t| remove_pointer_from_type_unit(t, type_id_generator))
-                .collect(),
-            recursive,
-            reference,
-            derefed,
-        }),
-    }
-}
-
-fn remove_pointer_from_type_unit(
-    t: TypeUnitOf<IntermediateTypeF>,
-    type_id_generator: &mut IdGenerator<TypeForHash, TypeIdTag>,
-) -> TypeUnit {
-    match t {
-        TypeUnitOf::Normal { id, args } => TypeUnitOf::Normal {
-            id,
-            args: args
-                .into_iter()
-                .map(|t| remove_pointer_from_type_inner(t, type_id_generator))
-                .collect(),
-        },
-        TypeUnitOf::Fn(id, a, b) => TypeUnitOf::Fn(
-            id.into_iter()
-                .map(|(l, ctx)| {
-                    let l = l.map_type(|t| {
-                        let t = remove_pointer_from_type_inner_for_hash(t);
-                        debug_assert!(!t.contains_broken_link(0));
-                        if let TypeInnerOf::Type(t) = t {
-                            type_id_generator.get_or_insert(t)
-                        } else {
-                            panic!()
-                        }
-                    });
-                    (
-                        l,
-                        ctx.into_iter()
-                            .map(|t| remove_pointer_from_type_inner(t, type_id_generator))
-                            .collect(),
-                    )
-                })
-                .collect(),
-            remove_pointer_from_type_inner(a, type_id_generator),
-            remove_pointer_from_type_inner(b, type_id_generator),
-        ),
-    }
+    pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
+    trace: FxHashMap<TypePointer, usize>,
+    used_trace: FxHashSet<TypePointer>,
 }
 
 impl TypeMemo {
-    pub fn get_type(
-        &mut self,
-        p: TypePointer,
-        map: &mut PaddedTypeMap,
-        type_id_generator: &mut IdGenerator<TypeForHash, TypeIdTag>,
-    ) -> Type {
-        let t = self.get_type_inner(p, &Default::default(), map, false);
-        match remove_pointer_from_type_inner(t, type_id_generator) {
+    pub fn get_type(&mut self, p: TypePointer, map: &mut PaddedTypeMap) -> Type {
+        debug_assert!(self.trace.is_empty());
+        debug_assert!(self.used_trace.is_empty());
+        let t = self.get_type_inner(p, map);
+        match t {
             TypeInnerOf::RecursionPoint(_) => panic!(),
             TypeInnerOf::Type(t) => {
                 debug_assert!(!t.contains_broken_link());
@@ -315,8 +178,14 @@ impl TypeMemo {
     }
 
     pub fn get_type_for_hash(&mut self, p: TypePointer, map: &mut PaddedTypeMap) -> TypeForHash {
-        let t = self.get_type_inner(p, &Default::default(), map, true);
-        match remove_pointer_from_type_inner_for_hash(t) {
+        let t = self.get_type_inner_for_hash(
+            p,
+            &mut Default::default(),
+            &mut Default::default(),
+            map,
+            0,
+        );
+        match t {
             TypeInnerOf::RecursionPoint(_) => panic!(),
             TypeInnerOf::Type(t) => {
                 debug_assert!(!t.contains_broken_link());
@@ -328,87 +197,88 @@ impl TypeMemo {
     fn get_lambda_ids(
         &mut self,
         p: TypePointer,
-        trace: &FxHashSet<TypePointer>,
         map: &mut PaddedTypeMap,
-        for_hash: bool,
-    ) -> BTreeMap<LambdaId<IntermediateTypeInner>, <IntermediateTypeF as TypeFamily>::LambdaCtx>
+    ) -> BTreeMap<LambdaId<id_generator::Id<TypeIdTag>>, <NormalTypeF as TypeFamily>::LambdaCtx>
     {
         let p = map.find(p);
         let Terminal::LambdaId(ids) = map.dereference_without_find(p) else {
             panic!()
         };
         let mut new_ids = BTreeMap::new();
-        let empty_trace;
-        let trace_for_id = if for_hash {
-            trace
-        } else {
-            empty_trace = Default::default();
-            &empty_trace
-        };
         for (id, ctx) in ids.clone() {
-            let id = id.map_type(|p| self.get_type_inner(p, trace_for_id, map, true));
+            let id = id.map_type(|p| {
+                let t = self.get_type_inner_for_hash(
+                    p,
+                    &mut Default::default(),
+                    &mut Default::default(),
+                    map,
+                    0,
+                );
+                debug_assert!(!t.contains_broken_link(0));
+                if let TypeInnerOf::Type(t) = t {
+                    self.type_id_generator.get_or_insert(t)
+                } else {
+                    panic!()
+                }
+            });
             new_ids.insert(
                 id,
                 ctx.into_iter()
-                    .map(|c| self.get_type_inner(c, trace, map, for_hash))
+                    .map(|c| self.get_type_inner(c, map))
                     .collect(),
             );
         }
         new_ids
     }
 
-    fn get_type_inner(
+    fn get_lambda_ids_for_hash(
         &mut self,
         p: TypePointer,
-        trace: &FxHashSet<TypePointer>,
+        trace: &mut FxHashMap<TypePointer, u32>,
+        used_trace: &mut FxHashSet<TypePointer>,
         map: &mut PaddedTypeMap,
-        for_hash: bool,
-    ) -> IntermediateTypeInner {
+        depth: u32,
+    ) -> BTreeMap<LambdaId<TypeInnerForHash>, <TypeForHashF as TypeFamily>::LambdaCtx> {
         let p = map.find(p);
-        if for_hash {
-            if let Some(t) = self.type_memo_for_hash.get(&p) {
-                debug_assert!(!trace.contains(&p));
-                return t.clone();
-            }
-        } else if let Some(t) = self.type_memo.get(&p) {
+        let Terminal::LambdaId(ids) = map.dereference_without_find(p) else {
+            panic!()
+        };
+        let mut new_ids = BTreeMap::new();
+        for (id, _ctx) in ids.clone() {
+            let id =
+                id.map_type(|p| self.get_type_inner_for_hash(p, trace, used_trace, map, depth));
+            new_ids.insert(id, ());
+        }
+        new_ids
+    }
+
+    fn get_type_inner(&mut self, p: TypePointer, map: &mut PaddedTypeMap) -> TypeInner {
+        let p = map.find(p);
+        if let Some(t) = self.type_memo.get(&p) {
             return t.clone();
         }
-        if trace.contains(&p) {
-            return TypeInnerOf::RecursionPoint(IndexOrPointer::Pointer(p));
+        let depth = self.trace.len();
+        if let Some(d) = self.trace.get(&p) {
+            self.used_trace.insert(p);
+            return TypeInnerOf::RecursionPoint((depth - *d - 1) as u32);
         }
-        let mut trace = trace.clone();
-        trace.insert(p);
-        let t = match &map.dereference_without_find(p) {
+        self.trace.insert(p, depth);
+        let mut t = match &map.dereference_without_find(p) {
             Terminal::TypeMap(type_map) => {
                 let mut ts = Vec::new();
                 for (type_id, normal_type) in type_map.normals.clone() {
-                    let a = self.get_type_from_id_and_args_rec(
-                        type_id,
-                        &normal_type,
-                        &trace,
-                        map,
-                        for_hash,
-                    );
+                    let a = self.get_type_from_id_and_args_rec(type_id, &normal_type, map);
                     ts.push(a)
                 }
                 TypeInnerOf::Type(TypeOf {
                     ts,
-                    recursive: false,
                     reference: false,
                     derefed: false,
                 })
             }
             Terminal::LambdaId(_) => panic!(),
         };
-        let r = replace_pointer(t, p, 0);
-        let mut t = r.t;
-        if r.replaced {
-            if let TypeInnerOf::Type(t) = &mut t {
-                t.recursive = true;
-            } else {
-                panic!()
-            }
-        };
+        self.trace.remove(&p);
         if self.ref_pointers.contains(&p) {
             if let TypeInnerOf::Type(t) = &mut t {
                 t.reference = true;
@@ -424,14 +294,76 @@ impl TypeMemo {
                 panic!()
             }
         }
-        if !r.contains_pointer {
-            let o = if for_hash {
-                self.type_memo_for_hash.insert(p, t.clone())
-            } else {
-                self.type_memo.insert(p, t.clone())
-            };
+        if self.used_trace.is_empty() {
+            let o = self.type_memo.insert(p, t.clone());
             debug_assert!(o.is_none());
         }
+        self.used_trace.remove(&p);
+        t
+    }
+
+    fn get_type_inner_for_hash(
+        &mut self,
+        p: TypePointer,
+        trace: &mut FxHashMap<TypePointer, u32>,
+        used_trace: &mut FxHashSet<TypePointer>,
+        map: &mut PaddedTypeMap,
+        depth: u32,
+    ) -> TypeInnerForHash {
+        let p = map.find(p);
+        if let Some(t) = self.type_memo_for_hash.get(&p) {
+            debug_assert!(!trace.contains_key(&p));
+            return t.clone();
+        }
+        if let Some(d) = trace.get(&p) {
+            used_trace.insert(p);
+            return TypeInnerOf::RecursionPoint(depth - *d - 1);
+        }
+        trace.insert(p, depth);
+        let depth = depth + 1;
+        let mut t = match &map.dereference_without_find(p) {
+            Terminal::TypeMap(type_map) => {
+                let mut ts = Vec::new();
+                for (type_id, normal_type) in type_map.normals.clone() {
+                    let a = self.get_type_from_id_and_args_rec_for_hash(
+                        type_id,
+                        &normal_type,
+                        trace,
+                        used_trace,
+                        map,
+                        depth,
+                    );
+                    ts.push(a)
+                }
+                TypeInnerOf::Type(TypeOf {
+                    ts,
+                    reference: false,
+                    derefed: false,
+                })
+            }
+            Terminal::LambdaId(_) => panic!(),
+        };
+        trace.remove(&p);
+        if self.ref_pointers.contains(&p) {
+            if let TypeInnerOf::Type(t) = &mut t {
+                t.reference = true;
+            } else {
+                panic!()
+            }
+        } else {
+            debug_assert!(self.ref_checked_pointers.contains(&p));
+            #[cfg(debug_assertions)]
+            if let TypeInnerOf::Type(t) = &mut t {
+                assert!(!t.reference);
+            } else {
+                panic!()
+            }
+        }
+        if used_trace.is_empty() {
+            let o = self.type_memo_for_hash.insert(p, t.clone());
+            debug_assert!(o.is_none());
+        }
+        used_trace.remove(&p);
         t
     }
 
@@ -439,23 +371,48 @@ impl TypeMemo {
         &mut self,
         id: TypeId,
         args: &[TypePointer],
-        trace: &FxHashSet<TypePointer>,
         map: &mut PaddedTypeMap,
-        for_hash: bool,
-    ) -> IntermediateTypeUnit {
+    ) -> TypeUnit {
         if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
             debug_assert_eq!(args.len(), 3);
             let mut args = args.iter();
-            let a = self.get_type_inner(*args.next().unwrap(), trace, map, for_hash);
-            let b = self.get_type_inner(*args.next().unwrap(), trace, map, for_hash);
-            let lambda_id = self.get_lambda_ids(*args.next().unwrap(), trace, map, for_hash);
+            let a = self.get_type_inner(*args.next().unwrap(), map);
+            let b = self.get_type_inner(*args.next().unwrap(), map);
+            let lambda_id = self.get_lambda_ids(*args.next().unwrap(), map);
+            TypeUnitOf::Fn(lambda_id, a, b)
+        } else {
+            TypeUnitOf::Normal {
+                id,
+                args: args.iter().map(|t| self.get_type_inner(*t, map)).collect(),
+            }
+        }
+    }
+
+    fn get_type_from_id_and_args_rec_for_hash(
+        &mut self,
+        id: TypeId,
+        args: &[TypePointer],
+        trace: &mut FxHashMap<TypePointer, u32>,
+        used_trace: &mut FxHashSet<TypePointer>,
+        map: &mut PaddedTypeMap,
+        depth: u32,
+    ) -> TypeUnitForHash {
+        if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
+            debug_assert_eq!(args.len(), 3);
+            let mut args = args.iter();
+            let a =
+                self.get_type_inner_for_hash(*args.next().unwrap(), trace, used_trace, map, depth);
+            let b =
+                self.get_type_inner_for_hash(*args.next().unwrap(), trace, used_trace, map, depth);
+            let lambda_id =
+                self.get_lambda_ids_for_hash(*args.next().unwrap(), trace, used_trace, map, depth);
             TypeUnitOf::Fn(lambda_id, a, b)
         } else {
             TypeUnitOf::Normal {
                 id,
                 args: args
                     .iter()
-                    .map(|t| self.get_type_inner(*t, trace, map, for_hash))
+                    .map(|t| self.get_type_inner_for_hash(*t, trace, used_trace, map, depth))
                     .collect(),
             }
         }
@@ -556,106 +513,6 @@ impl TypeMemo {
     }
 }
 
-struct ReplacePointerResult {
-    t: IntermediateTypeInner,
-    replaced: bool,
-    contains_pointer: bool,
-}
-
-fn replace_pointer(
-    t: IntermediateTypeInner,
-    from: TypePointer,
-    depth: u32,
-) -> ReplacePointerResult {
-    match t {
-        TypeInnerOf::RecursionPoint(IndexOrPointer::Index(i)) => ReplacePointerResult {
-            t: TypeInnerOf::RecursionPoint(IndexOrPointer::Index(i)),
-            replaced: false,
-            contains_pointer: i > depth,
-        },
-        TypeInnerOf::RecursionPoint(IndexOrPointer::Pointer(i)) => {
-            if i == from {
-                ReplacePointerResult {
-                    t: TypeInnerOf::RecursionPoint(IndexOrPointer::Index(depth)),
-                    replaced: true,
-                    contains_pointer: false,
-                }
-            } else {
-                ReplacePointerResult {
-                    t: TypeInnerOf::RecursionPoint(IndexOrPointer::Pointer(i)),
-                    replaced: false,
-                    contains_pointer: true,
-                }
-            }
-        }
-        TypeInnerOf::Type(t) => {
-            let depth = t.recursive as u32 + depth;
-            let mut new_t = Vec::new();
-            let mut replaced = false;
-            let mut contains_pointer = false;
-            use TypeUnitOf::*;
-            for u in t.ts {
-                match u {
-                    Normal { id, args } => {
-                        let args = args
-                            .into_iter()
-                            .map(|arg| {
-                                let r = replace_pointer(arg, from, depth);
-                                replaced |= r.replaced;
-                                contains_pointer |= r.contains_pointer;
-                                r.t
-                            })
-                            .collect();
-                        new_t.push(Normal { id, args });
-                    }
-                    Fn(l, a, b) => {
-                        let l = l
-                            .into_iter()
-                            .map(|(l, ctx)| {
-                                (
-                                    l.map_type(|t| {
-                                        let r = replace_pointer(t, from, depth);
-                                        replaced |= r.replaced;
-                                        contains_pointer |= r.contains_pointer;
-                                        r.t
-                                    }),
-                                    ctx.into_iter()
-                                        .map(|c| {
-                                            let r = replace_pointer(c, from, depth);
-                                            replaced |= r.replaced;
-                                            contains_pointer |= r.contains_pointer;
-                                            r.t
-                                        })
-                                        .collect(),
-                                )
-                            })
-                            .collect();
-                        let r = replace_pointer(a, from, depth);
-                        replaced |= r.replaced;
-                        contains_pointer |= r.contains_pointer;
-                        let a = r.t;
-                        let r = replace_pointer(b, from, depth);
-                        replaced |= r.replaced;
-                        contains_pointer |= r.contains_pointer;
-                        let b = r.t;
-                        new_t.push(Fn(l, a, b));
-                    }
-                }
-            }
-            ReplacePointerResult {
-                t: TypeInnerOf::Type(TypeOf {
-                    ts: new_t,
-                    recursive: t.recursive,
-                    reference: t.reference,
-                    derefed: t.derefed,
-                }),
-                replaced,
-                contains_pointer,
-            }
-        }
-    }
-}
-
 pub enum GetTagNormalResult {
     NotTagged,
     Impossible,
@@ -667,11 +524,7 @@ pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
     let mut tag = 0;
     let mut result = None;
     for t in ot.ts.clone() {
-        let t = if ot.recursive {
-            t.replace_index(ot, 0)
-        } else {
-            t
-        };
+        let t = t.replace_index(ot, 0);
         match &t {
             TypeUnitOf::Normal { id, .. } if *id == type_id => {
                 debug_assert!(result.is_none());
@@ -705,15 +558,13 @@ impl TypeInner {
             TypeInnerOf::RecursionPoint(a) => TypeInnerOf::RecursionPoint(a),
             TypeInnerOf::Type(TypeOf {
                 ts,
-                recursive,
                 reference,
                 derefed,
             }) => TypeInnerOf::Type(TypeOf {
                 ts: ts
                     .into_iter()
-                    .map(|t| t.replace_index(to, depth + recursive as u32))
+                    .map(|t| t.replace_index(to, depth + 1))
                     .collect(),
-                recursive,
                 reference,
                 derefed,
             }),
@@ -790,10 +641,6 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeOf<R> {
         f: &mut std::fmt::Formatter<'_>,
         env: &ConstructorNames,
     ) -> std::fmt::Result {
-        if self.recursive {
-            write!(f, "rec ")?;
-            p = P::Strong;
-        }
         if self.reference {
             write!(f, "&")?;
             p = P::Strong;
@@ -921,9 +768,6 @@ impl DisplayTypeWithEnv for id_generator::Id<TypeIdTag> {
 
 impl<R: TypeFamily> fmt::Debug for TypeOf<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.recursive {
-            write!(f, "rec ")?;
-        }
         if self.reference {
             write!(f, "&(")?;
         }
