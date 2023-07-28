@@ -48,36 +48,51 @@ impl Env {
         if type_stack.is_empty() {
             debug_assert!(!t.contains_broken_link_rec(0));
         }
+        let is_single = t
+            .iter()
+            .map(|t| match t {
+                TypeUnitOf::Normal { .. } => 1,
+                TypeUnitOf::Fn(l, _, _) => l.len(),
+            })
+            .sum::<usize>()
+            == 1;
+        let aggregate_to_c_type =
+            |t: CAggregateType, aggregate_types: &mut Collector<CAggregateType>| {
+                if is_single {
+                    CType::Aggregate(aggregate_types.get_or_insert_with_id(t, reserved_id))
+                } else {
+                    CType::Aggregate(aggregate_types.get_or_insert(t))
+                }
+            };
         for tu in t.iter() {
             use TypeUnitOf::*;
             match tu {
-                Normal { id, args } => match id {
-                    TypeId::Intrinsic(
-                        IntrinsicTypeTag::I64 | IntrinsicTypeTag::U8 | IntrinsicTypeTag::Ptr,
-                    ) => {
-                        let c_t = match id {
+                Normal { id, args } => {
+                    let c_t = match id {
+                        TypeId::Intrinsic(
+                            IntrinsicTypeTag::I64 | IntrinsicTypeTag::U8 | IntrinsicTypeTag::Ptr,
+                        ) => match id {
                             TypeId::Intrinsic(IntrinsicTypeTag::I64) => CType::I64,
                             TypeId::Intrinsic(IntrinsicTypeTag::U8) => CType::U8,
                             TypeId::Intrinsic(IntrinsicTypeTag::Ptr) => CType::Ptr,
                             _ => panic!(),
-                        };
-                        ts.push(c_t);
-                    }
-                    TypeId::Intrinsic(IntrinsicTypeTag::Mut) => {
-                        debug_assert_eq!(args.len(), 1);
-                        let arg_t = self.c_type_from_inner_type(&args[0], type_stack);
-                        let c_t = CType::Ref(Box::new(arg_t));
-                        ts.push(c_t);
-                    }
-                    _ => {
-                        let t = CAggregateType::Struct(
-                            args.iter()
-                                .map(|t| self.c_type_from_inner_type(t, type_stack))
-                                .collect(),
-                        );
-                        ts.push(CType::Aggregate(self.aggregate_types.get_or_insert(t)));
-                    }
-                },
+                        },
+                        TypeId::Intrinsic(IntrinsicTypeTag::Mut) => {
+                            debug_assert_eq!(args.len(), 1);
+                            let arg_t = self.c_type_from_inner_type(&args[0], type_stack);
+                            CType::Ref(Box::new(arg_t))
+                        }
+                        _ => {
+                            let t = CAggregateType::Struct(
+                                args.iter()
+                                    .map(|t| self.c_type_from_inner_type(t, type_stack))
+                                    .collect(),
+                            );
+                            aggregate_to_c_type(t, &mut self.aggregate_types)
+                        }
+                    };
+                    ts.push(c_t);
+                }
                 Fn(lambda_id, _, _) => {
                     for ctx in lambda_id.values() {
                         let c_t = CAggregateType::Struct(
@@ -85,19 +100,16 @@ impl Env {
                                 .map(|t| self.c_type_from_inner_type(t, type_stack))
                                 .collect(),
                         );
-                        ts.push(CType::Aggregate(self.aggregate_types.get_or_insert(c_t)))
+                        let c_t = aggregate_to_c_type(c_t, &mut self.aggregate_types);
+                        ts.push(c_t);
                     }
                 }
             }
         }
         type_stack.pop().unwrap();
-        if ts.len() == 1 {
-            let ct = ts.into_iter().next().unwrap();
-            if ct.contains_aggregate_under_struct(reserved_id, &self.aggregate_types) {
-                CType::Diverge
-            } else {
-                ct
-            }
+        if is_single {
+            debug_assert_eq!(ts.len(), 1);
+            ts.into_iter().next().unwrap()
         } else {
             let i = self
                 .aggregate_types
@@ -127,7 +139,9 @@ impl Env {
         if type_stack.is_empty() {
             debug_assert!(!t.contains_broken_link_rec(0));
         }
-        if t.reference && !t.derefed {
+        if t.diverging {
+            CType::Diverge
+        } else if t.reference && !t.derefed {
             let t = self.c_type_memoize(&t.clone().deref(), type_stack);
             let i = if let CType::Aggregate(i) = t {
                 i
@@ -172,29 +186,4 @@ fn contains_index(t: &Type, mut depth: i32) -> bool {
         TypeUnitOf::Normal { id: _, args } => check(args),
         TypeUnitOf::Fn(ls, _, _) => ls.iter().any(|(_, ctx)| check(ctx)),
     })
-}
-
-impl CType {
-    fn contains_aggregate_under_struct(
-        &self,
-        i: usize,
-        aggregate_types: &Collector<CAggregateType>,
-    ) -> bool {
-        match self {
-            CType::I64 | CType::U8 | CType::Ptr => false,
-            CType::Aggregate(j) => {
-                i == *j
-                    || aggregate_types
-                        .get_rev(*j)
-                        .map(|t| match t {
-                            CAggregateType::Struct(ts) => ts
-                                .iter()
-                                .any(|t| t.contains_aggregate_under_struct(i, aggregate_types)),
-                            CAggregateType::Union(_) => false,
-                        })
-                        .unwrap_or(false)
-            }
-            CType::Diverge | CType::Ref(_) => false,
-        }
-    }
 }

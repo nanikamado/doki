@@ -280,25 +280,17 @@ fn sort_aggregates_rec<'a>(
     h: &'a FxHashMap<usize, CAggregateType>,
     done: &mut FxHashSet<usize>,
     sorted: &mut Vec<(usize, &'a CAggregateType)>,
-) -> bool {
-    if done.contains(&i) {
-        true
-    } else if let Some(a) = &h.get(&i) {
+) {
+    if !done.contains(&i) {
         done.insert(i);
+        let a = &h[&i];
         let (CAggregateType::Union(cs) | CAggregateType::Struct(cs)) = a;
         for c in cs {
             if let CType::Aggregate(i) = c {
-                let created = sort_aggregates_rec(*i, h, done, sorted);
-                if !created {
-                    return false;
-                }
+                sort_aggregates_rec(*i, h, done, sorted);
             }
         }
         sorted.push((i, a));
-        true
-    } else {
-        // `i` cannot be created at runtime because of diverging.
-        false
     }
 }
 

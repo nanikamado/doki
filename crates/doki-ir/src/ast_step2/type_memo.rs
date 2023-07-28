@@ -12,6 +12,7 @@ use std::iter::once;
 pub struct TypeOf<T: TypeFamily> {
     ts: Vec<TypeUnitOf<T>>,
     pub reference: bool,
+    pub diverging: bool,
     pub derefed: bool,
 }
 
@@ -73,6 +74,7 @@ impl<T: TypeFamily> From<TypeUnitOf<T>> for TypeOf<T> {
             ts: once(value).collect(),
             reference: false,
             derefed: false,
+            diverging: false,
         }
     }
 }
@@ -157,6 +159,7 @@ pub struct TypeMemo {
     type_memo_for_hash: FxHashMap<TypePointer, TypeInnerForHash>,
     pub minimized_pointers: FxHashSet<TypePointer>,
     pub ref_pointers: FxHashSet<TypePointer>,
+    pub diverging_pointers: FxHashSet<TypePointer>,
     ref_checked_pointers: FxHashSet<TypePointer>,
     pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
     trace: FxHashMap<TypePointer, usize>,
@@ -274,12 +277,19 @@ impl TypeMemo {
                     ts,
                     reference: false,
                     derefed: false,
+                    diverging: false,
                 })
             }
             Terminal::LambdaId(_) => panic!(),
         };
         self.trace.remove(&p);
-        if self.ref_pointers.contains(&p) {
+        if self.diverging_pointers.contains(&p) {
+            if let TypeInnerOf::Type(t) = &mut t {
+                t.diverging = true;
+            } else {
+                panic!()
+            }
+        } else if self.ref_pointers.contains(&p) {
             if let TypeInnerOf::Type(t) = &mut t {
                 t.reference = true;
             } else {
@@ -339,6 +349,7 @@ impl TypeMemo {
                     ts,
                     reference: false,
                     derefed: false,
+                    diverging: false,
                 })
             }
             Terminal::LambdaId(_) => panic!(),
@@ -419,64 +430,81 @@ impl TypeMemo {
     }
 
     pub fn collect_ref_pointers(&mut self, p: TypePointer, map: &mut PaddedTypeMap) {
-        self.collect_ref_pointers_aux(p, &Default::default(), &Default::default(), map)
+        self.collect_ref_pointers_aux(
+            p,
+            &mut Default::default(),
+            &mut Vec::with_capacity(5),
+            None,
+            map,
+        )
     }
 
     fn collect_ref_pointers_aux(
         &mut self,
         p: TypePointer,
-        ref_candidates: &FxHashSet<TypePointer>,
-        trace: &FxHashSet<TypePointer>,
+        trace_map: &mut FxHashSet<TypePointer>,
+        trace: &mut Vec<TypePointer>,
+        mut divergent_stopper: Option<DivergentStopper>,
         map: &mut PaddedTypeMap,
     ) {
         let p = map.find(p);
         if self.ref_checked_pointers.contains(&p) {
             return;
         }
-        if trace.contains(&p) {
-            if ref_candidates.contains(&p) {
-                let new = self.ref_pointers.insert(p);
-                debug_assert!(new);
-                let new = self.ref_checked_pointers.insert(p);
-                debug_assert!(new);
+        if trace_map.contains(&p) {
+            if trace.contains(&p) {
+                for u in trace {
+                    self.diverging_pointers.insert(*u);
+                    self.ref_checked_pointers.insert(*u);
+                }
+            } else if let DivergentStopper::Union(u) = divergent_stopper.unwrap() {
+                self.ref_pointers.insert(u);
+                self.ref_checked_pointers.insert(u);
             }
             return;
         }
-        let mut trace = trace.clone();
-        trace.insert(p);
         match map.dereference_without_find(p) {
             Terminal::TypeMap(t) => {
                 let t = t.normals.clone();
-                let union = if t.len() == 1 {
-                    let (id, ts) = t.iter().next().unwrap();
-                    match id {
+                let is_union = t
+                    .iter()
+                    .map(|(id, ts)| match id {
                         TypeId::Intrinsic(IntrinsicTypeTag::Fn) => match map.dereference(ts[2]) {
                             Terminal::TypeMap(_) => panic!(),
-                            Terminal::LambdaId(l) => l.len() > 1,
+                            Terminal::LambdaId(l) => l.len(),
                         },
-                        _ => false,
-                    }
+                        _ => 1,
+                    })
+                    .sum::<usize>()
+                    > 1;
+                let mut new_trace;
+                let trace = if is_union {
+                    // trace.clear();
+                    divergent_stopper = Some(DivergentStopper::Union(p));
+                    new_trace = Vec::new();
+                    &mut new_trace
                 } else {
-                    t.len() > 1
+                    trace.push(p);
+                    trace
                 };
-                let mut new_ref_candidates;
-                let ref_candidates = if union {
-                    new_ref_candidates = ref_candidates.clone();
-                    new_ref_candidates.insert(p);
-                    &new_ref_candidates
-                } else {
-                    ref_candidates
-                };
+                trace_map.insert(p);
                 for (id, ts) in t {
                     match id {
                         TypeId::Intrinsic(id) => match id {
                             IntrinsicTypeTag::Fn => {
-                                self.collect_ref_pointers_aux(ts[2], ref_candidates, &trace, map);
+                                self.collect_ref_pointers_aux(
+                                    ts[2],
+                                    trace_map,
+                                    trace,
+                                    divergent_stopper,
+                                    map,
+                                );
                                 for t in &ts[..2] {
                                     self.collect_ref_pointers_aux(
                                         *t,
-                                        &Default::default(),
-                                        &trace,
+                                        trace_map,
+                                        &mut Vec::new(),
+                                        Some(DivergentStopper::Indirect),
                                         map,
                                     );
                                 }
@@ -485,8 +513,9 @@ impl TypeMemo {
                                 for t in ts {
                                     self.collect_ref_pointers_aux(
                                         t,
-                                        &Default::default(),
-                                        &trace,
+                                        trace_map,
+                                        &mut Vec::new(),
+                                        Some(DivergentStopper::Indirect),
                                         map,
                                     );
                                 }
@@ -494,23 +523,45 @@ impl TypeMemo {
                         },
                         TypeId::UserDefined(_) => {
                             for t in ts {
-                                self.collect_ref_pointers_aux(t, ref_candidates, &trace, map);
+                                self.collect_ref_pointers_aux(
+                                    t,
+                                    trace_map,
+                                    trace,
+                                    divergent_stopper,
+                                    map,
+                                );
                             }
                         }
                     }
                 }
+                if !is_union {
+                    trace.pop().unwrap();
+                }
+                trace_map.remove(&p);
             }
             Terminal::LambdaId(l) => {
                 for (id, ctx) in l.clone() {
                     for t in ctx {
-                        self.collect_ref_pointers_aux(t, ref_candidates, &trace, map);
+                        self.collect_ref_pointers_aux(t, trace_map, trace, divergent_stopper, map);
                     }
-                    self.collect_ref_pointers_aux(id.root_t, &Default::default(), &trace, map);
+                    self.collect_ref_pointers_aux(
+                        id.root_t,
+                        trace_map,
+                        &mut Vec::new(),
+                        Some(DivergentStopper::Indirect),
+                        map,
+                    );
                 }
             }
         }
         self.ref_checked_pointers.insert(p);
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DivergentStopper {
+    Indirect,
+    Union(TypePointer),
 }
 
 pub enum GetTagNormalResult {
@@ -560,6 +611,7 @@ impl TypeInner {
                 ts,
                 reference,
                 derefed,
+                diverging,
             }) => TypeInnerOf::Type(TypeOf {
                 ts: ts
                     .into_iter()
@@ -567,6 +619,7 @@ impl TypeInner {
                     .collect(),
                 reference,
                 derefed,
+                diverging,
             }),
         }
     }
@@ -641,6 +694,14 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeOf<R> {
         f: &mut std::fmt::Formatter<'_>,
         env: &ConstructorNames,
     ) -> std::fmt::Result {
+        if self.diverging {
+            write!(f, "!")?;
+            p = P::Strong;
+        }
+        if self.derefed {
+            write!(f, "*")?;
+            p = P::Strong;
+        }
         if self.reference {
             write!(f, "&")?;
             p = P::Strong;
