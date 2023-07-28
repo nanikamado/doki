@@ -84,7 +84,7 @@ impl Display for Codegen<'_> {
         .into();
         let unit_t = c_type_env.c_type(&unit_t, &mut Vec::new());
         let aggregates: &FxHashMap<_, _> = c_type_env.aggregate_types.rev_map_as_raw();
-        let sorted = sort_aggregates(aggregates);
+        let (sorted, included) = sort_aggregates(aggregates);
         write!(
             f,
             "
@@ -116,14 +116,18 @@ impl Display for Codegen<'_> {
                 }
             }),
             c_type_env.reffed_aggregates.iter().format_with("", |i, f| {
-                let t = CType::Aggregate(*i);
-                f(&format_args!(
-                    "static {t}* ref_t{i}({t} a) {{
-                        {t}* tmp = malloc(sizeof({t}));
-                        *tmp = a;
-                        return tmp;
-                    }}"
-                ))
+                if included.contains(i) {
+                    let t = CType::Aggregate(*i);
+                    f(&format_args!(
+                        "static {t}* ref_t{i}({t} a) {{
+                            {t}* tmp = malloc(sizeof({t}));
+                            *tmp = a;
+                            return tmp;
+                        }}"
+                    ))
+                } else {
+                    Ok(())
+                }
             }),
             mutted_types
                 .iter()
@@ -260,40 +264,41 @@ impl Display for PrimitiveDefPrint<'_> {
     }
 }
 
-fn sort_aggregates(aggregates: &FxHashMap<usize, CAggregateType>) -> Vec<(usize, &CAggregateType)> {
+fn sort_aggregates(
+    aggregates: &FxHashMap<usize, CAggregateType>,
+) -> (Vec<(usize, &CAggregateType)>, FxHashSet<usize>) {
     let mut done = FxHashSet::default();
     let mut sorted = Vec::with_capacity(aggregates.len());
     for i in aggregates.keys() {
         sort_aggregates_rec(*i, aggregates, &mut done, &mut sorted);
     }
-    sorted
+    (sorted, done)
 }
+
 fn sort_aggregates_rec<'a>(
     i: usize,
     h: &'a FxHashMap<usize, CAggregateType>,
     done: &mut FxHashSet<usize>,
     sorted: &mut Vec<(usize, &'a CAggregateType)>,
 ) -> bool {
-    if !done.contains(&i) {
+    if done.contains(&i) {
+        true
+    } else if let Some(a) = &h.get(&i) {
         done.insert(i);
-        if let Some(a) = &h.get(&i) {
-            let (CAggregateType::Union(cs) | CAggregateType::Struct(cs)) = a;
-            for c in cs {
-                if let CType::Aggregate(i) = c {
-                    let created = sort_aggregates_rec(*i, h, done, sorted);
-                    if !created {
-                        return false;
-                    }
+        let (CAggregateType::Union(cs) | CAggregateType::Struct(cs)) = a;
+        for c in cs {
+            if let CType::Aggregate(i) = c {
+                let created = sort_aggregates_rec(*i, h, done, sorted);
+                if !created {
+                    return false;
                 }
             }
-            sorted.push((i, a));
-            true
-        } else {
-            // `i` cannot be created at runtime because of diverging.
-            false
         }
-    } else {
+        sorted.push((i, a));
         true
+    } else {
+        // `i` cannot be created at runtime because of diverging.
+        false
     }
 }
 
