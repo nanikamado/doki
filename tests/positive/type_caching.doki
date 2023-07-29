@@ -1,0 +1,25 @@
+data Unit 0
+data Cons 2
+data Err 1
+data Ok 1
+
+parser_map = a: f: i:
+    match a i with
+        Ok (Cons a _) => Ok (Cons (f a) Unit),
+    end
+
+or = p1: p2: i:
+    match p1 i with
+        Err e => p2 i,
+        Ok a => Ok a,
+    end
+
+any = i: match i with
+        Cons c _ => Ok (Cons c Unit),
+    end
+
+expr = i: let lambda = parser_map Unit (_: Unit)
+    in let let_ = parser_map any (Cons _ (Cons e _): e)
+    in or let_ (or lambda any)
+
+main = _: expr

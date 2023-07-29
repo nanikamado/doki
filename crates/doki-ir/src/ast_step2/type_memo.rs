@@ -304,11 +304,11 @@ impl TypeMemo {
                 panic!()
             }
         }
+        self.used_trace.remove(&p);
         if self.used_trace.is_empty() {
             let o = self.type_memo.insert(p, t.clone());
             debug_assert!(o.is_none());
         }
-        self.used_trace.remove(&p);
         t
     }
 

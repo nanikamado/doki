@@ -197,3 +197,8 @@ fn tak() {
 fn takl() {
     positive_test_with_stdin("larceny_bench/takl.doki", "32\n16\n8\n", "9\n");
 }
+
+#[test]
+fn type_caching() {
+    positive_test_with_stdin("type_caching.doki", "", "");
+}
