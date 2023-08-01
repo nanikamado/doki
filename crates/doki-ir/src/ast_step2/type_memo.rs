@@ -160,7 +160,7 @@ pub struct TypeMemo {
     pub minimized_pointers: FxHashSet<TypePointer>,
     pub ref_pointers: FxHashSet<TypePointer>,
     pub diverging_pointers: FxHashSet<TypePointer>,
-    ref_checked_pointers: FxHashSet<TypePointer>,
+    pub ref_checked_pointers: FxHashSet<TypePointer>,
     pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
     trace: FxHashMap<TypePointer, usize>,
     used_trace: FxHashSet<TypePointer>,
@@ -197,7 +197,7 @@ impl TypeMemo {
         }
     }
 
-    fn get_lambda_ids(
+    pub fn get_lambda_ids(
         &mut self,
         p: TypePointer,
         map: &mut PaddedTypeMap,
@@ -562,44 +562,6 @@ impl TypeMemo {
 enum DivergentStopper {
     Indirect,
     Union(TypePointer),
-}
-
-pub enum GetTagNormalResult {
-    NotTagged,
-    Impossible,
-    Tagged(u32, TypeUnitOf<NormalTypeF>),
-}
-
-pub fn get_tag_normal(ot: &Type, type_id: TypeId) -> GetTagNormalResult {
-    debug_assert_ne!(type_id, TypeId::Intrinsic(IntrinsicTypeTag::Fn));
-    let mut tag = 0;
-    let mut result = None;
-    for t in ot.ts.clone() {
-        let t = t.replace_index(ot, 0);
-        match &t {
-            TypeUnitOf::Normal { id, .. } if *id == type_id => {
-                debug_assert!(result.is_none());
-                result = Some((tag, t));
-                tag += 1;
-            }
-            TypeUnitOf::Fn(lambda_ids, _, _) => {
-                tag += lambda_ids.len() as u32;
-            }
-            _ => {
-                tag += 1;
-            }
-        }
-    }
-    match result {
-        Some((tag_of_t, t)) => {
-            if tag == 1 {
-                GetTagNormalResult::NotTagged
-            } else {
-                GetTagNormalResult::Tagged(tag_of_t, t)
-            }
-        }
-        None => GetTagNormalResult::Impossible,
-    }
 }
 
 impl TypeInner {

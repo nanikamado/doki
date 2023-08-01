@@ -2,7 +2,7 @@ mod local_variable;
 mod type_memo;
 
 pub use self::local_variable::{LocalVariable, LocalVariableCollector};
-use self::type_memo::{get_tag_normal, GetTagNormalResult, TypeMemo};
+use self::type_memo::TypeMemo;
 pub use self::type_memo::{
     DisplayTypeWithEnv, DisplayTypeWithEnvStruct, Type, TypeForHash, TypeInner, TypeInnerForHash,
     TypeInnerOf, TypeUnit, TypeUnitForHash, TypeUnitOf,
@@ -11,7 +11,6 @@ use crate::ast_step1::{
     self, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
     ReplaceMap, TypeId, TypePointer,
 };
-use crate::ast_step2::type_memo::BrokenLinkCheck;
 use crate::collector::Collector;
 use crate::id_generator::{self, IdGenerator};
 use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariable};
@@ -438,15 +437,15 @@ impl<'a> Env<'a> {
                 let t = self
                     .map
                     .clone_pointer(self.local_variable_types_old.get(v), replace_map);
-                let t = self.map.clone_pointer(t, replace_map);
-                let t = self.get_type(t);
-                let e = self.expr(e, &t, root_t, replace_map, basic_block_env, catch_label);
+                let p = self.map.clone_pointer(t, replace_map);
+                let e = self.expr(e, p, root_t, replace_map, basic_block_env, catch_label);
                 match e {
                     Ok(e) => {
                         let new_v =
                             if let Some(v) = self.local_variable_replace_map.get(&(v, root_t)) {
                                 *v
                             } else {
+                                let t = self.get_type(p);
                                 let new_v = self.new_variable(t);
                                 self.local_variable_replace_map.insert((v, root_t), new_v);
                                 new_v
@@ -483,15 +482,15 @@ impl<'a> Env<'a> {
                 }
             }
             ast_step1::Instruction::Test(ast_step1::Tester::Constructor { id }, a) => {
-                let t = self
+                let p = self
                     .map
                     .clone_pointer(self.local_variable_types_old.get(a), replace_map);
-                let t = self.get_type(t);
                 let a = self.get_defined_local_variable(a, root_t, replace_map);
-                match get_tag_normal(&t, id) {
+                match self.get_tag_normal(p, id) {
                     GetTagNormalResult::Tagged(tag, _untagged_t) => {
+                        let t = self.get_type(p);
                         let a =
-                            self.deref(VariableId::Local(a), &t, &mut basic_block_env.instructions);
+                            self.deref(VariableId::Local(a), t, &mut basic_block_env.instructions);
                         basic_block_env.instructions.push(Instruction::Test {
                             tester: Tester::Tag { tag },
                             operand: a,
@@ -551,15 +550,15 @@ impl<'a> Env<'a> {
         test_instead_of_panic: bool,
         catch_label: usize,
     ) -> Result<VariableId, String> {
-        let t = self
+        let p = self
             .map
             .clone_pointer(self.local_variable_types_old.get(a), replace_map);
-        let t = self.get_type(t);
         let a = self.get_defined_local_variable(a, root_t, replace_map);
-        let a = self.deref(VariableId::Local(a), &t, instructions);
-        match get_tag_normal(&t, type_id) {
+        let t = self.get_type(p);
+        let a = self.deref(VariableId::Local(a), t.clone(), instructions);
+        match self.get_tag_normal(p, type_id) {
             GetTagNormalResult::Tagged(tag, casted_t) => {
-                let casted_t: Type = casted_t.into();
+                let casted_t: Type = self.get_type(casted_t);
                 if test_instead_of_panic {
                     instructions.push(Instruction::Test {
                         tester: Tester::Tag { tag },
@@ -589,7 +588,7 @@ impl<'a> Env<'a> {
     fn expr(
         &mut self,
         e: ast_step1::Expr,
-        t: &Type,
+        p: TypePointer,
         root_t: Root,
         replace_map: &mut ReplaceMap,
         basic_block_env: &mut BasicBlockEnv,
@@ -608,7 +607,7 @@ impl<'a> Env<'a> {
                     .into_iter()
                     .map(|v| self.get_defined_local_variable(v, root_t, replace_map))
                     .collect_vec();
-                let possible_functions = self.get_possible_functions(t);
+                let possible_functions = self.get_possible_functions(p);
                 let parameter = self.local_variable_def_replace(parameter, root_t, replace_map);
                 let (basic_blocks, ret) = self.function_body(body, root_t, replace_map, ret);
                 let lambda_id = LambdaId {
@@ -649,12 +648,11 @@ impl<'a> Env<'a> {
                         value: VariableId::Local(d),
                     }
                 };
-                if t.reference {
-                    let v = self.expr_to_variable(
-                        e,
-                        t.clone().deref(),
-                        &mut basic_block_env.instructions,
-                    );
+                self.type_memo.collect_ref_pointers(p, &mut self.map);
+                debug_assert!(self.type_memo.ref_checked_pointers.contains(&p));
+                if self.type_memo.ref_pointers.contains(&p) {
+                    let t = self.get_type(p);
+                    let v = self.expr_to_variable(e, t.deref(), &mut basic_block_env.instructions);
                     Expr::Ref(v)
                 } else {
                     e
@@ -662,19 +660,19 @@ impl<'a> Env<'a> {
             }
             ast_step1::Expr::I64(s) => self.add_tags_to_expr(
                 I64(s),
-                t,
+                p,
                 TypeId::Intrinsic(IntrinsicTypeTag::I64),
                 &mut basic_block_env.instructions,
             ),
             ast_step1::Expr::U8(s) => self.add_tags_to_expr(
                 U8(s),
-                t,
+                p,
                 TypeId::Intrinsic(IntrinsicTypeTag::U8),
                 &mut basic_block_env.instructions,
             ),
             ast_step1::Expr::Str(s) => self.add_tags_to_expr(
                 Str(s),
-                t,
+                p,
                 TypeId::Intrinsic(IntrinsicTypeTag::Ptr),
                 &mut basic_block_env.instructions,
             ),
@@ -683,15 +681,11 @@ impl<'a> Env<'a> {
             }
             ast_step1::Expr::Call { f, a } => {
                 let f_t = self.local_variable_types_old.get(f);
-                let f_t = self.map.clone_pointer(f_t, replace_map);
-                let f_t = self.get_type(f_t);
-                let possible_functions = self.get_possible_functions(&f_t);
+                let f_t_p = self.map.clone_pointer(f_t, replace_map);
+                let f_t = self.get_type(f_t_p);
+                let possible_functions = self.get_possible_functions(f_t_p);
                 let f = self.get_defined_local_variable(f, root_t, replace_map);
-                let f = self.deref(
-                    VariableId::Local(f),
-                    &f_t,
-                    &mut basic_block_env.instructions,
-                );
+                let f = self.deref(VariableId::Local(f), f_t, &mut basic_block_env.instructions);
                 let a = VariableId::Local(self.get_defined_local_variable(a, root_t, replace_map));
                 if possible_functions.is_empty() {
                     return Err("not a function".to_string());
@@ -704,7 +698,8 @@ impl<'a> Env<'a> {
                         tail_call: RefCell::new(false),
                     }
                 } else {
-                    let ret_v = self.new_variable(t.clone());
+                    let t = self.get_type(p);
+                    let ret_v = self.new_variable(t);
                     let skip = basic_block_env.new_label();
                     for (tag, id, casted_t) in possible_functions {
                         let next = basic_block_env.new_label();
@@ -756,7 +751,7 @@ impl<'a> Env<'a> {
                         args,
                         id: BasicFunction::Construction(id),
                     },
-                    t,
+                    p,
                     TypeId::UserDefined(id),
                     &mut basic_block_env.instructions,
                 )
@@ -771,7 +766,7 @@ impl<'a> Env<'a> {
                         args: Vec::new(),
                         id: BasicFunction::IntrinsicConstruction(id),
                     },
-                    t,
+                    p,
                     TypeId::Intrinsic(id.into()),
                     &mut basic_block_env.instructions,
                 )
@@ -831,7 +826,7 @@ impl<'a> Env<'a> {
                 match id.runtime_return_type() {
                     Some(rt) => self.add_tags_to_expr(
                         e,
-                        t,
+                        p,
                         TypeId::Intrinsic(rt),
                         &mut basic_block_env.instructions,
                     ),
@@ -842,38 +837,43 @@ impl<'a> Env<'a> {
         Ok(e)
     }
 
-    fn get_possible_functions(&mut self, ot: &Type) -> Vec<(i32, FxLambdaId, Type)> {
+    fn get_possible_functions(&mut self, ot: TypePointer) -> Vec<(i32, FxLambdaId, Type)> {
         let mut fs = Vec::new();
         let mut tag = 0;
-        for t in ot.iter() {
-            let t = t.clone().replace_index(ot, 0);
-            match t {
-                TypeUnitOf::Normal { .. } => {
-                    tag += 1;
-                }
-                TypeUnitOf::Fn(fn_id, arg_t, ret_t) => {
-                    debug_assert!(!arg_t.contains_broken_link(0));
-                    debug_assert!(!ret_t.contains_broken_link(0));
-                    for id_type_inner in fn_id {
+        if let ast_step1::Terminal::TypeMap(ts) = self.map.dereference(ot) {
+            for (id, args) in ts.normals.clone() {
+                if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
+                    let ls = self.type_memo.get_lambda_ids(args[2], &mut self.map);
+                    for (lambda_id, ctx) in ls {
                         let len = self.functions.len() as u32;
                         let e = self
                             .functions
-                            .entry(id_type_inner.0)
+                            .entry(lambda_id)
                             .or_insert(FunctionEntry::Placeholder(FxLambdaId(len)));
                         let id = match e {
                             FunctionEntry::Placeholder(id) => *id,
                             FunctionEntry::Function(f) => f.id,
                         };
+                        let arg_t = self.get_type(args[0]);
+                        let ret_t = self.get_type(args[1]);
                         fs.push((
                             tag,
                             id,
-                            TypeUnitOf::Fn([id_type_inner].into(), arg_t.clone(), ret_t.clone())
-                                .into(),
+                            TypeUnitOf::Fn(
+                                [(lambda_id, ctx)].into(),
+                                TypeInnerOf::Type(arg_t),
+                                TypeInnerOf::Type(ret_t),
+                            )
+                            .into(),
                         ));
                         tag += 1;
                     }
+                } else {
+                    tag += 1;
                 }
             }
+        } else {
+            panic!()
         }
         fs
     }
@@ -907,14 +907,9 @@ impl<'a> Env<'a> {
         VariableId::Local(d)
     }
 
-    fn deref(
-        &mut self,
-        v: VariableId,
-        t: &Type,
-        instructions: &mut Vec<Instruction>,
-    ) -> VariableId {
+    fn deref(&mut self, v: VariableId, t: Type, instructions: &mut Vec<Instruction>) -> VariableId {
         if t.reference {
-            let d = self.new_variable(t.clone().deref());
+            let d = self.new_variable(t.deref());
             instructions.push(Instruction::Assign(d, Expr::Deref(v)));
             VariableId::Local(d)
         } else {
@@ -925,13 +920,14 @@ impl<'a> Env<'a> {
     fn add_tags_to_expr(
         &mut self,
         e: Expr,
-        t: &Type,
+        p: TypePointer,
         id: TypeId,
         instructions: &mut Vec<Instruction>,
     ) -> Expr {
-        let e = match get_tag_normal(t, id) {
+        let e = match self.get_tag_normal(p, id) {
             GetTagNormalResult::Tagged(tag, tu) => {
-                let d = self.new_variable(tu.into());
+                let t = self.get_type(tu);
+                let d = self.new_variable(t);
                 instructions.push(Instruction::Assign(d, e));
                 Expr::Upcast {
                     tag,
@@ -943,14 +939,61 @@ impl<'a> Env<'a> {
                 panic!()
             }
         };
+        let t = self.get_type(p);
         if t.reference {
-            let d = self.new_variable(t.clone().deref());
+            let d = self.new_variable(t.deref());
             instructions.push(Instruction::Assign(d, e));
             Expr::Ref(VariableId::Local(d))
         } else {
             e
         }
     }
+
+    fn get_tag_normal(&mut self, ot: TypePointer, type_id: TypeId) -> GetTagNormalResult {
+        debug_assert_ne!(type_id, TypeId::Intrinsic(IntrinsicTypeTag::Fn));
+        let mut tag = 0;
+        let mut result = None;
+        match self.map.dereference(ot) {
+            ast_step1::Terminal::TypeMap(ts) => {
+                for (id, args) in ts.normals.clone() {
+                    if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
+                        if let ast_step1::Terminal::LambdaId(ls) = self.map.dereference(args[2]) {
+                            tag += ls.len();
+                        } else {
+                            panic!()
+                        }
+                    } else {
+                        if id == type_id {
+                            debug_assert!(result.is_none());
+                            let p = self.map.new_pointer();
+                            self.map.insert_normal(p, id, args);
+                            result = Some((tag, p));
+                        }
+                        tag += 1;
+                    }
+                }
+            }
+            ast_step1::Terminal::LambdaId(_) => {
+                panic!()
+            }
+        }
+        match result {
+            Some((tag_of_t, t)) => {
+                if tag == 1 {
+                    GetTagNormalResult::NotTagged
+                } else {
+                    GetTagNormalResult::Tagged(tag_of_t as u32, t)
+                }
+            }
+            None => GetTagNormalResult::Impossible,
+        }
+    }
+}
+
+pub enum GetTagNormalResult {
+    NotTagged,
+    Impossible,
+    Tagged(u32, TypePointer),
 }
 
 impl Display for FxLambdaId {
