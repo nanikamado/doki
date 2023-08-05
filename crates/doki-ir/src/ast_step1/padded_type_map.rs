@@ -179,6 +179,14 @@ impl PaddedTypeMap {
         next_p
     }
 
+    pub fn find_without_mut(&self, mut p: TypePointer) -> TypePointer {
+        while let Node::Pointer(p_next) = self.map[p.0] {
+            p = p_next;
+        }
+        debug_assert!(!matches!(self.map[p.0], Node::Null));
+        p
+    }
+
     pub fn get_fn(&mut self, p: TypePointer) -> (TypePointer, TypePointer, TypePointer) {
         let p = self.find(p);
         if let Terminal::TypeMap(t) = &self.dereference_without_find(p) {
