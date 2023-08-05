@@ -6,6 +6,7 @@ mod id_generator;
 pub mod intrinsics;
 mod scc;
 mod tail_recursion_elimination;
+mod util;
 
 pub use crate::ast_step1::{
     Block, ConstructorId, ConstructorNames, Env, GlobalVariable, Lambda, LocalVariable, TypeId,
