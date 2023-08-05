@@ -4,7 +4,7 @@ mod padded_type_map;
 pub use self::padded_type_map::JsonDebug;
 pub use self::padded_type_map::{PaddedTypeMap, ReplaceMap, Terminal, TypeId, TypePointer};
 use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariable};
-use crate::scc;
+use crate::util::scc;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::{Debug, Display};

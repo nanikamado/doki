@@ -1,7 +1,7 @@
 use super::{LambdaId, TypeIdTag};
 use crate::ast_step1::{ConstructorNames, PaddedTypeMap, Terminal, TypeId, TypePointer};
-use crate::id_generator::{self, IdGenerator};
 use crate::intrinsics::IntrinsicTypeTag;
+use crate::util::id_generator::{self, IdGenerator};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;

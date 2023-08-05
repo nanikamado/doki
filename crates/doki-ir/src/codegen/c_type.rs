@@ -1,7 +1,7 @@
 use crate::ast_step1::TypeId;
 use crate::ast_step2::{Type, TypeInner, TypeInnerOf, TypeUnitOf};
-use crate::collector::Collector;
 use crate::intrinsics::IntrinsicTypeTag;
+use crate::util::collector::Collector;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::Display;
 

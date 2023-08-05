@@ -6,8 +6,8 @@ use crate::ast_step2::{
     self, Ast, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId, Instruction,
     LocalVariable, LocalVariableCollector, Tester, Type, TypeUnitOf, VariableId,
 };
-use crate::collector::Collector;
 use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
+use crate::util::collector::Collector;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::Display;

@@ -11,9 +11,9 @@ use crate::ast_step1::{
     self, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
     ReplaceMap, TypeId, TypePointer,
 };
-use crate::collector::Collector;
-use crate::id_generator::{self, IdGenerator};
 use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariable};
+use crate::util::collector::Collector;
+use crate::util::id_generator::{self, IdGenerator};
 use crate::ConstructorId;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;

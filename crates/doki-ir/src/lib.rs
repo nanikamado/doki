@@ -1,10 +1,7 @@
 mod ast_step1;
 mod ast_step2;
 mod codegen;
-mod collector;
-mod id_generator;
 pub mod intrinsics;
-mod scc;
 mod tail_recursion_elimination;
 mod util;
 
