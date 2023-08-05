@@ -157,7 +157,6 @@ impl<T: BrokenLinkCheck> BrokenLinkCheck for Vec<T> {
 pub struct TypeMemo {
     type_memo: FxHashMap<TypePointer, TypeInner>,
     type_memo_for_hash: FxHashMap<TypePointer, TypeInnerForHash>,
-    pub minimized_pointers: FxHashSet<TypePointer>,
     pub ref_pointers: FxHashSet<TypePointer>,
     pub diverging_pointers: FxHashSet<TypePointer>,
     pub ref_checked_pointers: FxHashSet<TypePointer>,
@@ -181,6 +180,7 @@ impl TypeMemo {
     }
 
     pub fn get_type_for_hash(&mut self, p: TypePointer, map: &mut PaddedTypeMap) -> TypeForHash {
+        map.minimize(p);
         let t = self.get_type_inner_for_hash(
             p,
             &mut Default::default(),
@@ -210,19 +210,9 @@ impl TypeMemo {
         let mut new_ids = BTreeMap::new();
         for (id, ctx) in ids.clone() {
             let id = id.map_type(|p| {
-                let t = self.get_type_inner_for_hash(
-                    p,
-                    &mut Default::default(),
-                    &mut Default::default(),
-                    map,
-                    0,
-                );
-                debug_assert!(!t.contains_broken_link(0));
-                if let TypeInnerOf::Type(t) = t {
-                    self.type_id_generator.get_or_insert(t)
-                } else {
-                    panic!()
-                }
+                let t = self.get_type_for_hash(p, map);
+                debug_assert!(!t.contains_broken_link());
+                self.type_id_generator.get_or_insert(t)
             });
             new_ids.insert(
                 id,
@@ -230,6 +220,27 @@ impl TypeMemo {
                     .map(|c| self.get_type_inner(c, map))
                     .collect(),
             );
+        }
+        new_ids
+    }
+
+    pub fn get_lambda_ids_pointer(
+        &mut self,
+        p: TypePointer,
+        map: &mut PaddedTypeMap,
+    ) -> BTreeMap<LambdaId<id_generator::Id<TypeIdTag>>, Vec<TypePointer>> {
+        let p = map.find(p);
+        let Terminal::LambdaId(ids) = map.dereference_without_find(p) else {
+            panic!()
+        };
+        let mut new_ids = BTreeMap::new();
+        for (id, ctx) in ids.clone() {
+            let id = id.map_type(|p| {
+                let t = self.get_type_for_hash(p, map);
+                debug_assert!(!t.contains_broken_link());
+                self.type_id_generator.get_or_insert(t)
+            });
+            new_ids.insert(id, ctx);
         }
         new_ids
     }
@@ -635,6 +646,11 @@ pub trait DisplayTypeWithEnv {
 
 pub struct DisplayTypeWithEnvStruct<'a, T: DisplayTypeWithEnv>(pub &'a T, pub &'a ConstructorNames);
 
+pub struct DisplayTypeWithEnvStructOption<'a, T: DisplayTypeWithEnv>(
+    pub &'a Option<T>,
+    pub &'a ConstructorNames,
+);
+
 struct DisplayTypeHelper<'a, T: DisplayTypeWithEnv>(&'a T, Precedence, &'a ConstructorNames);
 
 impl<T: DisplayTypeWithEnv> Display for DisplayTypeHelper<'_, T> {
@@ -646,6 +662,16 @@ impl<T: DisplayTypeWithEnv> Display for DisplayTypeHelper<'_, T> {
 impl<T: DisplayTypeWithEnv> Display for DisplayTypeWithEnvStruct<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt_with_env(P::Weak, f, self.1)
+    }
+}
+
+impl<T: DisplayTypeWithEnv> Display for DisplayTypeWithEnvStructOption<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(t) = self.0 {
+            t.fmt_with_env(P::Weak, f, self.1)
+        } else {
+            Ok(())
+        }
     }
 }
 

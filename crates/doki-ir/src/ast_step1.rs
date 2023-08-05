@@ -376,7 +376,7 @@ impl ConstructorNames {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Env<'a> {
     type_map: PaddedTypeMap,
     local_variable_types: LocalVariableTypes,
@@ -388,6 +388,18 @@ pub struct Env<'a> {
 }
 
 impl<'a> Env<'a> {
+    pub fn new(minimize_types: bool) -> Self {
+        Env {
+            type_map: PaddedTypeMap::new(minimize_types),
+            local_variable_types: Default::default(),
+            lambda_count: Default::default(),
+            global_variable_count: Default::default(),
+            global_variables: Default::default(),
+            field_len: Default::default(),
+            constructor_names: Default::default(),
+        }
+    }
+
     pub fn lambda<'b>(&mut self, block: &'b mut Block, assign_v: LocalVariable) -> Lambda<'b> {
         let parameter = self.new_local_variable();
         let lambda_id = LambdaId {

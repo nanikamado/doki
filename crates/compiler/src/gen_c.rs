@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::iter::once;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Env<'a> {
     local_variable_map: FxHashMap<&'a str, LocalVariable>,
     global_variable_map: FxHashMap<&'a str, GlobalVariable>,
@@ -22,12 +22,18 @@ struct Env<'a> {
     utf8_to_utf16_ln_col_map: Vec<(u32, u32)>,
 }
 
-fn build<'a>(ast: Ast<'a>, file_name: &'a str, src: &'a str) -> Env<'a> {
+fn build<'a>(ast: Ast<'a>, file_name: &'a str, src: &'a str, minimize_types: bool) -> Env<'a> {
     let utf8_to_utf16_ln_col_map = utf8_to_utf16_ln_col(src);
     let mut env = Env {
         file_name,
         utf8_to_utf16_ln_col_map,
-        ..Env::default()
+        local_variable_map: Default::default(),
+        global_variable_map: Default::default(),
+        data_decl_map: Default::default(),
+        build_env: doki_ir::Env::new(minimize_types),
+        local_variable_span_map: Default::default(),
+        global_variable_span_map: Default::default(),
+        str_constructor_id: Default::default(),
     };
     for d in ast.data_decls.into_iter().chain(once(DataDecl {
         name: "Str",
@@ -107,11 +113,11 @@ pub fn gen_c<'a>(
     ast: Ast<'a>,
     file_name: &'a str,
     src: &'a str,
-    minimize_type: bool,
+    minimize_types: bool,
 ) -> impl Display + 'a {
-    let env = build(ast, file_name, src);
+    let env = build(ast, file_name, src, minimize_types);
     let entry_point = env.global_variable_map["main"];
-    env.build_env.gen_c(entry_point, minimize_type)
+    env.build_env.gen_c(entry_point)
 }
 
 pub enum SpanMapEntry {
@@ -119,10 +125,10 @@ pub enum SpanMapEntry {
     GlobalVariable { ts: Vec<doki_ir::TypeForHash> },
 }
 
-pub fn token_map(ast: Ast, src: &str, minimize_type: bool) -> AnalyzedSrc {
-    let env = build(ast, "", src);
+pub fn token_map(ast: Ast, src: &str, minimize_types: bool) -> AnalyzedSrc {
+    let env = build(ast, "", src, minimize_types);
     let entry_point = env.global_variable_map["main"];
-    let ast = env.build_env.build_ast_step2(entry_point, minimize_type);
+    let ast = env.build_env.build_ast_step2(entry_point);
     let global_variables: multimap::MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> = ast
         .variable_decls
         .iter()
@@ -163,7 +169,7 @@ pub fn token_map(ast: Ast, src: &str, minimize_type: bool) -> AnalyzedSrc {
                     .unwrap()
                     .binary_search_by_key(id, |(_, id)| *id)
             })
-            .map(|(_, _, l)| ast.variable_types.get_type(*l).clone())
+            .map(|(_, _, l)| ast.variable_types.get_type(*l).clone().0.unwrap())
             .collect();
         (s, SpanMapEntry::Expr(ts))
     }));

@@ -1,0 +1,95 @@
+plus = intrinsic_plus
+minus = intrinsic_minus
+lt = intrinsic_lt
+le_u8 = a: b: match lt (intrinsic_u8_to_i64 a) (plus (intrinsic_u8_to_i64 b) 1) with
+        0 => False,
+        _ => True,
+    end
+eq_u8 = a: b:
+    match intrinsic_eq_u8 a b with
+        0 => False,
+        _ => True,
+    end
+data Unit 0
+data Nil 0
+data Cons 2
+data True 0
+data False 0
+
+bool_and = a: b: match a with
+        False => False,
+        True => b,
+    end
+
+bool_or = a: b: match a with
+        True => True,
+        False => b,
+    end
+
+data None 0
+data Some 1
+data Err 1
+data Ok 1
+
+parser_map = a: f: i:
+    match a i with
+        Ok (Cons a i) => Ok (Cons (f a) i),
+        Err e => Err e,
+    end
+
+and = p1: p2: i:
+    match p1 i with
+        Err e => Err e,
+        Ok (Cons s1 i) => parser_map p2 (Cons s1) i
+    end
+
+or = p1: p2: i:
+    match p1 i with
+        Err e => p2 i,
+        Ok a => Ok a,
+    end
+
+any = i: match i with
+        Nil => Err Unit,
+        Cons c i => Ok (Cons c i),
+    end
+
+is_digit = c: bool_and (le_u8 48u8 c) (le_u8 c 57u8)
+
+filter = p: f: i: match p i with
+        Err e => Err e,
+        Ok (Cons a i) => match f a with
+                True => Ok (Cons a i),
+                False => Err Unit,
+            end,
+    end
+
+repeated_aux = p: i: match p i with
+        Err Unit => Cons Nil i,
+        Ok (Cons a i) => let Cons l i = repeated_aux p i
+            in Cons (Cons a l) i,
+    end
+
+repeated = p: i: Ok (repeated_aux p i)
+
+is_ident_head = c: let c1 = bool_and (le_u8 65u8 c) (le_u8 c 90u8)
+        in let c2 = bool_and (le_u8 97u8 c) (le_u8 c 122u8)
+        in bool_or (bool_or c1 c2) (eq_u8 95u8 c)
+
+is_ident_continue = c: bool_or (bool_or (is_ident_head c) (is_digit c)) (eq_u8 c 39u8)
+
+ident = let ident_head = filter any is_ident_head
+        in let ident_continue = repeated (filter any is_ident_continue)
+        in and ident_head ident_continue
+
+data Ident 1
+data Lambda 2
+
+ignore_and = a: b: parser_map (and a b) (Cons _ a: a)
+
+expr = i: let lambda = parser_map Unit (Cons _ _: Unit)
+    in let paren = ignore_and any any
+    in let single = or Unit (or lambda (or ident paren))
+    in Unit
+
+main = _: expr

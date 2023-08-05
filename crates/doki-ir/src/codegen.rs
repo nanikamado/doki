@@ -1,12 +1,10 @@
-mod c_type;
-
-use self::c_type::{CAggregateType, CType};
-use crate::ast_step1::{ConstructorId, ConstructorNames, TypeId};
+use crate::ast_step1::{ConstructorId, ConstructorNames};
+use crate::ast_step2::c_type::CTypeScheme;
 use crate::ast_step2::{
-    self, Ast, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId, Instruction,
-    LocalVariable, LocalVariableCollector, Tester, Type, TypeUnitOf, VariableId,
+    self, Ast, CType, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId, Instruction,
+    LocalVariable, LocalVariableCollector, Tester, Type, VariableId,
 };
-use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
+use crate::intrinsics::IntrinsicVariable;
 use crate::util::collector::Collector;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -19,72 +17,45 @@ pub struct Codegen<'a>(pub Ast<'a>);
 impl Display for Codegen<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let ast = &self.0;
-        let mut c_type_env = c_type::Env {
-            aggregate_types: Default::default(),
-            memo: Default::default(),
-            reffed_aggregates: Default::default(),
-        };
-        let local_variable_types: LocalVariableCollector<(&Type, CType)> =
-            ast.variable_types.map(|t| {
-                let ct = c_type_env.c_type(t, &mut Vec::new());
-                (t, ct)
-            });
-        let global_variable_types = ast
+        let global_variable_types: FxHashMap<_, CType> = ast
             .variable_decls
             .iter()
-            .map(|d| (d.decl_id, c_type_env.c_type(&d.t, &mut Vec::new())))
+            .map(|d| (d.decl_id, d.c_t))
             .collect();
+        let unit_t = CType(0);
+        let mut mutted_types = Collector::default();
+        let mut refed_types = Collector::default();
+        let sorted = sort_aggregates(&ast.c_type_definitions, &mut mutted_types, &mut refed_types);
+        let refed_types = refed_types.as_raw();
+        let mutted_types = mutted_types.as_raw();
         let env = Env {
             variable_names: &ast.variable_names,
-            local_variable_types: &local_variable_types,
+            local_variable_types: &ast.variable_types,
             global_variable_types: &global_variable_types,
             constructor_names: &ast.constructor_names,
+            c_type_definitions: &ast.c_type_definitions,
+            refed_types,
         };
-        let mut mutted_types = Collector::default();
-        let intrinsic_variables = ast
-            .used_intrinsic_variables
-            .as_raw()
-            .iter()
-            .map(|((v, arg_ts), id)| {
-                let arg_ts_c = arg_ts
-                    .iter()
-                    .map(|t| c_type_env.c_type(t, &mut Vec::new()))
-                    .collect_vec();
-                use IntrinsicVariable::*;
-                let ret_t = match *v {
-                    Mut => {
-                        let t = &arg_ts_c[0];
-                        mutted_types.get_or_insert(t.clone());
-                        CType::Ref(Box::new(t.clone()))
-                    }
-                    GetMut => {
-                        let t = &arg_ts_c[0];
-                        let t = if let CType::Ref(t) = t { t } else { panic!() };
-                        (**t).clone()
-                    }
-                    _ => {
-                        let env: &mut c_type::Env = &mut c_type_env;
-                        let t = TypeUnitOf::Normal {
-                            id: TypeId::Intrinsic(v.runtime_return_type().unwrap()),
-                            args: Vec::new(),
-                        }
-                        .into();
-                        env.c_type(&t, &mut Vec::new())
-                    }
-                };
-                (*v, id, ret_t, arg_ts_c)
-            })
-            .unique()
-            .collect_vec();
-        let mutted_types = mutted_types.as_raw();
-        let unit_t: Type = TypeUnitOf::Normal {
-            id: TypeId::Intrinsic(IntrinsicTypeTag::Unit),
-            args: Vec::new(),
-        }
-        .into();
-        let unit_t = c_type_env.c_type(&unit_t, &mut Vec::new());
-        let aggregates: &FxHashMap<_, _> = c_type_env.aggregate_types.rev_map_as_raw();
-        let sorted = sort_aggregates(aggregates);
+        let structs = sorted.iter().format_with("", |(i, t), f| match t {
+            CTypeScheme::Aggregate(ts) => f(&format_args!(
+                "{}{{{}}};",
+                Dis(i, env),
+                ts.iter()
+                    .enumerate()
+                    .format_with("", |(i, t), f| f(&format_args!("{} _{i};", Dis(t, env))))
+            )),
+            CTypeScheme::Union(ts) => f(&format_args!(
+                "union u{0}{{{1}}};{2}{{int tag;union u{0} value;}};",
+                i.0,
+                ts.iter().enumerate().format_with("", |(i, t), f| {
+                    f(&format_args!("{} _{i};", Dis(t, env)))
+                }),
+                Dis(i, env),
+            )),
+            _ => {
+                panic!()
+            }
+        });
         write!(
             f,
             "
@@ -96,46 +67,29 @@ impl Display for Codegen<'_> {
             #include <unistd.h>
             struct diverge{{}};
             {}{}{}",
-            sorted.iter().format_with("", |(i, t), f| {
-                match t {
-                    CAggregateType::Struct(fields) => f(&format_args!(
-                        "{} {{{}}};\n",
-                        CType::Aggregate(*i),
-                        fields
-                            .iter()
-                            .enumerate()
-                            .format_with("", |(i, field), f| f(&format_args!("{field} _{i};",)))
-                    )),
-                    CAggregateType::Union(ts) => f(&format_args!(
-                        "union u{i}{{{}}};{}{{int tag;union u{i} value;}};",
-                        ts.iter()
-                            .enumerate()
-                            .format_with("", |(i, t), f| { f(&format_args!("{t} _{i};")) }),
-                        CType::Aggregate(*i),
-                    )),
-                }
-            }),
-            c_type_env.reffed_aggregates.iter().format_with("", |i, f| {
-                let t = CType::Aggregate(*i);
+            structs,
+            refed_types.iter().format_with("", |(t, n), f| {
                 f(&format_args!(
-                    "static {t}* ref_t{i}({t} a) {{
-                            {t}* tmp = malloc(sizeof({t}));
+                    "static {0}* ref_{n}({0} a) {{
+                            {0}* tmp = malloc(sizeof({0}));
                             *tmp = a;
                             return tmp;
-                        }}"
+                        }}",
+                    Dis(t, env),
                 ))
             }),
             mutted_types
                 .iter()
                 .format_with("", |(t, n), f| f(&format_args!(
-                    "static {t}* mut_{n}({t} a) {{
-                    {t}* tmp = malloc(sizeof({t}));
+                    "static {0}* mut_{n}({0} a) {{
+                    {0}* tmp = malloc(sizeof({0}));
                     *tmp = a;
                     return tmp;
-                    }}"
+                    }}",
+                    Dis(t, env),
                 )))
         )?;
-        write_fns(f, &ast.functions, &c_type_env, &env, false);
+        write_fns(f, &ast.functions, env, false);
         write!(
             f,
             "{}",
@@ -143,7 +97,7 @@ impl Display for Codegen<'_> {
                 .iter()
                 .format_with("", |d, f| f(&format_args!(
                     "static {} g_{}_{};",
-                    env.global_variable_types[&d.decl_id],
+                    Dis(&d.c_t, env),
                     d.decl_id,
                     convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
                 )))
@@ -154,7 +108,7 @@ impl Display for Codegen<'_> {
                 return ({0}){{}};
             }}
             {1}{2}{3}",
-            unit_t,
+            Dis(&unit_t, env),
             r#"
             |__attribute__ ((__noreturn__)) static int panic(char* msg){
             |    fprintf(stderr, "error: %s\n", msg);
@@ -162,19 +116,20 @@ impl Display for Codegen<'_> {
             |}
             |"#
             .strip_margin(),
-            intrinsic_variables
-                .into_iter()
-                .map(|(v, id, ret_t, arg_ts)| format!(
+            ast.used_intrinsic_variables
+                .as_raw()
+                .iter()
+                .map(|((v, arg_ts, ret_t), id)| format!(
                     "static {} intrinsic_{v}_{id}({}){{{}}}",
-                    ret_t,
+                    Dis(ret_t, env),
                     arg_ts
                         .iter()
                         .enumerate()
-                        .format_with(",", |(i, t), f| f(&format_args!("{t} _{i}"))),
+                        .format_with(",", |(i, t), f| f(&format_args!("{} _{i}", Dis(t, env)))),
                     PrimitiveDefPrint {
-                        i: v,
-                        arg_ts: &arg_ts,
-                        mutted_types
+                        i: *v,
+                        arg_ts,
+                        mutted_types,
                     }
                 ))
                 .format(""),
@@ -182,7 +137,7 @@ impl Display for Codegen<'_> {
                 .iter()
                 .format_with("", |d, f| f(&format_args!(
                     "static {} init_g_{}_{}(void){{{}}}",
-                    env.global_variable_types[&d.decl_id],
+                    Dis(&d.c_t, env),
                     d.decl_id,
                     convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
                     Dis(
@@ -195,12 +150,7 @@ impl Display for Codegen<'_> {
                     )
                 ))),
         )?;
-        write_fns(f, &ast.functions, &c_type_env, &env, true);
-        let unit = CType::Aggregate(
-            c_type_env
-                .aggregate_types
-                .get(CAggregateType::Struct(Vec::new())),
-        );
+        write_fns(f, &ast.functions, env, true);
         writeln!(
             f,
             "int main(void) {{
@@ -215,7 +165,7 @@ impl Display for Codegen<'_> {
                     convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
                 ))),
             ast.entry_point,
-            unit,
+            Dis(&unit_t, env),
         )
     }
 }
@@ -260,68 +210,69 @@ impl Display for PrimitiveDefPrint<'_> {
     }
 }
 
-fn sort_aggregates(aggregates: &FxHashMap<usize, CAggregateType>) -> Vec<(usize, &CAggregateType)> {
+fn sort_aggregates<'a>(
+    c_type_definitions: &'a [CTypeScheme<CType>],
+    mutted_types: &mut Collector<CType>,
+    refed_types: &mut Collector<CType>,
+) -> Vec<(CType, &'a CTypeScheme<CType>)> {
     let mut done = FxHashSet::default();
-    let mut sorted = Vec::with_capacity(aggregates.len());
-    for i in aggregates.keys() {
-        sort_aggregates_rec(*i, aggregates, &mut done, &mut sorted);
+    let mut sorted = Vec::with_capacity(c_type_definitions.len());
+    for (i, _) in c_type_definitions.iter().enumerate() {
+        sort_aggregates_rec(
+            CType(i),
+            c_type_definitions,
+            &mut done,
+            &mut sorted,
+            mutted_types,
+            refed_types,
+        );
     }
     sorted
 }
 
 fn sort_aggregates_rec<'a>(
-    i: usize,
-    h: &'a FxHashMap<usize, CAggregateType>,
-    done: &mut FxHashSet<usize>,
-    sorted: &mut Vec<(usize, &'a CAggregateType)>,
+    i: CType,
+    h: &'a [CTypeScheme<CType>],
+    done: &mut FxHashSet<CType>,
+    sorted: &mut Vec<(CType, &'a CTypeScheme<CType>)>,
+    mutted_types: &mut Collector<CType>,
+    refed_types: &mut Collector<CType>,
 ) {
-    if !done.contains(&i) {
-        done.insert(i);
-        let a = &h[&i];
-        let (CAggregateType::Union(cs) | CAggregateType::Struct(cs)) = a;
-        for c in cs {
-            if let CType::Aggregate(i) = c {
-                sort_aggregates_rec(*i, h, done, sorted);
-            }
-        }
-        sorted.push((i, a));
+    if done.contains(&i) {
+        return;
     }
+    let a = &h[i.0];
+    use ast_step2::c_type::CTypeScheme::*;
+    match a {
+        Aggregate(is) | Union(is) => {
+            for i in is {
+                sort_aggregates_rec(*i, h, done, sorted, mutted_types, refed_types);
+            }
+            sorted.push((i, a));
+        }
+        Mut(t) => {
+            mutted_types.get_or_insert(*t);
+            refed_types.get_or_insert(*t);
+        }
+        _ => (),
+    }
+    done.insert(i);
 }
 
-fn write_fns(
-    s: &mut std::fmt::Formatter<'_>,
-    functions: &[Function],
-    c_type_env: &c_type::Env,
-    env: &Env,
-    write_body: bool,
-) {
+fn write_fns(s: &mut std::fmt::Formatter<'_>, functions: &[Function], env: Env, write_body: bool) {
     write!(
         s,
         "{}",
         functions.iter().format_with("", |function, f| {
-            let env = Env {
-                variable_names: env.variable_names,
-                local_variable_types: env.local_variable_types,
-                global_variable_types: env.global_variable_types,
-                constructor_names: env.constructor_names,
-            };
             let (t, ct) = env.local_variable_types.get_type(function.parameter);
             f(&format_args!(
                 "static {} {}({} {}/*{}*/,{} ctx)",
-                env.get_type(function.ret),
+                Dis(&env.get_type(function.ret), env),
                 function.id,
-                ct,
+                Dis(ct, env),
                 Dis(&VariableId::Local(function.parameter), env),
-                ast_step2::DisplayTypeWithEnvStruct(*t, env.constructor_names),
-                CType::Aggregate(
-                    c_type_env.aggregate_types.get(CAggregateType::Struct(
-                        function
-                            .context
-                            .iter()
-                            .map(|l| env.local_variable_types.get_type(*l).1.clone())
-                            .collect()
-                    ))
-                )
+                ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
+                Dis(&function.context_c_type, env),
             ))?;
             if write_body {
                 f(&Dis(
@@ -343,16 +294,18 @@ fn write_fns(
 #[derive(Debug, Clone, Copy)]
 struct Env<'a> {
     variable_names: &'a FxHashMap<VariableId, String>,
-    local_variable_types: &'a LocalVariableCollector<(&'a Type, CType)>,
+    local_variable_types: &'a LocalVariableCollector<(Option<Type>, CType)>,
     global_variable_types: &'a FxHashMap<GlobalVariableId, CType>,
     constructor_names: &'a ConstructorNames,
+    c_type_definitions: &'a [CTypeScheme<CType>],
+    refed_types: &'a FxHashMap<CType, usize>,
 }
 
 impl Env<'_> {
-    fn get_type(&self, v: VariableId) -> &CType {
+    fn get_type(&self, v: VariableId) -> CType {
         match v {
-            VariableId::Local(v) => &self.local_variable_types.get_type(v).1,
-            VariableId::Global(v) => &self.global_variable_types[&v],
+            VariableId::Local(v) => self.local_variable_types.get_type(v).1,
+            VariableId::Global(v) => self.global_variable_types[&v],
         }
     }
 }
@@ -437,8 +390,8 @@ impl DisplayWithEnv for FunctionBodyWithCtx<'_> {
                 let (t, ct) = env.local_variable_types.get_type(*v);
                 f(&format_args!(
                     "{} /*{}*/ {};",
-                    ct,
-                    ast_step2::DisplayTypeWithEnvStruct(*t, env.constructor_names),
+                    Dis(ct, env),
+                    ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
                     Dis(&VariableId::Local(*v), env),
                 ))
             }),
@@ -516,7 +469,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
             } => write!(
                 fmt,
                 r#"({}){{{}}}"#,
-                t,
+                Dis(*t, env),
                 context.iter().format_with(",", |c, f| f(&format_args!(
                     "{}",
                     Dis(&VariableId::Local(*c), env)
@@ -525,7 +478,10 @@ impl DisplayWithEnv for (&Expr, &CType) {
             Expr::I64(a) => write!(fmt, "{a}"),
             Expr::U8(a) => write!(fmt, "{a}"),
             Expr::Str(a) => write!(fmt, "{a:?}"),
-            Expr::Ident(i) => i.fmt_with_env(env, fmt),
+            Expr::Ident(i) => {
+                debug_assert_eq!(**t, env.get_type(*i));
+                i.fmt_with_env(env, fmt)
+            }
             Expr::Call {
                 ctx: g,
                 a,
@@ -541,14 +497,14 @@ impl DisplayWithEnv for (&Expr, &CType) {
                         args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                     ),
                     Construction(id) => {
-                        if let CType::Diverge = t {
-                            write!(fmt, "({}){{}}", CType::Diverge)
+                        if let CTypeScheme::Diverge = env.c_type_definitions[t.0] {
+                            write!(fmt, "({}){{}}", Dis(*t, env))
                         } else {
                             write!(
                                 fmt,
                                 "/*{}*/({}){{{}}}",
                                 Dis(id, env),
-                                t,
+                                Dis(*t, env),
                                 args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                             )
                         }
@@ -556,15 +512,16 @@ impl DisplayWithEnv for (&Expr, &CType) {
                     IntrinsicConstruction(id) => {
                         write!(
                             fmt,
-                            "/*{id}*/({t}){{{}}}",
+                            "/*{id}*/({}){{{}}}",
+                            Dis(*t, env),
                             args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                         )
                     }
                     FieldAccessor { field } => {
                         debug_assert_eq!(args.len(), 1);
                         let ct = env.get_type(args[0]);
-                        if let CType::Diverge = ct {
-                            write!(fmt, "(panic(\"unexpected\"),*({t}*)NULL)",)
+                        if let CTypeScheme::Diverge = env.c_type_definitions[ct.0] {
+                            write!(fmt, "(panic(\"unexpected\"),*({}*)NULL)", Dis(*t, env))
                         } else {
                             write!(fmt, "{}._{field}", Dis(&args[0], env))
                         }
@@ -572,12 +529,13 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 }
             }
             Expr::Upcast { tag, value } => {
-                let i = if let CType::Aggregate(i) = t {
-                    i
-                } else {
-                    panic!()
-                };
-                write!(fmt, "({t}){{{tag},(union u{i}){}}}", Dis(value, env))
+                write!(
+                    fmt,
+                    "({}){{{tag},(union u{}){}}}",
+                    Dis(*t, env),
+                    t.0,
+                    Dis(value, env)
+                )
             }
             Expr::Downcast {
                 tag,
@@ -598,13 +556,12 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 write!(fmt, "{0}.value._{tag}", Dis(value, env))
             }
             Expr::Ref(v) => {
-                let t = if let CType::Ref(t) = t { t } else { panic!() };
-                let i = if let CType::Aggregate(t) = **t {
+                let t = if let CTypeScheme::Mut(t) = env.c_type_definitions[t.0] {
                     t
                 } else {
-                    panic!()
+                    panic!("t = {:?}", env.c_type_definitions[t.0])
                 };
-                write!(fmt, "ref_t{i}({})", Dis(v, env))
+                write!(fmt, "ref_{}({})", env.refed_types[&t], Dis(v, env))
             }
             Expr::Deref(v) => write!(fmt, "*{}", Dis(v, env)),
         }
@@ -651,4 +608,18 @@ fn is_valid_name(name: &str) -> bool {
             )
             || c == '_'
     }) && !(name.len() >= 8 && name[0..8] == *"unicode_")
+}
+
+impl DisplayWithEnv for CType {
+    fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match env.c_type_definitions[self.0] {
+            CTypeScheme::I64 => write!(f, "int64_t"),
+            CTypeScheme::U8 => write!(f, "uint8_t"),
+            CTypeScheme::Ptr => write!(f, "void*"),
+            CTypeScheme::Aggregate(_) => write!(f, "struct t{}", self.0),
+            CTypeScheme::Union(_) => write!(f, "struct t{}", self.0),
+            CTypeScheme::Mut(t) => write!(f, "{}*", Dis(&t, env)),
+            CTypeScheme::Diverge => write!(f, "struct diverge"),
+        }
+    }
 }

@@ -17,19 +17,15 @@ use codegen::Codegen;
 use std::fmt::Display;
 
 impl<'a> Env<'a> {
-    pub fn gen_c(self, entry_point: GlobalVariable, minimize_type: bool) -> impl Display + 'a {
+    pub fn gen_c(self, entry_point: GlobalVariable) -> impl Display + 'a {
         let ast = self.build(entry_point);
-        let mut ast = ast_step2::Ast::from(ast, minimize_type);
+        let mut ast = ast_step2::Ast::from(ast);
         tail_recursion_elimination::run(&mut ast);
         Codegen(ast)
     }
 
-    pub fn build_ast_step2(
-        self,
-        entry_point: GlobalVariable,
-        minimize_type: bool,
-    ) -> ast_step2::Ast<'a> {
+    pub fn build_ast_step2(self, entry_point: GlobalVariable) -> ast_step2::Ast<'a> {
         let ast = self.build(entry_point);
-        ast_step2::Ast::from(ast, minimize_type)
+        ast_step2::Ast::from(ast)
     }
 }

@@ -39,17 +39,18 @@ enum Node {
 #[derive(Debug, Clone)]
 pub struct PaddedTypeMap {
     map: Vec<Node>,
-}
-
-impl Default for PaddedTypeMap {
-    fn default() -> Self {
-        Self {
-            map: vec![Node::Null],
-        }
-    }
+    pub minimize_types: bool,
+    pub minimized_pointers: FxHashSet<TypePointer>,
 }
 
 impl PaddedTypeMap {
+    pub fn new(minimize_types: bool) -> Self {
+        Self {
+            map: vec![Node::Null],
+            minimize_types,
+            minimized_pointers: Default::default(),
+        }
+    }
     pub fn new_pointer(&mut self) -> TypePointer {
         let p = self.map.len();
         self.map
@@ -109,9 +110,7 @@ impl PaddedTypeMap {
     ) {
         debug_assert!(matches!(self.dereference(fn_id), Terminal::LambdaId(_)));
         let t = self.dereference_mut(p);
-        let Terminal::TypeMap(t) = t else {
-            panic!()
-        };
+        let Terminal::TypeMap(t) = t else { panic!() };
         if let Some(f) = t.normals.get(&TypeId::Intrinsic(IntrinsicTypeTag::Fn)) {
             let f_0 = f[0];
             let f_1 = f[1];
@@ -134,28 +133,13 @@ impl PaddedTypeMap {
         lambda_ctx: Vec<TypePointer>,
     ) {
         let t = self.dereference_mut(p);
-        let Terminal::LambdaId(t) = t else {
-            panic!()
-        };
+        let Terminal::LambdaId(t) = t else { panic!() };
         t.insert(id, lambda_ctx);
-    }
-
-    pub fn get_lambda_id(
-        &mut self,
-        p: TypePointer,
-    ) -> &BTreeMap<LambdaId<TypePointer>, Vec<TypePointer>> {
-        let t = self.dereference(p);
-        let Terminal::LambdaId(t) = t else {
-            panic!()
-        };
-        t
     }
 
     pub fn insert_normal(&mut self, p: TypePointer, id: TypeId, args: Vec<TypePointer>) {
         let t = self.dereference_mut(p);
-        let Terminal::TypeMap(t) = t else {
-            panic!()
-        };
+        let Terminal::TypeMap(t) = t else { panic!() };
         if let Some(t) = t.normals.get(&id) {
             for (a, b) in t.clone().into_iter().zip(args) {
                 self.union(a, b);
@@ -179,7 +163,11 @@ impl PaddedTypeMap {
         next_p
     }
 
-    pub fn find_without_mut(&self, mut p: TypePointer) -> TypePointer {
+    pub fn is_terminal(&self, p: TypePointer) -> bool {
+        matches!(self.map[p.0], Node::Terminal(_))
+    }
+
+    pub fn find_imm(&self, mut p: TypePointer) -> TypePointer {
         while let Node::Pointer(p_next) = self.map[p.0] {
             p = p_next;
         }
@@ -207,6 +195,15 @@ impl PaddedTypeMap {
 
     pub fn dereference(&mut self, p: TypePointer) -> &Terminal {
         let p = self.find(p);
+        if let Node::Terminal(t) = &self.map[p.0] {
+            t
+        } else {
+            panic!()
+        }
+    }
+
+    pub fn dereference_imm(&self, p: TypePointer) -> &Terminal {
+        let p = self.find_imm(p);
         if let Node::Terminal(t) = &self.map[p.0] {
             t
         } else {
@@ -274,8 +271,8 @@ impl PaddedTypeMap {
         new_p
     }
 
-    pub fn minimize(&mut self, root: TypePointer, minimized_pointers: &mut FxHashSet<TypePointer>) {
-        minimize::minimize(root, self, minimized_pointers)
+    pub fn minimize(&mut self, root: TypePointer) {
+        minimize::minimize(root, self)
     }
 
     #[cfg(debug_assertions)]

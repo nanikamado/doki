@@ -12,6 +12,7 @@ fn test_example(file_name: &str, stdout: &str) {
         .arg(["examples/", file_name].concat())
         .assert()
         .stdout(stdout.to_string())
+        .stderr("")
         .success();
 }
 
@@ -22,6 +23,7 @@ fn positive_test_with_stdin(file_name: &str, stdin: &str, stdout: &str) {
         .arg(["tests/positive/", file_name].concat())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     c.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
@@ -201,4 +203,9 @@ fn takl() {
 #[test]
 fn type_caching() {
     positive_test_with_stdin("type_caching.doki", "", "");
+}
+
+#[test]
+fn incomplete_parser() {
+    positive_test_with_stdin("incomplete_parser.doki", "", "");
 }
