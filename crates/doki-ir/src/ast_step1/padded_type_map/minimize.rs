@@ -9,12 +9,12 @@ pub fn minimize(
     m: &mut PaddedTypeMap,
     minimized_pointers: &mut FxHashSet<TypePointer>,
 ) {
-    let mut points = FxHashMap::default();
-    collect_points(root, m, &mut points);
-    let points = Dfa::minimize(m, points);
-    let points_rev: MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> =
-        points.into_iter().map(|(a, b)| (b, a)).collect();
-    for (_, mut v) in points_rev {
+    let mut partitions = FxHashMap::default();
+    collect_points(root, m, &mut partitions);
+    let partitions = Dfa::split_partitions(m, partitions);
+    let partitions_rev: MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> =
+        partitions.into_iter().map(|(a, b)| (b, a)).collect();
+    for (_, mut v) in partitions_rev {
         v.sort_unstable();
         if v.len() >= 2 {
             let p = v[0];
