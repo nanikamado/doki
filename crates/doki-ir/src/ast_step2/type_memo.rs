@@ -7,10 +7,11 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;
 use std::fmt::{self, Display};
 use std::iter::once;
+use std::rc::Rc;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Default, Clone, Hash)]
 pub struct TypeOf<T: TypeFamily> {
-    ts: Vec<TypeUnitOf<T>>,
+    ts: Rc<Vec<TypeUnitOf<T>>>,
     pub reference: bool,
     pub diverging: bool,
     pub derefed: bool,
@@ -71,7 +72,7 @@ pub type TypeInner = TypeInnerOf<NormalTypeF>;
 impl<T: TypeFamily> From<TypeUnitOf<T>> for TypeOf<T> {
     fn from(value: TypeUnitOf<T>) -> Self {
         TypeOf {
-            ts: once(value).collect(),
+            ts: Rc::new(once(value).collect()),
             reference: false,
             derefed: false,
             diverging: false,
@@ -285,7 +286,7 @@ impl TypeMemo {
                     ts.push(a)
                 }
                 TypeInnerOf::Type(TypeOf {
-                    ts,
+                    ts: Rc::new(ts),
                     reference: false,
                     derefed: false,
                     diverging: false,
@@ -357,7 +358,7 @@ impl TypeMemo {
                     ts.push(a)
                 }
                 TypeInnerOf::Type(TypeOf {
-                    ts,
+                    ts: Rc::new(ts),
                     reference: false,
                     derefed: false,
                     diverging: false,
