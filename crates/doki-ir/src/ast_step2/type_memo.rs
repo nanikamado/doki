@@ -575,57 +575,6 @@ enum DivergentStopper {
     Union(TypePointer),
 }
 
-impl TypeInner {
-    fn replace_index(self, to: &Type, depth: u32) -> Self {
-        match self {
-            TypeInnerOf::RecursionPoint(a) if a == depth => TypeInnerOf::Type(to.clone()),
-            TypeInnerOf::RecursionPoint(a) => TypeInnerOf::RecursionPoint(a),
-            TypeInnerOf::Type(TypeOf {
-                ts,
-                reference,
-                derefed,
-                diverging,
-            }) => TypeInnerOf::Type(TypeOf {
-                ts: ts
-                    .into_iter()
-                    .map(|t| t.replace_index(to, depth + 1))
-                    .collect(),
-                reference,
-                derefed,
-                diverging,
-            }),
-        }
-    }
-}
-
-impl TypeUnit {
-    pub fn replace_index(self, to: &Type, depth: u32) -> Self {
-        match self {
-            TypeUnitOf::Normal { id, args } => TypeUnitOf::Normal {
-                id,
-                args: args
-                    .into_iter()
-                    .map(|t| t.replace_index(to, depth))
-                    .collect(),
-            },
-            TypeUnitOf::Fn(ids, a, b) => TypeUnitOf::Fn(
-                ids.into_iter()
-                    .map(|(id, ctx)| {
-                        (
-                            id,
-                            ctx.into_iter()
-                                .map(|t| t.replace_index(to, depth))
-                                .collect(),
-                        )
-                    })
-                    .collect(),
-                a.replace_index(to, depth),
-                b.replace_index(to, depth),
-            ),
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum Precedence {
     Strong = 0,
