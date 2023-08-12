@@ -952,13 +952,13 @@ impl<'a> Env<'a> {
     fn get_type(&mut self, p: PointerForCType) -> Option<Type> {
         match p.modifier {
             PointerModifier::Normal => {
-                self.type_memo.collect_ref_pointers(p.p, &mut self.map);
+                self.type_memo.collect_ref_pointers(p.p, &self.map);
                 let t = self.type_memo.get_type(p.p, &mut self.map);
                 Some(t)
             }
             PointerModifier::UnionMember(_) => None,
             PointerModifier::Derefed => {
-                self.type_memo.collect_ref_pointers(p.p, &mut self.map);
+                self.type_memo.collect_ref_pointers(p.p, &self.map);
                 let mut t = self.type_memo.get_type(p.p, &mut self.map);
                 debug_assert!(t.reference);
                 debug_assert!(!t.derefed);
@@ -969,7 +969,7 @@ impl<'a> Env<'a> {
     }
 
     fn get_type_for_hash(&mut self, p: TypePointer) -> TypeForHash {
-        self.type_memo.collect_ref_pointers(p, &mut self.map);
+        self.type_memo.collect_ref_pointers(p, &self.map);
         self.type_memo.get_type_for_hash(p, &mut self.map)
     }
 
@@ -1096,7 +1096,7 @@ impl<'a> Env<'a> {
             *t
         } else {
             debug_assert!(!self.normalizer_for_c_type.contains(p));
-            self.type_memo.collect_ref_pointers(p.p, &mut self.map);
+            self.type_memo.collect_ref_pointers(p.p, &self.map);
             self.map.minimize(p.p);
             let c_type_for_hash = self.c_type_for_hash(p);
             if let Some(t) = self.c_type_memo_from_hash.get(&c_type_for_hash) {
@@ -1158,7 +1158,7 @@ impl<'a> Env<'a> {
     }
 
     fn type_is_ref(&mut self, p: TypePointer) -> bool {
-        self.type_memo.collect_ref_pointers(p, &mut self.map);
+        self.type_memo.collect_ref_pointers(p, &self.map);
         debug_assert!(self.type_memo.ref_checked_pointers.contains(&p));
         self.type_memo.ref_pointers.contains(&p)
     }

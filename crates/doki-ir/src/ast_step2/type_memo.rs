@@ -260,10 +260,10 @@ impl TypeMemo {
         p: TypePointer,
         trace: &mut FxHashMap<TypePointer, u32>,
         used_trace: &mut FxHashSet<TypePointer>,
-        map: &mut PaddedTypeMap,
+        map: &PaddedTypeMap,
         depth: u32,
     ) -> BTreeMap<LambdaId<TypeInnerForHash>, <TypeForHashF as TypeFamily>::LambdaCtx> {
-        let p = map.find(p);
+        let p = map.find_imm(p);
         let Terminal::LambdaId(ids) = map.dereference_without_find(p) else {
             panic!()
         };
@@ -338,10 +338,10 @@ impl TypeMemo {
         p: TypePointer,
         trace: &mut FxHashMap<TypePointer, u32>,
         used_trace: &mut FxHashSet<TypePointer>,
-        map: &mut PaddedTypeMap,
+        map: &PaddedTypeMap,
         depth: u32,
     ) -> TypeInnerForHash {
-        let p = map.find(p);
+        let p = map.find_imm(p);
         if let Some(t) = self.type_memo_for_hash.get(&p) {
             debug_assert!(!trace.contains_key(&p));
             return t.clone();
@@ -355,10 +355,10 @@ impl TypeMemo {
         let mut t = match &map.dereference_without_find(p) {
             Terminal::TypeMap(type_map) => {
                 let mut ts = Vec::new();
-                for (type_id, normal_type) in type_map.normals.clone() {
+                for (type_id, normal_type) in type_map.normals.iter() {
                     let a = self.get_type_from_id_and_args_rec_for_hash(
-                        type_id,
-                        &normal_type,
+                        *type_id,
+                        normal_type,
                         trace,
                         used_trace,
                         map,
@@ -426,7 +426,7 @@ impl TypeMemo {
         args: &[TypePointer],
         trace: &mut FxHashMap<TypePointer, u32>,
         used_trace: &mut FxHashSet<TypePointer>,
-        map: &mut PaddedTypeMap,
+        map: &PaddedTypeMap,
         depth: u32,
     ) -> TypeUnitForHash {
         if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
@@ -450,7 +450,7 @@ impl TypeMemo {
         }
     }
 
-    pub fn collect_ref_pointers(&mut self, p: TypePointer, map: &mut PaddedTypeMap) {
+    pub fn collect_ref_pointers(&mut self, p: TypePointer, map: &PaddedTypeMap) {
         self.collect_ref_pointers_aux(
             p,
             &mut Default::default(),
@@ -466,9 +466,9 @@ impl TypeMemo {
         trace_map: &mut FxHashSet<TypePointer>,
         trace: &mut Vec<TypePointer>,
         mut divergent_stopper: Option<DivergentStopper>,
-        map: &mut PaddedTypeMap,
+        map: &PaddedTypeMap,
     ) {
-        let p = map.find(p);
+        let p = map.find_imm(p);
         if self.ref_checked_pointers.contains(&p) {
             return;
         }
@@ -486,11 +486,12 @@ impl TypeMemo {
         }
         match map.dereference_without_find(p) {
             Terminal::TypeMap(t) => {
-                let t = t.normals.clone();
                 let is_union = t
+                    .normals
                     .iter()
                     .map(|(id, ts)| match id {
-                        TypeId::Intrinsic(IntrinsicTypeTag::Fn) => match map.dereference(ts[2]) {
+                        TypeId::Intrinsic(IntrinsicTypeTag::Fn) => match map.dereference_imm(ts[2])
+                        {
                             Terminal::TypeMap(_) => panic!(),
                             Terminal::LambdaId(l) => l.len(),
                         },
@@ -500,7 +501,6 @@ impl TypeMemo {
                     > 1;
                 let mut new_trace;
                 let trace = if is_union {
-                    // trace.clear();
                     divergent_stopper = Some(DivergentStopper::Union(p));
                     new_trace = Vec::new();
                     &mut new_trace
@@ -509,7 +509,7 @@ impl TypeMemo {
                     trace
                 };
                 trace_map.insert(p);
-                for (id, ts) in t {
+                for (id, ts) in &t.normals {
                     match id {
                         TypeId::Intrinsic(id) => match id {
                             IntrinsicTypeTag::Fn => {
@@ -533,7 +533,7 @@ impl TypeMemo {
                             _ => {
                                 for t in ts {
                                     self.collect_ref_pointers_aux(
-                                        t,
+                                        *t,
                                         trace_map,
                                         &mut Vec::new(),
                                         Some(DivergentStopper::Indirect),
@@ -545,7 +545,7 @@ impl TypeMemo {
                         TypeId::UserDefined(_) => {
                             for t in ts {
                                 self.collect_ref_pointers_aux(
-                                    t,
+                                    *t,
                                     trace_map,
                                     trace,
                                     divergent_stopper,
@@ -561,9 +561,9 @@ impl TypeMemo {
                 trace_map.remove(&p);
             }
             Terminal::LambdaId(l) => {
-                for (id, ctx) in l.clone() {
+                for (id, ctx) in l {
                     for t in ctx {
-                        self.collect_ref_pointers_aux(t, trace_map, trace, divergent_stopper, map);
+                        self.collect_ref_pointers_aux(*t, trace_map, trace, divergent_stopper, map);
                     }
                     self.collect_ref_pointers_aux(
                         id.root_t,
