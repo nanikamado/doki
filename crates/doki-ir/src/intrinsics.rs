@@ -119,8 +119,8 @@ pub enum IntrinsicTypeTag {
     I64,
     U8,
     Unit,
-    Fn,
     Mut,
+    Fn,
 }
 
 impl IntrinsicTypeTag {

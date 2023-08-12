@@ -164,6 +164,8 @@ pub struct TypeMemo {
     pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
     trace: FxHashMap<TypePointer, usize>,
     used_trace: FxHashSet<TypePointer>,
+    lambda_ids_pointer_memo:
+        FxHashMap<TypePointer, BTreeMap<LambdaId<id_generator::Id<TypeIdTag>>, Vec<TypePointer>>>,
 }
 
 impl TypeMemo {
@@ -225,25 +227,32 @@ impl TypeMemo {
         new_ids
     }
 
-    pub fn get_lambda_ids_pointer(
-        &mut self,
+    pub fn get_lambda_ids_pointer<'a>(
+        &'a mut self,
         p: TypePointer,
         map: &mut PaddedTypeMap,
-    ) -> BTreeMap<LambdaId<id_generator::Id<TypeIdTag>>, Vec<TypePointer>> {
+    ) -> &'a BTreeMap<LambdaId<id_generator::Id<TypeIdTag>>, Vec<TypePointer>> {
         let p = map.find(p);
-        let Terminal::LambdaId(ids) = map.dereference_without_find(p) else {
-            panic!()
-        };
-        let mut new_ids = BTreeMap::new();
-        for (id, ctx) in ids.clone() {
-            let id = id.map_type(|p| {
-                let t = self.get_type_for_hash(p, map);
-                debug_assert!(!t.contains_broken_link());
-                self.type_id_generator.get_or_insert(t)
-            });
-            new_ids.insert(id, ctx);
+        // Reason: false positive
+        #[allow(clippy::map_entry)]
+        if self.lambda_ids_pointer_memo.contains_key(&p) {
+            &self.lambda_ids_pointer_memo[&p]
+        } else {
+            let Terminal::LambdaId(ids) = map.dereference_without_find(p) else {
+                panic!()
+            };
+            let mut new_ids = BTreeMap::new();
+            for (id, ctx) in ids.clone() {
+                let id = id.map_type(|p| {
+                    let t = self.get_type_for_hash(p, map);
+                    debug_assert!(!t.contains_broken_link());
+                    self.type_id_generator.get_or_insert(t)
+                });
+                new_ids.insert(id, ctx);
+            }
+            self.lambda_ids_pointer_memo.insert(p, new_ids);
+            &self.lambda_ids_pointer_memo[&p]
         }
-        new_ids
     }
 
     fn get_lambda_ids_for_hash(

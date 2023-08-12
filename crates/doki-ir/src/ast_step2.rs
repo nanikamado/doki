@@ -911,11 +911,12 @@ impl<'a> Env<'a> {
                     let ls = self
                         .type_memo
                         .get_lambda_ids_pointer(args[2], &mut self.map);
-                    for lambda_id in ls.keys() {
+                    let ls_len = ls.len();
+                    for lambda_id in ls.keys().copied().collect_vec() {
                         let len = self.functions.len() as u32;
                         let e = self
                             .functions
-                            .entry(*lambda_id)
+                            .entry(lambda_id)
                             .or_insert(FunctionEntry::Placeholder(FxLambdaId(len)));
                         let id = match e {
                             FunctionEntry::Placeholder(id) => *id,
@@ -923,7 +924,7 @@ impl<'a> Env<'a> {
                         };
                         let p = PointerForCType {
                             p: ot,
-                            modifier: if normals_len + ls.len() == 2 {
+                            modifier: if normals_len + ls_len == 2 {
                                 PointerModifier::Normal
                             } else {
                                 PointerModifier::UnionMember(tag)
@@ -1057,12 +1058,10 @@ impl<'a> Env<'a> {
         let mut tag = 0;
         let mut result = None;
         if let ast_step1::Terminal::TypeMap(ts) = self.map.dereference(ot) {
+            let ts_len = ts.normals.len();
             for (id, args) in ts.normals.clone() {
                 if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
-                    let ls = self
-                        .type_memo
-                        .get_lambda_ids_pointer(args[2], &mut self.map);
-                    tag += ls.len();
+                    debug_assert_eq!(tag + 1, ts_len);
                 } else {
                     if id == type_id {
                         debug_assert!(result.is_none());
@@ -1208,7 +1207,7 @@ impl<'a> Env<'a> {
                             let ids = self
                                 .type_memo
                                 .get_lambda_ids_pointer(args[2], &mut self.map);
-                            for ctx in ids.values() {
+                            for ctx in ids.values().cloned().collect_vec() {
                                 let ctx = ctx
                                     .iter()
                                     .map(|p| {
@@ -1413,9 +1412,12 @@ impl<'a> Env<'a> {
             for (id, args) in t.normals.clone() {
                 match id {
                     TypeId::Intrinsic(IntrinsicTypeTag::Fn) => {
-                        for (_, ctx) in self
+                        for ctx in self
                             .type_memo
                             .get_lambda_ids_pointer(args[2], &mut self.map)
+                            .values()
+                            .cloned()
+                            .collect_vec()
                         {
                             for t in ctx {
                                 self.collect_pointers(t, pointers);
