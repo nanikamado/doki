@@ -15,15 +15,12 @@ impl<T: Eq + Hash + Clone> Collector<T> {
     }
 
     pub fn get_or_insert(&mut self, t: T) -> usize {
-        if let Some(i) = self.map.get(&t) {
-            *i
-        } else {
+        *self.map.entry(t).or_insert_with_key(|t| {
+            let i = self.len;
             self.len += 1;
-            let i = self.len - 1;
-            self.map.insert(t.clone(), i);
-            self.map_rev.insert(i, t);
+            self.map_rev.insert(i, t.clone());
             i
-        }
+        })
     }
 
     pub fn get_empty_id(&mut self) -> usize {
