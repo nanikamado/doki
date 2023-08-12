@@ -268,7 +268,7 @@ impl TypeMemo {
             panic!()
         };
         let mut new_ids = BTreeMap::new();
-        for (id, _ctx) in ids.clone() {
+        for id in ids.keys().copied().collect_vec() {
             let id =
                 id.map_type(|p| self.get_type_inner_for_hash(p, trace, used_trace, map, depth));
             new_ids.insert(id, ());
