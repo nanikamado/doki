@@ -126,10 +126,10 @@ pub enum Expr {
 
 #[derive(Debug, PartialEq, Clone, Copy, Eq)]
 pub enum BasicFunction {
-    Intrinsic { v: IntrinsicVariable, id: usize },
+    Intrinsic { v: IntrinsicVariable, id: u32 },
     Construction(ConstructorId),
     IntrinsicConstruction(IntrinsicConstructor),
-    FieldAccessor { field: usize },
+    FieldAccessor { field: u32 },
 }
 
 #[derive(Debug, PartialEq, Hash, Clone, Copy, Eq)]
@@ -883,7 +883,10 @@ impl<'a> Env<'a> {
                     .get_or_insert((id, arg_ts, ret_t));
                 let e = BasicCall {
                     args: args_new,
-                    id: BasicFunction::Intrinsic { v: id, id: count },
+                    id: BasicFunction::Intrinsic {
+                        v: id,
+                        id: count as u32,
+                    },
                 };
                 match id.runtime_return_type() {
                     Some(rt) => self.add_tags_to_expr(
@@ -1388,11 +1391,7 @@ impl<'a> Env<'a> {
         }
     }
 
-    fn collect_pointers(
-        &mut self,
-        p: TypePointer,
-        pointers: &mut FxHashMap<PointerForCType, usize>,
-    ) {
+    fn collect_pointers(&mut self, p: TypePointer, pointers: &mut FxHashMap<PointerForCType, u32>) {
         let p = self.map.find_imm(p);
         let contains = pointers.insert(PointerForCType::from(p), 0).is_some();
         if contains {

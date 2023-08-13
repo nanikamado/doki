@@ -21,13 +21,13 @@ pub struct Ast<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct LocalVariable(usize);
+pub struct LocalVariable(u32);
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
-pub struct GlobalVariable(usize);
+pub struct GlobalVariable(u32);
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
-pub struct ConstructorId(usize);
+pub struct ConstructorId(u32);
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum VariableId {
@@ -99,7 +99,7 @@ pub enum BasicFunction {
     IntrinsicConstruction(IntrinsicConstructor),
     FieldAccessor {
         constructor: ConstructorId,
-        field: usize,
+        field: u32,
     },
 }
 
@@ -307,10 +307,10 @@ impl TypeInfEnv<'_> {
                             id: BasicFunction::FieldAccessor { constructor, field },
                         } => {
                             debug_assert_eq!(args.len(), 1);
-                            let fields_p = (0..self.field_len[constructor.0])
+                            let fields_p = (0..self.field_len[constructor.0 as usize])
                                 .map(|_| self.type_map.new_pointer())
                                 .collect_vec();
-                            self.type_map.union(t, fields_p[*field]);
+                            self.type_map.union(t, fields_p[*field as usize]);
                             self.used_local_variables.insert(args[0]);
                             self.type_map.insert_normal(
                                 self.local_variable_types.get(args[0]),
@@ -357,7 +357,7 @@ pub struct LocalVariableTypes(Vec<TypePointer>);
 
 impl LocalVariableTypes {
     pub fn get(&self, v: LocalVariable) -> TypePointer {
-        self.0[v.0]
+        self.0[v.0 as usize]
     }
 }
 
@@ -372,7 +372,7 @@ pub struct ConstructorNames(Vec<String>);
 
 impl ConstructorNames {
     pub fn get(&self, c: ConstructorId) -> &str {
-        &self.0[c.0]
+        &self.0[c.0 as usize]
     }
 }
 
@@ -381,7 +381,7 @@ pub struct Env<'a> {
     type_map: PaddedTypeMap,
     local_variable_types: LocalVariableTypes,
     lambda_count: u32,
-    global_variable_count: usize,
+    global_variable_count: u32,
     global_variables: FxHashMap<GlobalVariable, VariableDecl<'a>>,
     field_len: Vec<usize>,
     constructor_names: ConstructorNames,
@@ -493,7 +493,7 @@ impl<'a> Env<'a> {
         ret: LocalVariable,
         arg: LocalVariable,
         constructor_id: ConstructorId,
-        field: usize,
+        field: u32,
         block: &mut Block,
     ) {
         block.assign(
@@ -542,7 +542,7 @@ impl<'a> Env<'a> {
     pub fn new_local_variable(&mut self) -> LocalVariable {
         let t = self.type_map.new_pointer();
         self.local_variable_types.0.push(t);
-        LocalVariable(self.local_variable_types.0.len() - 1)
+        LocalVariable(self.local_variable_types.0.len() as u32 - 1)
     }
 
     pub fn new_block(&mut self) -> Block {
@@ -556,7 +556,7 @@ impl<'a> Env<'a> {
     pub fn new_constructor(&mut self, field_len: usize, name: String) -> ConstructorId {
         self.field_len.push(field_len);
         self.constructor_names.0.push(name);
-        ConstructorId(self.field_len.len() - 1)
+        ConstructorId(self.field_len.len() as u32 - 1)
     }
 
     pub(crate) fn build(self, entry_point: GlobalVariable) -> Ast<'a> {

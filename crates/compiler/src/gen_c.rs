@@ -393,7 +393,8 @@ impl<'a> Env<'a> {
                 block.test_constructor(operand, doki_ir::TypeId::UserDefined(d));
                 for (i, f) in fields.iter().enumerate() {
                     let ret = self.build_env.new_local_variable();
-                    self.build_env.field_access(ret, operand, d, i, block);
+                    self.build_env
+                        .field_access(ret, operand, d, i as u32, block);
                     self.pattern(f, ret, block);
                 }
             }

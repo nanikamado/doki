@@ -28,7 +28,7 @@ pub fn minimize(root: TypePointer, m: &mut PaddedTypeMap) {
 fn collect_points(
     p: TypePointer,
     map: &mut PaddedTypeMap,
-    points: &mut FxHashMap<TypePointer, usize>,
+    points: &mut FxHashMap<TypePointer, u32>,
 ) {
     if points.contains_key(&p) {
         return;
@@ -61,7 +61,7 @@ impl Dfa for PaddedTypeMap {
     fn get(
         &self,
         node: Self::Node,
-        points: &FxHashMap<<PaddedTypeMap as Dfa>::Node, usize>,
+        points: &FxHashMap<<PaddedTypeMap as Dfa>::Node, u32>,
     ) -> Self::Transition {
         let t = self.dereference_without_find(node);
         match t {

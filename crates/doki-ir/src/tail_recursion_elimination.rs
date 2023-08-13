@@ -128,7 +128,7 @@ fn eliminate_from_basic_block<'a>(
                         *ctx_v,
                         Expr::BasicCall {
                             args: vec![ctx],
-                            id: crate::ast_step2::BasicFunction::FieldAccessor { field: i },
+                            id: crate::ast_step2::BasicFunction::FieldAccessor { field: i as u32 },
                         },
                     ))
                 }
@@ -143,7 +143,7 @@ fn eliminate_from_basic_block<'a>(
                         *ctx_v,
                         Expr::BasicCall {
                             args: vec![ctx],
-                            id: crate::ast_step2::BasicFunction::FieldAccessor { field: i },
+                            id: crate::ast_step2::BasicFunction::FieldAccessor { field: i as u32 },
                         },
                     ))
                 }

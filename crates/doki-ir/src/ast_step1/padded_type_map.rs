@@ -16,7 +16,7 @@ pub enum TypeId {
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Copy, Hash)]
-pub struct TypePointer(usize);
+pub struct TypePointer(u32);
 
 #[derive(Debug, PartialEq, Clone, Default, Eq, PartialOrd, Ord, Hash)]
 pub struct TypeMap {
@@ -52,7 +52,7 @@ impl PaddedTypeMap {
         }
     }
     pub fn new_pointer(&mut self) -> TypePointer {
-        let p = self.map.len();
+        let p = self.map.len() as u32;
         self.map
             .push(Node::Terminal(Terminal::TypeMap(TypeMap::default())));
         TypePointer(p)
@@ -63,7 +63,7 @@ impl PaddedTypeMap {
     }
 
     pub fn new_lambda_id_pointer(&mut self) -> TypePointer {
-        let p = self.map.len();
+        let p = self.map.len() as u32;
         self.map
             .push(Node::Terminal(Terminal::LambdaId(BTreeMap::default())));
         TypePointer(p)
@@ -74,9 +74,9 @@ impl PaddedTypeMap {
         let b = self.find(b);
         let (a, b) = if a < b { (a, b) } else { (b, a) };
         if a != b {
-            let b_t = mem::replace(&mut self.map[b.0], Node::Pointer(a));
+            let b_t = mem::replace(&mut self.map[b.0 as usize], Node::Pointer(a));
             let mut pairs = Vec::new();
-            if let (Node::Terminal(a_t), Node::Terminal(b_t)) = (&mut self.map[a.0], b_t) {
+            if let (Node::Terminal(a_t), Node::Terminal(b_t)) = (&mut self.map[a.0 as usize], b_t) {
                 match (a_t, b_t) {
                     (Terminal::TypeMap(a_t), Terminal::TypeMap(b_t)) => {
                         for (b_id, b_normal) in b_t.normals {
@@ -150,7 +150,7 @@ impl PaddedTypeMap {
     }
 
     pub fn find(&mut self, p: TypePointer) -> TypePointer {
-        let next_p = match &self.map[p.0] {
+        let next_p = match &self.map[p.0 as usize] {
             Node::Pointer(p) => *p,
             Node::Terminal(_) => {
                 return p;
@@ -158,20 +158,20 @@ impl PaddedTypeMap {
             Node::Null => panic!(),
         };
         let next_p = self.find(next_p);
-        self.map[p.0] = Node::Pointer(next_p);
+        self.map[p.0 as usize] = Node::Pointer(next_p);
         debug_assert_ne!(p, next_p);
         next_p
     }
 
     pub fn is_terminal(&self, p: TypePointer) -> bool {
-        matches!(self.map[p.0], Node::Terminal(_))
+        matches!(self.map[p.0 as usize], Node::Terminal(_))
     }
 
     pub fn find_imm(&self, mut p: TypePointer) -> TypePointer {
-        while let Node::Pointer(p_next) = self.map[p.0] {
+        while let Node::Pointer(p_next) = self.map[p.0 as usize] {
             p = p_next;
         }
-        debug_assert!(!matches!(self.map[p.0], Node::Null));
+        debug_assert!(!matches!(self.map[p.0 as usize], Node::Null));
         p
     }
 
@@ -195,7 +195,7 @@ impl PaddedTypeMap {
 
     pub fn dereference(&mut self, p: TypePointer) -> &Terminal {
         let p = self.find(p);
-        if let Node::Terminal(t) = &self.map[p.0] {
+        if let Node::Terminal(t) = &self.map[p.0 as usize] {
             t
         } else {
             panic!()
@@ -204,7 +204,7 @@ impl PaddedTypeMap {
 
     pub fn dereference_imm(&self, p: TypePointer) -> &Terminal {
         let p = self.find_imm(p);
-        if let Node::Terminal(t) = &self.map[p.0] {
+        if let Node::Terminal(t) = &self.map[p.0 as usize] {
             t
         } else {
             panic!()
@@ -212,7 +212,7 @@ impl PaddedTypeMap {
     }
 
     pub fn dereference_without_find(&self, p: TypePointer) -> &Terminal {
-        if let Node::Terminal(t) = &self.map[p.0] {
+        if let Node::Terminal(t) = &self.map[p.0 as usize] {
             t
         } else {
             panic!()
@@ -221,7 +221,7 @@ impl PaddedTypeMap {
 
     fn dereference_mut(&mut self, p: TypePointer) -> &mut Terminal {
         let p = self.find(p);
-        if let Node::Terminal(t) = &mut self.map[p.0] {
+        if let Node::Terminal(t) = &mut self.map[p.0 as usize] {
             t
         } else {
             panic!()
@@ -267,7 +267,7 @@ impl PaddedTypeMap {
                     .collect(),
             ),
         };
-        self.map[new_p.0] = Node::Terminal(t);
+        self.map[new_p.0 as usize] = Node::Terminal(t);
         new_p
     }
 
@@ -289,7 +289,7 @@ impl PaddedTypeMap {
             visited_pointers.insert(p);
         }
         write!(f, r#"{{"p":"{p}","#)?;
-        match &self.map[p.0] {
+        match &self.map[p.0 as usize] {
             Node::Pointer(p2) => {
                 write!(
                     f,

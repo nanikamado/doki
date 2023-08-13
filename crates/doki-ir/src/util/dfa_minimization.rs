@@ -7,15 +7,12 @@ pub trait Dfa: Sized {
     type Transition: Hash + Eq + Debug;
     type Node: Hash + Eq + Copy + Debug;
 
-    fn get(&self, node: Self::Node, points: &FxHashMap<Self::Node, usize>) -> Self::Transition;
+    fn get(&self, node: Self::Node, points: &FxHashMap<Self::Node, u32>) -> Self::Transition;
 
     fn split_partitions(
         &mut self,
-        mut partition: FxHashMap<Self::Node, usize>,
-    ) -> (
-        FxHashMap<Self::Node, usize>,
-        FxHashMap<Self::Transition, usize>,
-    ) {
+        mut partition: FxHashMap<Self::Node, u32>,
+    ) -> (FxHashMap<Self::Node, u32>, FxHashMap<Self::Transition, u32>) {
         let nodes = partition.keys().copied().collect_vec();
         let mut collector_len = 1;
         let mut collector =
@@ -27,7 +24,7 @@ pub trait Dfa: Sized {
             collector.clear();
             for i in &nodes {
                 let s = self.get(*i, &partition);
-                let collector_len = collector.len();
+                let collector_len = collector.len() as u32;
                 let new_i = *collector.entry(s).or_insert(collector_len);
                 next_partition.insert(*i, new_i);
             }
