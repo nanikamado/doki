@@ -325,6 +325,7 @@ dependencies = [
  "multimap",
  "once_cell",
  "rustc-hash",
+ "smallvec",
  "stripmargin",
  "strum",
  "unic-ucd-category",

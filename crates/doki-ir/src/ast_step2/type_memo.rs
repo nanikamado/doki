@@ -4,13 +4,14 @@ use crate::intrinsics::IntrinsicTypeTag;
 use crate::util::id_generator::{self, IdGenerator};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use std::collections::BTreeMap;
 use std::fmt::{self, Display, Formatter};
 use std::rc::Rc;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Default, Clone, Hash)]
 pub struct TypeOf<T: TypeFamily> {
-    ts: Rc<Vec<TypeUnitOf<T>>>,
+    ts: Rc<SmallVec<[TypeUnitOf<T>; 2]>>,
     pub reference: bool,
     pub diverging: bool,
     pub derefed: bool,
@@ -31,7 +32,7 @@ pub enum TypeTag<T: TypeFamily> {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub struct TypeUnitOf<T: TypeFamily> {
     id: TypeTag<T>,
-    args: Vec<TypeInnerOf<T>>,
+    args: SmallVec<[TypeInnerOf<T>; 2]>,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
@@ -68,7 +69,7 @@ pub type TypeInner = TypeInnerOf<NormalTypeF>;
 impl<T: TypeFamily> From<TypeUnitOf<T>> for TypeOf<T> {
     fn from(value: TypeUnitOf<T>) -> Self {
         TypeOf {
-            ts: Rc::new(vec![value]),
+            ts: Rc::new(smallvec::smallvec![value]),
             reference: false,
             derefed: false,
             diverging: false,
@@ -250,7 +251,7 @@ impl TypeMemo {
         self.trace.insert(p, depth);
         let mut t = match &map.dereference_without_find(p) {
             Terminal::TypeMap(type_map) => {
-                let mut ts = Vec::new();
+                let mut ts = SmallVec::new();
                 for (id, args) in type_map.normals.clone() {
                     if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
                         debug_assert_eq!(args.len(), 3);
@@ -259,7 +260,7 @@ impl TypeMemo {
                         let b = self.get_type_inner(*args.next().unwrap(), map);
                         ts.push(TypeUnitOf {
                             id: TypeTag::TypeId(TypeId::Intrinsic(IntrinsicTypeTag::Fn)),
-                            args: vec![a, b],
+                            args: smallvec::smallvec![a, b],
                         });
                         let l = map.find(*args.next().unwrap());
                         for (id, ctx) in self.get_lambda_ids_pointer(l, map).clone() {
@@ -335,7 +336,7 @@ impl TypeMemo {
         let depth = depth + 1;
         let mut t = match &map.dereference_without_find(p) {
             Terminal::TypeMap(type_map) => {
-                let mut ts = Vec::new();
+                let mut ts = SmallVec::new();
                 for (id, args) in type_map.normals.iter() {
                     if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
                         debug_assert_eq!(args.len(), 3);
@@ -356,7 +357,7 @@ impl TypeMemo {
                         );
                         ts.push(TypeUnitOf {
                             id: TypeTag::TypeId(TypeId::Intrinsic(IntrinsicTypeTag::Fn)),
-                            args: vec![a, b],
+                            args: smallvec::smallvec![a, b],
                         });
                         let lambda_id = self.get_lambda_ids_for_hash(
                             *args.next().unwrap(),
@@ -368,7 +369,7 @@ impl TypeMemo {
                         for (id, ()) in lambda_id {
                             ts.push(TypeUnitOf {
                                 id: TypeTag::LambdaId(id),
-                                args: Vec::new(),
+                                args: SmallVec::new(),
                             });
                         }
                     } else {
