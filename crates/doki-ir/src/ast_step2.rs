@@ -8,7 +8,7 @@ pub use self::local_variable::{LocalVariable, LocalVariableCollector};
 use self::type_memo::TypeMemo;
 pub use self::type_memo::{
     DisplayTypeWithEnv, DisplayTypeWithEnvStruct, DisplayTypeWithEnvStructOption, Type,
-    TypeForHash, TypeInner, TypeInnerForHash, TypeInnerOf, TypeUnit, TypeUnitForHash, TypeUnitOf,
+    TypeForHash, TypeInner, TypeInnerForHash, TypeInnerOf, TypeUnitOf,
 };
 use self::union_find::UnionFind;
 use crate::ast_step1::{
