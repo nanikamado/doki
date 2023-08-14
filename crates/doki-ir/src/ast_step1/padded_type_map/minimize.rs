@@ -5,6 +5,7 @@ use multimap::MultiMap;
 use rustc_hash::{FxHashMap, FxHasher};
 
 pub fn minimize(root: TypePointer, m: &mut PaddedTypeMap) {
+    let root = m.find(root);
     if m.minimize_types && !m.minimized_pointers.contains(&root) {
         let mut partitions = FxHashMap::default();
         collect_points(root, m, &mut partitions);
@@ -30,10 +31,10 @@ fn collect_points(
     map: &mut PaddedTypeMap,
     points: &mut FxHashMap<TypePointer, u32>,
 ) {
+    let p = map.find(p);
     if points.contains_key(&p) {
         return;
     }
-    let p = map.find(p);
     points.insert(p, 0);
     for (tag, ps) in map.dereference_without_find(p).type_map.clone() {
         if let TypeTag::Lambda(LambdaId { id: _, root_t }) = tag {

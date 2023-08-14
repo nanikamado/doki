@@ -241,6 +241,7 @@ fn sort_aggregates_rec<'a>(
     if done.contains(&i) {
         return;
     }
+    done.insert(i);
     let a = &h[i.0];
     use ast_step2::c_type::CTypeScheme::*;
     match a {
@@ -256,7 +257,6 @@ fn sort_aggregates_rec<'a>(
         }
         _ => (),
     }
-    done.insert(i);
 }
 
 fn write_fns(s: &mut std::fmt::Formatter<'_>, functions: &[Function], env: Env, write_body: bool) {
