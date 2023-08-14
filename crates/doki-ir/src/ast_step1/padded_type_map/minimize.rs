@@ -1,8 +1,9 @@
-use super::{PaddedTypeMap, Terminal, TypePointer, TypeTag};
+use super::{BoxPoint, PaddedTypeMap, TypePointer, TypeTag};
 use crate::ast_step1::LambdaId;
 use crate::util::dfa_minimization::Dfa;
 use multimap::MultiMap;
 use rustc_hash::{FxHashMap, FxHasher};
+use std::collections::BTreeMap;
 
 pub fn minimize(root: TypePointer, m: &mut PaddedTypeMap) {
     let root = m.find(root);
@@ -46,15 +47,21 @@ fn collect_points(
     }
 }
 
+#[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
+pub struct TerminalRef<'a> {
+    pub type_map: BTreeMap<TypeTag, Vec<TypePointer>>,
+    pub reference_point: &'a BoxPoint,
+}
+
 impl Dfa for PaddedTypeMap {
-    type Transition = Terminal;
+    type Transition<'a> = TerminalRef<'a>;
     type Node = TypePointer;
 
-    fn get(
-        &self,
+    fn get<'a>(
+        &'a self,
         node: Self::Node,
         points: &FxHashMap<<PaddedTypeMap as Dfa>::Node, u32>,
-    ) -> Self::Transition {
+    ) -> Self::Transition<'a> {
         let t = self.dereference_without_find(node);
         let type_map = t
             .type_map
@@ -74,6 +81,9 @@ impl Dfa for PaddedTypeMap {
                 (id, ps)
             })
             .collect();
-        Terminal { type_map }
+        TerminalRef {
+            type_map,
+            reference_point: &t.box_point,
+        }
     }
 }

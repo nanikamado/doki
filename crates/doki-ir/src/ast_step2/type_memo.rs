@@ -147,9 +147,6 @@ impl<T: BrokenLinkCheck> BrokenLinkCheck for Vec<T> {
 pub struct TypeMemo {
     type_memo: FxHashMap<TypePointer, TypeInner>,
     type_memo_for_hash: FxHashMap<TypePointer, TypeInnerForHash>,
-    pub ref_pointers: FxHashSet<TypePointer>,
-    pub diverging_pointers: FxHashSet<TypePointer>,
-    pub ref_checked_pointers: FxHashSet<TypePointer>,
     pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
     trace: FxHashMap<TypePointer, usize>,
     used_trace: FxHashSet<TypePointer>,
@@ -228,7 +225,9 @@ impl TypeMemo {
         }
         self.trace.insert(p, depth);
         let mut ts = SmallVec::new();
-        let mut type_map = map.dereference_without_find(p).type_map.clone().into_iter();
+        let terminal = map.dereference_without_find(p);
+        let reference_point = terminal.box_point.clone();
+        let mut type_map = terminal.type_map.clone().into_iter();
         for (id, args) in &mut type_map {
             match id {
                 ast_step1::TypeTag::Normal(id) => ts.push(TypeUnitOf {
@@ -254,26 +253,31 @@ impl TypeMemo {
             diverging: false,
         });
         self.trace.remove(&p);
-        if self.diverging_pointers.contains(&p) {
-            if let TypeInnerOf::Type(t) = &mut t {
-                t.diverging = true;
-            } else {
-                panic!()
+        match reference_point {
+            ast_step1::BoxPoint::Diverging => {
+                if let TypeInnerOf::Type(t) = &mut t {
+                    t.diverging = true;
+                } else {
+                    panic!()
+                }
             }
-        } else if self.ref_pointers.contains(&p) {
-            if let TypeInnerOf::Type(t) = &mut t {
-                t.reference = true;
-            } else {
-                panic!()
+            ast_step1::BoxPoint::Boxed => {
+                if let TypeInnerOf::Type(t) = &mut t {
+                    t.reference = true;
+                } else {
+                    panic!()
+                }
             }
-        } else {
-            debug_assert!(self.ref_checked_pointers.contains(&p));
-            #[cfg(debug_assertions)]
-            if let TypeInnerOf::Type(t) = &mut t {
-                assert!(!t.reference);
-            } else {
-                panic!()
+            ast_step1::BoxPoint::Unboxed =>
+            {
+                #[cfg(debug_assertions)]
+                if let TypeInnerOf::Type(t) = &mut t {
+                    assert!(!t.reference);
+                } else {
+                    panic!()
+                }
             }
+            ast_step1::BoxPoint::NotSure => panic!(),
         }
         self.used_trace.remove(&p);
         if self.used_trace.is_empty() {
@@ -304,7 +308,8 @@ impl TypeMemo {
         let depth = depth + 1;
         let mut ts = SmallVec::new();
         let mut added_lambdas = FxHashSet::default();
-        for (id, args) in &map.dereference_without_find(p).type_map {
+        let terminal = map.dereference_without_find(p);
+        for (id, args) in &terminal.type_map {
             match id {
                 ast_step1::TypeTag::Normal(id) => ts.push(TypeUnitOf {
                     id: TypeTag::TypeId(*id),
@@ -336,19 +341,23 @@ impl TypeMemo {
             diverging: false,
         });
         trace.remove(&p);
-        if self.ref_pointers.contains(&p) {
-            if let TypeInnerOf::Type(t) = &mut t {
-                t.reference = true;
-            } else {
-                panic!()
+        match terminal.box_point {
+            ast_step1::BoxPoint::Boxed => {
+                if let TypeInnerOf::Type(t) = &mut t {
+                    t.reference = true;
+                } else {
+                    panic!()
+                }
             }
-        } else {
-            debug_assert!(self.ref_checked_pointers.contains(&p));
-            #[cfg(debug_assertions)]
-            if let TypeInnerOf::Type(t) = &mut t {
-                assert!(!t.reference);
-            } else {
-                panic!()
+            ast_step1::BoxPoint::NotSure => panic!(),
+            ast_step1::BoxPoint::Diverging | ast_step1::BoxPoint::Unboxed =>
+            {
+                #[cfg(debug_assertions)]
+                if let TypeInnerOf::Type(t) = &mut t {
+                    assert!(!t.reference);
+                } else {
+                    panic!()
+                }
             }
         }
         if used_trace.is_empty() {
@@ -358,103 +367,6 @@ impl TypeMemo {
         used_trace.remove(&p);
         t
     }
-
-    pub fn collect_ref_pointers(&mut self, p: TypePointer, map: &PaddedTypeMap) {
-        self.collect_ref_pointers_aux(
-            p,
-            &mut Default::default(),
-            &mut Vec::with_capacity(5),
-            None,
-            map,
-        )
-    }
-
-    fn collect_ref_pointers_aux(
-        &mut self,
-        p: TypePointer,
-        trace_map: &mut FxHashSet<TypePointer>,
-        trace: &mut Vec<TypePointer>,
-        mut divergent_stopper: Option<DivergentStopper>,
-        map: &PaddedTypeMap,
-    ) {
-        let p = map.find_imm(p);
-        if self.ref_checked_pointers.contains(&p) {
-            return;
-        }
-        if trace_map.contains(&p) {
-            if trace.contains(&p) {
-                for u in trace {
-                    self.diverging_pointers.insert(*u);
-                    self.ref_checked_pointers.insert(*u);
-                }
-            } else if let DivergentStopper::Union(u) = divergent_stopper.unwrap() {
-                self.ref_pointers.insert(u);
-                self.ref_checked_pointers.insert(u);
-            }
-            return;
-        }
-        let type_map = &map.dereference_without_find(p).type_map;
-        let is_union = type_map.len()
-            - type_map
-                .get(&ast_step1::TypeTag::Normal(TypeId::Intrinsic(
-                    IntrinsicTypeTag::Fn,
-                )))
-                .is_some() as usize
-            > 1;
-        let mut new_trace;
-        let trace = if is_union {
-            divergent_stopper = Some(DivergentStopper::Union(p));
-            new_trace = Vec::new();
-            &mut new_trace
-        } else {
-            trace.push(p);
-            trace
-        };
-        trace_map.insert(p);
-        for (id, ts) in type_map {
-            match id {
-                ast_step1::TypeTag::Normal(TypeId::Intrinsic(_)) => {
-                    for t in ts {
-                        self.collect_ref_pointers_aux(
-                            *t,
-                            trace_map,
-                            &mut Vec::new(),
-                            Some(DivergentStopper::Indirect),
-                            map,
-                        );
-                    }
-                }
-                ast_step1::TypeTag::Normal(TypeId::UserDefined(_)) => {
-                    for t in ts {
-                        self.collect_ref_pointers_aux(*t, trace_map, trace, divergent_stopper, map);
-                    }
-                }
-                ast_step1::TypeTag::Lambda(LambdaId { id: _, root_t }) => {
-                    self.collect_ref_pointers_aux(
-                        *root_t,
-                        trace_map,
-                        &mut Vec::new(),
-                        Some(DivergentStopper::Indirect),
-                        map,
-                    );
-                    for t in ts {
-                        self.collect_ref_pointers_aux(*t, trace_map, trace, divergent_stopper, map);
-                    }
-                }
-            }
-        }
-        if !is_union {
-            trace.pop().unwrap();
-        }
-        trace_map.remove(&p);
-        self.ref_checked_pointers.insert(p);
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum DivergentStopper {
-    Indirect,
-    Union(TypePointer),
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]

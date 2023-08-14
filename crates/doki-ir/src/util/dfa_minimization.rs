@@ -4,15 +4,24 @@ use std::fmt::Debug;
 use std::hash::Hash;
 
 pub trait Dfa: Sized {
-    type Transition: Hash + Eq + Debug;
+    type Transition<'a>: Hash + Eq + Debug
+    where
+        Self: 'a;
     type Node: Hash + Eq + Copy + Debug;
 
-    fn get(&self, node: Self::Node, points: &FxHashMap<Self::Node, u32>) -> Self::Transition;
+    fn get<'a>(
+        &'a self,
+        node: Self::Node,
+        points: &FxHashMap<Self::Node, u32>,
+    ) -> Self::Transition<'a>;
 
     fn split_partitions(
         &mut self,
         mut partition: FxHashMap<Self::Node, u32>,
-    ) -> (FxHashMap<Self::Node, u32>, FxHashMap<Self::Transition, u32>) {
+    ) -> (
+        FxHashMap<Self::Node, u32>,
+        FxHashMap<Self::Transition<'_>, u32>,
+    ) {
         let nodes = partition.keys().copied().collect_vec();
         let mut collector_len = 1;
         let mut collector =

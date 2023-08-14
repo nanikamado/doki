@@ -42,10 +42,14 @@ pub trait PointerReplacer {
 }
 
 impl Dfa for CTypeEnv<'_> {
-    type Transition = CTypeScheme<u32>;
+    type Transition<'a> = CTypeScheme<u32> where Self: 'a;
     type Node = PointerForCType;
 
-    fn get(&self, node: Self::Node, points: &FxHashMap<Self::Node, u32>) -> Self::Transition {
+    fn get<'a>(
+        &'a self,
+        node: Self::Node,
+        points: &FxHashMap<Self::Node, u32>,
+    ) -> Self::Transition<'a> {
         self.0[&node].replace_ref(|a| points[a])
     }
 }

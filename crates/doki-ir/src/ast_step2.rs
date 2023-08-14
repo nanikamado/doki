@@ -12,7 +12,7 @@ pub use self::type_memo::{
 };
 use self::union_find::UnionFind;
 use crate::ast_step1::{
-    self, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
+    self, BoxPoint, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
     ReplaceMap, TypeId, TypePointer,
 };
 use crate::ast_step2::c_type::PointerModifier;
@@ -953,13 +953,13 @@ impl<'a> Env<'a> {
     fn get_type(&mut self, p: PointerForCType) -> Option<Type> {
         match p.modifier {
             PointerModifier::Normal => {
-                self.type_memo.collect_ref_pointers(p.p, &self.map);
+                collect_box_points(p.p, &mut self.map);
                 let t = self.type_memo.get_type(p.p, &mut self.map);
                 Some(t)
             }
             PointerModifier::UnionMember(_) => None,
             PointerModifier::Derefed => {
-                self.type_memo.collect_ref_pointers(p.p, &self.map);
+                collect_box_points(p.p, &mut self.map);
                 let mut t = self.type_memo.get_type(p.p, &mut self.map);
                 debug_assert!(t.reference);
                 debug_assert!(!t.derefed);
@@ -970,7 +970,7 @@ impl<'a> Env<'a> {
     }
 
     fn get_type_for_hash(&mut self, p: TypePointer) -> TypeForHash {
-        self.type_memo.collect_ref_pointers(p, &self.map);
+        collect_box_points(p, &mut self.map);
         self.type_memo.get_type_for_hash(p, &mut self.map)
     }
 
@@ -1099,7 +1099,7 @@ impl<'a> Env<'a> {
             *t
         } else {
             debug_assert!(!self.normalizer_for_c_type.contains(p));
-            self.type_memo.collect_ref_pointers(p.p, &self.map);
+            collect_box_points(p.p, &mut self.map);
             self.map.minimize(p.p);
             let c_type_for_hash = self.c_type_for_hash(p);
             if let Some(t) = self.c_type_memo_from_hash.get(&c_type_for_hash) {
@@ -1120,8 +1120,14 @@ impl<'a> Env<'a> {
                 debug_assert!(self.map.is_terminal(t.p));
                 let r = partition_rev[p];
                 debug_assert!(self.map.is_terminal(r.p));
-                debug_assert!(self.type_memo.ref_checked_pointers.contains(&t.p));
-                debug_assert!(self.type_memo.ref_checked_pointers.contains(&r.p));
+                debug_assert_ne!(
+                    self.map.dereference_without_find(t.p).box_point,
+                    BoxPoint::NotSure
+                );
+                debug_assert_ne!(
+                    self.map.dereference_without_find(r.p).box_point,
+                    BoxPoint::NotSure
+                );
                 if *t != r {
                     self.normalizer_for_c_type.union(*t, r)
                 }
@@ -1161,9 +1167,10 @@ impl<'a> Env<'a> {
     }
 
     fn type_is_ref(&mut self, p: TypePointer) -> bool {
-        self.type_memo.collect_ref_pointers(p, &self.map);
-        debug_assert!(self.type_memo.ref_checked_pointers.contains(&p));
-        self.type_memo.ref_pointers.contains(&p)
+        collect_box_points(p, &mut self.map);
+        let p = &self.map.dereference_without_find(p).box_point;
+        debug_assert_ne!(*p, BoxPoint::NotSure);
+        *p == BoxPoint::Boxed
     }
 
     fn c_type_for_hash(&mut self, p: PointerForCType) -> CTypeForHash {
@@ -1251,8 +1258,9 @@ impl<'a> Env<'a> {
         let p = self.normalizer_for_c_type.find(PointerForCType::from(p));
         debug_assert_eq!(p.modifier, PointerModifier::Normal);
         let p = p.p;
-        debug_assert!(self.type_memo.ref_checked_pointers.contains(&p));
-        if self.type_memo.diverging_pointers.contains(&p) {
+        let reference_point = self.map.dereference_without_find(p).box_point.clone();
+        debug_assert_ne!(reference_point, BoxPoint::NotSure);
+        if reference_point == BoxPoint::Diverging {
             return CTypeForHashInner::Type(CTypeForHash(vec![CTypeForHashUnit::Diverge]));
         }
         if let Some(t) = self.c_type_for_hash_memo.get(&p) {
@@ -1269,7 +1277,7 @@ impl<'a> Env<'a> {
         self.collect_hash_unit(p, &mut ts, trace, used_trace, depth);
         let mut t = CTypeForHash(ts);
         trace.remove(&p);
-        if self.type_memo.ref_pointers.contains(&p) {
+        if reference_point == BoxPoint::Boxed {
             t = CTypeForHash(vec![CTypeForHashUnit::Ref(CTypeForHashInner::Type(t))]);
         }
         if used_trace.is_empty() {
@@ -1285,8 +1293,9 @@ impl<'a> Env<'a> {
         let p = self.normalizer_for_c_type.find(PointerForCType::from(p));
         debug_assert_eq!(p.modifier, PointerModifier::Normal);
         let p = p.p;
-        debug_assert!(self.type_memo.ref_checked_pointers.contains(&p));
-        if self.type_memo.diverging_pointers.contains(&p) {
+        let reference_point = &self.map.dereference_without_find(p).box_point;
+        debug_assert_ne!(*reference_point, BoxPoint::NotSure);
+        if *reference_point == BoxPoint::Diverging {
             return CTypeForHash(vec![CTypeForHashUnit::Diverge]);
         }
         let mut ts = Vec::new();
@@ -1305,8 +1314,9 @@ impl<'a> Env<'a> {
         let p = self.normalizer_for_c_type.find(PointerForCType::from(p));
         debug_assert_eq!(p.modifier, PointerModifier::Normal);
         let p = p.p;
-        debug_assert!(self.type_memo.ref_checked_pointers.contains(&p));
-        if self.type_memo.diverging_pointers.contains(&p) {
+        let reference_point = &self.map.dereference_without_find(p).box_point;
+        debug_assert_ne!(*reference_point, BoxPoint::NotSure);
+        if *reference_point == BoxPoint::Diverging {
             return CTypeForHash(vec![CTypeForHashUnit::Diverge]);
         }
         let mut ts = Vec::new();
@@ -1325,11 +1335,12 @@ impl<'a> Env<'a> {
         node: PointerForCType,
     ) -> CTypeScheme<PointerForCType> {
         debug_assert!(self.map.is_terminal(node.p));
-        if self.type_memo.diverging_pointers.contains(&node.p) {
+        let reference_point = &self.map.dereference_without_find(node.p).box_point;
+        debug_assert_ne!(*reference_point, BoxPoint::NotSure);
+        if *reference_point == BoxPoint::Diverging {
             return CTypeScheme::Diverge;
         }
-        if node.modifier == PointerModifier::Normal && self.type_memo.ref_pointers.contains(&node.p)
-        {
+        if node.modifier == PointerModifier::Normal && *reference_point == BoxPoint::Boxed {
             return CTypeScheme::Mut(PointerForCType {
                 modifier: PointerModifier::Derefed,
                 p: node.p,
@@ -1396,7 +1407,8 @@ impl<'a> Env<'a> {
         if contains {
             return;
         }
-        if self.type_memo.ref_pointers.contains(&p) {
+        let terminal = self.map.dereference_without_find(p);
+        if terminal.box_point == BoxPoint::Boxed {
             pointers.insert(
                 PointerForCType {
                     p,
@@ -1406,12 +1418,7 @@ impl<'a> Env<'a> {
             );
         }
         let mut tag = 0;
-        let mut type_map = self
-            .map
-            .dereference_without_find(p)
-            .type_map
-            .clone()
-            .into_iter();
+        let mut type_map = terminal.type_map.clone().into_iter();
         for (id, args) in &mut type_map {
             match id {
                 ast_step1::TypeTag::Normal(TypeId::Intrinsic(IntrinsicTypeTag::Fn)) => (),
@@ -1487,5 +1494,103 @@ impl Display for FxLambdaId {
 impl Display for GlobalVariableId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+pub fn collect_box_points(p: TypePointer, map: &mut PaddedTypeMap) {
+    collect_box_points_aux(
+        p,
+        &mut Default::default(),
+        &mut Vec::with_capacity(5),
+        None,
+        map,
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DivergentStopper {
+    Indirect,
+    Union(TypePointer),
+}
+
+fn collect_box_points_aux(
+    p: TypePointer,
+    trace_map: &mut FxHashSet<TypePointer>,
+    trace: &mut Vec<TypePointer>,
+    mut divergent_stopper: Option<DivergentStopper>,
+    map: &mut PaddedTypeMap,
+) {
+    let p = map.find_imm(p);
+    let terminal = map.dereference_without_find(p);
+    if terminal.box_point != BoxPoint::NotSure {
+        return;
+    }
+    if trace_map.contains(&p) {
+        if trace.contains(&p) {
+            for u in trace {
+                map.dereference_without_find_mut(*u).box_point = BoxPoint::Diverging;
+            }
+        } else if let DivergentStopper::Union(u) = divergent_stopper.unwrap() {
+            map.dereference_without_find_mut(u).box_point = BoxPoint::Boxed;
+        }
+        return;
+    }
+    let type_map = &terminal.type_map;
+    let is_union = type_map.len()
+        - type_map
+            .get(&ast_step1::TypeTag::Normal(TypeId::Intrinsic(
+                IntrinsicTypeTag::Fn,
+            )))
+            .is_some() as usize
+        > 1;
+    let mut new_trace;
+    let trace = if is_union {
+        divergent_stopper = Some(DivergentStopper::Union(p));
+        new_trace = Vec::new();
+        &mut new_trace
+    } else {
+        trace.push(p);
+        trace
+    };
+    trace_map.insert(p);
+    for (id, ts) in type_map.clone() {
+        match id {
+            ast_step1::TypeTag::Normal(TypeId::Intrinsic(_)) => {
+                for t in ts {
+                    collect_box_points_aux(
+                        t,
+                        trace_map,
+                        &mut Vec::new(),
+                        Some(DivergentStopper::Indirect),
+                        map,
+                    );
+                }
+            }
+            ast_step1::TypeTag::Normal(TypeId::UserDefined(_)) => {
+                for t in ts {
+                    collect_box_points_aux(t, trace_map, trace, divergent_stopper, map);
+                }
+            }
+            ast_step1::TypeTag::Lambda(LambdaId { id: _, root_t }) => {
+                collect_box_points_aux(
+                    root_t,
+                    trace_map,
+                    &mut Vec::new(),
+                    Some(DivergentStopper::Indirect),
+                    map,
+                );
+                for t in ts {
+                    collect_box_points_aux(t, trace_map, trace, divergent_stopper, map);
+                }
+            }
+        }
+    }
+    if !is_union {
+        trace.pop().unwrap();
+    }
+    trace_map.remove(&p);
+    let r = &mut map.dereference_without_find_mut(p).box_point;
+    if *r == BoxPoint::NotSure {
+        *r = BoxPoint::Unboxed;
     }
 }

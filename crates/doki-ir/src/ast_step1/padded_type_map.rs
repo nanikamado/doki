@@ -25,8 +25,18 @@ pub enum TypeTag {
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum BoxPoint {
+    #[default]
+    NotSure,
+    Diverging,
+    Boxed,
+    Unboxed,
+}
+
+#[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Terminal {
     pub type_map: BTreeMap<TypeTag, Vec<TypePointer>>,
+    pub box_point: BoxPoint,
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
@@ -69,6 +79,7 @@ impl PaddedTypeMap {
             let b_t = mem::replace(&mut self.map[b.0 as usize], Node::Pointer(a));
             let mut pairs = Vec::new();
             if let (Node::Terminal(a_t), Node::Terminal(b_t)) = (&mut self.map[a.0 as usize], b_t) {
+                debug_assert_eq!(a_t.box_point, b_t.box_point);
                 for (b_id, b_normal) in b_t.type_map {
                     if let Some(a_normal) = a_t.type_map.get(&b_id) {
                         for (a, b) in a_normal.iter().zip(b_normal) {
@@ -175,6 +186,14 @@ impl PaddedTypeMap {
         }
     }
 
+    pub fn dereference_without_find_mut(&mut self, p: TypePointer) -> &mut Terminal {
+        if let Node::Terminal(t) = &mut self.map[p.0 as usize] {
+            t
+        } else {
+            panic!()
+        }
+    }
+
     fn dereference_mut(&mut self, p: TypePointer) -> &mut Terminal {
         let p = self.find(p);
         if let Node::Terminal(t) = &mut self.map[p.0 as usize] {
@@ -192,6 +211,7 @@ impl PaddedTypeMap {
         let new_p = self.new_pointer();
         replace_map.insert(p, new_p);
         let t = self.dereference_without_find(p).clone();
+        debug_assert_eq!(t.box_point, BoxPoint::NotSure);
         let type_map = t
             .type_map
             .into_iter()
@@ -210,7 +230,10 @@ impl PaddedTypeMap {
                 (id, t)
             })
             .collect();
-        self.map[new_p.0 as usize] = Node::Terminal(Terminal { type_map });
+        self.map[new_p.0 as usize] = Node::Terminal(Terminal {
+            type_map,
+            box_point: BoxPoint::NotSure,
+        });
         new_p
     }
 

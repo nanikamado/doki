@@ -3,7 +3,7 @@ mod padded_type_map;
 #[cfg(debug_assertions)]
 pub use self::padded_type_map::JsonDebug;
 pub use self::padded_type_map::{
-    PaddedTypeMap, ReplaceMap, Terminal, TypeId, TypePointer, TypeTag,
+    BoxPoint, PaddedTypeMap, ReplaceMap, Terminal, TypeId, TypePointer, TypeTag,
 };
 use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariable};
 use crate::util::scc;
