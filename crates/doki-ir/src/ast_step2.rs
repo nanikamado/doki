@@ -13,7 +13,7 @@ pub use self::type_memo::{
 use self::union_find::UnionFind;
 use crate::ast_step1::{
     self, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
-    ReplaceMap, Terminal, TypeId, TypePointer,
+    ReplaceMap, TypeId, TypePointer,
 };
 use crate::ast_step2::c_type::PointerModifier;
 use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariable};
@@ -906,48 +906,46 @@ impl<'a> Env<'a> {
         let ot = self.map.find(ot);
         self.c_type(PointerForCType::from(ot));
         let mut fs = Vec::new();
-        let mut tag = 0;
-        if let ast_step1::Terminal::TypeMap(ts) = self.map.dereference(ot) {
-            let normals_len = ts.normals.len();
-            for (id, args) in ts.normals.clone() {
-                if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
-                    let ls = self
-                        .type_memo
-                        .get_lambda_ids_pointer(args[2], &mut self.map);
-                    let ls_len = ls.len();
-                    for lambda_id in ls.keys().copied().collect_vec() {
-                        let len = self.functions.len() as u32;
-                        let e = self
-                            .functions
-                            .entry(lambda_id)
-                            .or_insert(FunctionEntry::Placeholder(FxLambdaId(len)));
-                        let id = match e {
-                            FunctionEntry::Placeholder(id) => *id,
-                            FunctionEntry::Function(f) => f.id,
-                        };
-                        let p = PointerForCType {
-                            p: ot,
-                            modifier: if normals_len + ls_len == 2 {
-                                PointerModifier::Normal
-                            } else {
-                                PointerModifier::UnionMember(tag)
-                            },
-                        };
-                        let ctx_hash = self.c_type_for_hash(p);
-                        let ct = self.c_type_memo_from_hash.get(&ctx_hash).unwrap();
-                        debug_assert_eq!(
-                            self.c_type_definitions.len(),
-                            self.c_type_memo_from_hash.len()
-                        );
-                        fs.push((tag, id, CType(ct)));
-                        tag += 1;
-                    }
+        let type_map = &self.map.dereference(ot).type_map;
+        let normals_len = type_map
+            .iter()
+            .filter(|(tag, _)| {
+                !matches!(
+                    tag,
+                    ast_step1::TypeTag::Lambda(_)
+                        | ast_step1::TypeTag::Normal(TypeId::Intrinsic(IntrinsicTypeTag::Fn))
+                )
+            })
+            .count();
+        let ls = self.type_memo.get_lambda_ids_pointer(ot, &mut self.map);
+        let ls_len = ls.len();
+        let mut tag = normals_len as u32;
+        for lambda_id in ls.keys().copied().collect_vec() {
+            let len = self.functions.len() as u32;
+            let e = self
+                .functions
+                .entry(lambda_id)
+                .or_insert(FunctionEntry::Placeholder(FxLambdaId(len)));
+            let id = match e {
+                FunctionEntry::Placeholder(id) => *id,
+                FunctionEntry::Function(f) => f.id,
+            };
+            let p = PointerForCType {
+                p: ot,
+                modifier: if normals_len == 0 && ls_len == 1 {
+                    PointerModifier::Normal
                 } else {
-                    tag += 1;
-                }
-            }
-        } else {
-            panic!()
+                    PointerModifier::UnionMember(tag)
+                },
+            };
+            let ctx_hash = self.c_type_for_hash(p);
+            let ct = self.c_type_memo_from_hash.get(&ctx_hash).unwrap();
+            debug_assert_eq!(
+                self.c_type_definitions.len(),
+                self.c_type_memo_from_hash.len()
+            );
+            fs.push((tag, id, CType(ct)));
+            tag += 1;
         }
         (fs, tag)
     }
@@ -1060,12 +1058,12 @@ impl<'a> Env<'a> {
         debug_assert_ne!(type_id, TypeId::Intrinsic(IntrinsicTypeTag::Fn));
         let mut tag = 0;
         let mut result = None;
-        if let ast_step1::Terminal::TypeMap(ts) = self.map.dereference(ot) {
-            let ts_len = ts.normals.len();
-            for (id, args) in ts.normals.clone() {
-                if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
-                    debug_assert_eq!(tag + 1, ts_len);
-                } else {
+        let type_map = &self.map.dereference(ot).type_map;
+        let mut type_map = type_map.clone().into_iter();
+        for (id, args) in &mut type_map {
+            match id {
+                ast_step1::TypeTag::Normal(TypeId::Intrinsic(IntrinsicTypeTag::Fn)) => break,
+                ast_step1::TypeTag::Normal(id) => {
                     if id == type_id {
                         debug_assert!(result.is_none());
                         let p = self.map.new_pointer();
@@ -1074,10 +1072,12 @@ impl<'a> Env<'a> {
                     }
                     tag += 1;
                 }
+                ast_step1::TypeTag::Lambda(_) => {
+                    break;
+                }
             }
-        } else {
-            panic!()
         }
+        debug_assert!(type_map.all(|(id, _)| matches!(id, ast_step1::TypeTag::Lambda(_))));
         match result {
             Some(tag_of_t) => {
                 if tag == 1 {
@@ -1198,45 +1198,46 @@ impl<'a> Env<'a> {
         used_trace: &mut FxHashSet<TypePointer>,
         depth: u32,
     ) {
-        if let Terminal::TypeMap(type_map) = &self.map.dereference_without_find(p) {
-            for (type_id, args) in type_map.normals.clone() {
-                match type_id {
-                    TypeId::Intrinsic(tag) => match tag {
-                        IntrinsicTypeTag::Ptr => ts.push(CTypeForHashUnit::Ptr),
-                        IntrinsicTypeTag::I64 => ts.push(CTypeForHashUnit::I64),
-                        IntrinsicTypeTag::U8 => ts.push(CTypeForHashUnit::U8),
-                        IntrinsicTypeTag::Unit => ts.push(CTypeForHashUnit::Aggregate(Vec::new())),
-                        IntrinsicTypeTag::Fn => {
-                            let ids = self
-                                .type_memo
-                                .get_lambda_ids_pointer(args[2], &mut self.map);
-                            for ctx in ids.values().cloned().collect_vec() {
-                                let ctx = ctx
-                                    .iter()
-                                    .map(|p| {
-                                        self.c_type_for_hash_inner(*p, trace, used_trace, depth)
-                                    })
-                                    .collect();
-                                ts.push(CTypeForHashUnit::Aggregate(ctx));
-                            }
-                        }
-                        IntrinsicTypeTag::Mut => {
-                            let t = self.c_type_for_hash_inner(args[0], trace, used_trace, depth);
-                            ts.push(CTypeForHashUnit::Ref(t));
-                        }
-                    },
-                    TypeId::UserDefined(_) => {
-                        let args = args
+        let mut type_map = self
+            .map
+            .dereference_without_find(p)
+            .type_map
+            .clone()
+            .into_iter();
+        for (type_id, args) in &mut type_map {
+            match type_id {
+                ast_step1::TypeTag::Normal(TypeId::Intrinsic(tag)) => match tag {
+                    IntrinsicTypeTag::Ptr => ts.push(CTypeForHashUnit::Ptr),
+                    IntrinsicTypeTag::I64 => ts.push(CTypeForHashUnit::I64),
+                    IntrinsicTypeTag::U8 => ts.push(CTypeForHashUnit::U8),
+                    IntrinsicTypeTag::Unit => ts.push(CTypeForHashUnit::Aggregate(Vec::new())),
+                    IntrinsicTypeTag::Fn => (),
+                    IntrinsicTypeTag::Mut => {
+                        let t = self.c_type_for_hash_inner(args[0], trace, used_trace, depth);
+                        ts.push(CTypeForHashUnit::Ref(t));
+                    }
+                },
+                ast_step1::TypeTag::Normal(TypeId::UserDefined(_)) => {
+                    let args = args
+                        .iter()
+                        .map(|p| self.c_type_for_hash_inner(*p, trace, used_trace, depth))
+                        .collect();
+                    ts.push(CTypeForHashUnit::Aggregate(args));
+                }
+                ast_step1::TypeTag::Lambda(_) => {
+                    let ids = self.type_memo.get_lambda_ids_pointer(p, &mut self.map);
+                    for ctx in ids.values().cloned().collect_vec() {
+                        let ctx = ctx
                             .iter()
                             .map(|p| self.c_type_for_hash_inner(*p, trace, used_trace, depth))
                             .collect();
-                        ts.push(CTypeForHashUnit::Aggregate(args));
+                        ts.push(CTypeForHashUnit::Aggregate(ctx));
                     }
+                    break;
                 }
             }
-        } else {
-            panic!()
         }
+        debug_assert!(type_map.all(|(id, _)| matches!(id, ast_step1::TypeTag::Lambda(_))));
     }
 
     fn c_type_for_hash_inner(
@@ -1335,46 +1336,44 @@ impl<'a> Env<'a> {
             });
         }
         let mut ts = Vec::new();
-        if let Terminal::TypeMap(t) = self.map.dereference(node.p) {
-            for (id, args) in t.normals.clone() {
-                match id {
-                    TypeId::Intrinsic(tag) => match tag {
-                        IntrinsicTypeTag::Ptr => ts.push(CTypeScheme::Ptr),
-                        IntrinsicTypeTag::I64 => ts.push(CTypeScheme::I64),
-                        IntrinsicTypeTag::U8 => ts.push(CTypeScheme::U8),
-                        IntrinsicTypeTag::Unit => ts.push(CTypeScheme::Aggregate(Vec::new())),
-                        IntrinsicTypeTag::Fn => {
-                            let ids = self
-                                .type_memo
-                                .get_lambda_ids_pointer(args[2], &mut self.map);
-                            for ctx in ids.values() {
-                                ts.push(CTypeScheme::Aggregate(
-                                    ctx.iter()
-                                        .copied()
-                                        .map(|p| PointerForCType::from(self.map.find_imm(p)))
-                                        .collect(),
-                                ));
-                            }
-                        }
-                        IntrinsicTypeTag::Mut => {
-                            ts.push(CTypeScheme::Mut(PointerForCType::from(
-                                self.map.find_imm(args[0]),
-                            )));
-                        }
-                    },
-                    TypeId::UserDefined(_) => {
+        let mut type_map = self.map.dereference(node.p).type_map.clone().into_iter();
+        for (id, args) in &mut type_map {
+            match id {
+                ast_step1::TypeTag::Normal(TypeId::Intrinsic(tag)) => match tag {
+                    IntrinsicTypeTag::Ptr => ts.push(CTypeScheme::Ptr),
+                    IntrinsicTypeTag::I64 => ts.push(CTypeScheme::I64),
+                    IntrinsicTypeTag::U8 => ts.push(CTypeScheme::U8),
+                    IntrinsicTypeTag::Unit => ts.push(CTypeScheme::Aggregate(Vec::new())),
+                    IntrinsicTypeTag::Fn => (),
+                    IntrinsicTypeTag::Mut => {
+                        ts.push(CTypeScheme::Mut(PointerForCType::from(
+                            self.map.find_imm(args[0]),
+                        )));
+                    }
+                },
+                ast_step1::TypeTag::Normal(TypeId::UserDefined(_)) => {
+                    ts.push(CTypeScheme::Aggregate(
+                        args.iter()
+                            .copied()
+                            .map(|p| PointerForCType::from(self.map.find_imm(p)))
+                            .collect(),
+                    ));
+                }
+                ast_step1::TypeTag::Lambda(_) => {
+                    let ids = self.type_memo.get_lambda_ids_pointer(node.p, &mut self.map);
+                    for ctx in ids.values() {
                         ts.push(CTypeScheme::Aggregate(
-                            args.iter()
+                            ctx.iter()
                                 .copied()
                                 .map(|p| PointerForCType::from(self.map.find_imm(p)))
                                 .collect(),
                         ));
                     }
+                    break;
                 }
             }
-        } else {
-            panic!()
         }
+        debug_assert!(type_map.all(|(id, _)| matches!(id, ast_step1::TypeTag::Lambda(_))));
         if let PointerModifier::UnionMember(tag) = node.modifier {
             ts.into_iter().nth(tag as usize).unwrap()
         } else if ts.len() == 1 {
@@ -1407,34 +1406,39 @@ impl<'a> Env<'a> {
             );
         }
         let mut tag = 0;
-        if let Terminal::TypeMap(t) = self.map.dereference_without_find(p) {
-            for (id, args) in t.normals.clone() {
-                match id {
-                    TypeId::Intrinsic(IntrinsicTypeTag::Fn) => {
-                        for ctx in self
-                            .type_memo
-                            .get_lambda_ids_pointer(args[2], &mut self.map)
-                            .values()
-                            .cloned()
-                            .collect_vec()
-                        {
-                            for t in ctx {
-                                self.collect_pointers(t, pointers);
-                            }
-                            tag += 1;
-                        }
+        let mut type_map = self
+            .map
+            .dereference_without_find(p)
+            .type_map
+            .clone()
+            .into_iter();
+        for (id, args) in &mut type_map {
+            match id {
+                ast_step1::TypeTag::Normal(TypeId::Intrinsic(IntrinsicTypeTag::Fn)) => (),
+                ast_step1::TypeTag::Normal(_) => {
+                    for t in args {
+                        self.collect_pointers(t, pointers);
                     }
-                    _ => {
-                        for t in args {
+                    tag += 1;
+                }
+                ast_step1::TypeTag::Lambda(_) => {
+                    for ctx in self
+                        .type_memo
+                        .get_lambda_ids_pointer(p, &mut self.map)
+                        .values()
+                        .cloned()
+                        .collect_vec()
+                    {
+                        for t in ctx {
                             self.collect_pointers(t, pointers);
                         }
                         tag += 1;
                     }
+                    break;
                 }
             }
-        } else {
-            panic!()
         }
+        debug_assert!(type_map.all(|(id, _)| matches!(id, ast_step1::TypeTag::Lambda(_))));
         if tag >= 2 {
             for i in 0..tag {
                 pointers.insert(

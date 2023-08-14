@@ -1,4 +1,4 @@
-use super::{PaddedTypeMap, Terminal, TypeMap, TypePointer};
+use super::{PaddedTypeMap, Terminal, TypePointer, TypeTag};
 use crate::ast_step1::LambdaId;
 use crate::util::dfa_minimization::Dfa;
 use multimap::MultiMap;
@@ -35,21 +35,12 @@ fn collect_points(
     }
     let p = map.find(p);
     points.insert(p, 0);
-    match map.dereference_without_find(p) {
-        Terminal::TypeMap(t) => {
-            for ps in t.normals.clone().values() {
-                for p in ps {
-                    collect_points(*p, map, points)
-                }
-            }
+    for (tag, ps) in map.dereference_without_find(p).type_map.clone() {
+        if let TypeTag::Lambda(LambdaId { id: _, root_t }) = tag {
+            collect_points(root_t, map, points)
         }
-        Terminal::LambdaId(ls) => {
-            for (l, ctx) in ls.clone() {
-                collect_points(l.root_t, map, points);
-                for c in ctx {
-                    collect_points(c, map, points);
-                }
-            }
+        for p in ps {
+            collect_points(p, map, points)
         }
     }
 }
@@ -64,40 +55,24 @@ impl Dfa for PaddedTypeMap {
         points: &FxHashMap<<PaddedTypeMap as Dfa>::Node, u32>,
     ) -> Self::Transition {
         let t = self.dereference_without_find(node);
-        match t {
-            Terminal::LambdaId(ls) => {
-                let ls = ls
+        let type_map = t
+            .type_map
+            .iter()
+            .map(|(id, ps)| {
+                let id = match id {
+                    TypeTag::Normal(tag) => TypeTag::Normal(*tag),
+                    TypeTag::Lambda(LambdaId { id, root_t }) => TypeTag::Lambda(LambdaId {
+                        id: *id,
+                        root_t: TypePointer(points[&self.find_imm(*root_t)]),
+                    }),
+                };
+                let ps = ps
                     .iter()
-                    .map(|(l, ctx)| {
-                        let ctx = ctx
-                            .iter()
-                            .map(|p| TypePointer(points[&self.find_imm(*p)]))
-                            .collect();
-                        (
-                            LambdaId {
-                                id: l.id,
-                                root_t: TypePointer(points[&self.find_imm(l.root_t)]),
-                            },
-                            ctx,
-                        )
-                    })
+                    .map(|p| TypePointer(points[&self.find_imm(*p)]))
                     .collect();
-                Terminal::LambdaId(ls)
-            }
-            Terminal::TypeMap(m) => {
-                let normals = m
-                    .normals
-                    .iter()
-                    .map(|(id, ps)| {
-                        let ps = ps
-                            .iter()
-                            .map(|p| TypePointer(points[&self.find_imm(*p)]))
-                            .collect();
-                        (*id, ps)
-                    })
-                    .collect();
-                Terminal::TypeMap(TypeMap { normals })
-            }
-        }
+                (id, ps)
+            })
+            .collect();
+        Terminal { type_map }
     }
 }

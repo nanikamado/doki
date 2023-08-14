@@ -2,7 +2,9 @@ mod padded_type_map;
 
 #[cfg(debug_assertions)]
 pub use self::padded_type_map::JsonDebug;
-pub use self::padded_type_map::{PaddedTypeMap, ReplaceMap, Terminal, TypeId, TypePointer};
+pub use self::padded_type_map::{
+    PaddedTypeMap, ReplaceMap, Terminal, TypeId, TypePointer, TypeTag,
+};
 use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariable};
 use crate::util::scc;
 use itertools::Itertools;
@@ -175,7 +177,6 @@ impl TypeInfEnv<'_> {
                             self.defined_local_variables.insert(*parameter);
                             let arg = self.local_variable_types.get(*parameter);
                             let ret = self.local_variable_types.get(*ret);
-                            let fn_id = self.type_map.new_lambda_id_pointer();
                             self.block(body, root_t, false);
                             *context = self
                                 .used_local_variables
@@ -184,7 +185,7 @@ impl TypeInfEnv<'_> {
                                 .filter(|v| !self.defined_local_variables.contains(v))
                                 .collect_vec();
                             self.type_map.insert_lambda_id(
-                                fn_id,
+                                t,
                                 LambdaId {
                                     id: lambda_id.id,
                                     root_t,
@@ -194,7 +195,11 @@ impl TypeInfEnv<'_> {
                                     .map(|p| self.local_variable_types.get(*p))
                                     .collect(),
                             );
-                            self.type_map.insert_function(t, arg, ret, fn_id);
+                            self.type_map.insert_normal(
+                                t,
+                                TypeId::Intrinsic(IntrinsicTypeTag::Fn),
+                                vec![arg, ret],
+                            );
                             self.used_local_variables.extend(used_local_variables_tmp);
                             self.defined_local_variables
                                 .extend(defined_local_variables_tmp);
@@ -268,7 +273,7 @@ impl TypeInfEnv<'_> {
                             self.used_local_variables.insert(*a);
                             let f_t = self.local_variable_types.get(*f);
                             let a_t = self.local_variable_types.get(*a);
-                            let (f_arg_t, ret_t, _) = self.type_map.get_fn(f_t);
+                            let (f_arg_t, ret_t) = self.type_map.get_fn(f_t);
                             self.type_map.union(f_arg_t, a_t);
                             self.type_map.union(t, ret_t);
                         }
@@ -595,7 +600,7 @@ impl<'a> Env<'a> {
             }
         }
         let type_of_entry_point = env_next.global_variable_types[&entry_point];
-        let (p, _, _) = env_next.type_map.get_fn(type_of_entry_point);
+        let (p, _) = env_next.type_map.get_fn(type_of_entry_point);
         env_next
             .type_map
             .insert_normal(p, TypeId::Intrinsic(IntrinsicTypeTag::Unit), Vec::new());

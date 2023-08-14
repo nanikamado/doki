@@ -1,5 +1,5 @@
 use super::{LambdaId, TypeIdTag};
-use crate::ast_step1::{ConstructorNames, PaddedTypeMap, Terminal, TypeId, TypePointer};
+use crate::ast_step1::{self, ConstructorNames, PaddedTypeMap, TypeId, TypePointer};
 use crate::intrinsics::IntrinsicTypeTag;
 use crate::util::id_generator::{self, IdGenerator};
 use itertools::Itertools;
@@ -200,42 +200,20 @@ impl TypeMemo {
         if self.lambda_ids_pointer_memo.contains_key(&p) {
             &self.lambda_ids_pointer_memo[&p]
         } else {
-            let Terminal::LambdaId(ids) = map.dereference_without_find(p) else {
-                panic!()
-            };
             let mut new_ids = BTreeMap::new();
-            for (id, ctx) in ids.clone() {
-                let id = id.map_type(|p| {
-                    let t = self.get_type_for_hash(p, map);
-                    debug_assert!(!t.contains_broken_link());
-                    self.type_id_generator.get_or_insert(t)
-                });
-                new_ids.insert(id, ctx);
+            for (tag, args) in map.dereference_without_find(p).type_map.clone() {
+                if let crate::ast_step1::TypeTag::Lambda(id) = tag {
+                    let id = id.map_type(|p| {
+                        let t = self.get_type_for_hash(p, map);
+                        debug_assert!(!t.contains_broken_link());
+                        self.type_id_generator.get_or_insert(t)
+                    });
+                    new_ids.insert(id, args);
+                }
             }
             self.lambda_ids_pointer_memo.insert(p, new_ids);
             &self.lambda_ids_pointer_memo[&p]
         }
-    }
-
-    fn get_lambda_ids_for_hash(
-        &mut self,
-        p: TypePointer,
-        trace: &mut FxHashMap<TypePointer, u32>,
-        used_trace: &mut FxHashSet<TypePointer>,
-        map: &PaddedTypeMap,
-        depth: u32,
-    ) -> BTreeMap<LambdaId<TypeInnerForHash>, ()> {
-        let p = map.find_imm(p);
-        let Terminal::LambdaId(ids) = map.dereference_without_find(p) else {
-            panic!()
-        };
-        let mut new_ids = BTreeMap::new();
-        for id in ids.keys().copied().collect_vec() {
-            let id =
-                id.map_type(|p| self.get_type_inner_for_hash(p, trace, used_trace, map, depth));
-            new_ids.insert(id, ());
-        }
-        new_ids
     }
 
     fn get_type_inner(&mut self, p: TypePointer, map: &mut PaddedTypeMap) -> TypeInner {
@@ -249,42 +227,32 @@ impl TypeMemo {
             return TypeInnerOf::RecursionPoint((depth - *d - 1) as u32);
         }
         self.trace.insert(p, depth);
-        let mut t = match &map.dereference_without_find(p) {
-            Terminal::TypeMap(type_map) => {
-                let mut ts = SmallVec::new();
-                for (id, args) in type_map.normals.clone() {
-                    if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
-                        debug_assert_eq!(args.len(), 3);
-                        let mut args = args.iter();
-                        let a = self.get_type_inner(*args.next().unwrap(), map);
-                        let b = self.get_type_inner(*args.next().unwrap(), map);
+        let mut ts = SmallVec::new();
+        let mut type_map = map.dereference_without_find(p).type_map.clone().into_iter();
+        for (id, args) in &mut type_map {
+            match id {
+                ast_step1::TypeTag::Normal(id) => ts.push(TypeUnitOf {
+                    id: TypeTag::TypeId(id),
+                    args: args.iter().map(|t| self.get_type_inner(*t, map)).collect(),
+                }),
+                ast_step1::TypeTag::Lambda(_) => {
+                    for (id, ctx) in self.get_lambda_ids_pointer(p, map).clone() {
                         ts.push(TypeUnitOf {
-                            id: TypeTag::TypeId(TypeId::Intrinsic(IntrinsicTypeTag::Fn)),
-                            args: smallvec::smallvec![a, b],
+                            id: TypeTag::LambdaId(id),
+                            args: ctx.iter().map(|c| self.get_type_inner(*c, map)).collect(),
                         });
-                        let l = map.find(*args.next().unwrap());
-                        for (id, ctx) in self.get_lambda_ids_pointer(l, map).clone() {
-                            ts.push(TypeUnitOf {
-                                id: TypeTag::LambdaId(id),
-                                args: ctx.iter().map(|c| self.get_type_inner(*c, map)).collect(),
-                            });
-                        }
-                    } else {
-                        ts.push(TypeUnitOf {
-                            id: TypeTag::TypeId(id),
-                            args: args.iter().map(|t| self.get_type_inner(*t, map)).collect(),
-                        })
                     }
+                    break;
                 }
-                TypeInnerOf::Type(TypeOf {
-                    ts: Rc::new(ts),
-                    reference: false,
-                    derefed: false,
-                    diverging: false,
-                })
             }
-            Terminal::LambdaId(_) => panic!(),
-        };
+        }
+        debug_assert!(type_map.all(|(id, _)| matches!(id, ast_step1::TypeTag::Lambda(_))));
+        let mut t = TypeInnerOf::Type(TypeOf {
+            ts: Rc::new(ts),
+            reference: false,
+            derefed: false,
+            diverging: false,
+        });
         self.trace.remove(&p);
         if self.diverging_pointers.contains(&p) {
             if let TypeInnerOf::Type(t) = &mut t {
@@ -334,65 +302,39 @@ impl TypeMemo {
         }
         trace.insert(p, depth);
         let depth = depth + 1;
-        let mut t = match &map.dereference_without_find(p) {
-            Terminal::TypeMap(type_map) => {
-                let mut ts = SmallVec::new();
-                for (id, args) in type_map.normals.iter() {
-                    if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
-                        debug_assert_eq!(args.len(), 3);
-                        let mut args = args.iter();
-                        let a = self.get_type_inner_for_hash(
-                            *args.next().unwrap(),
-                            trace,
-                            used_trace,
-                            map,
-                            depth,
-                        );
-                        let b = self.get_type_inner_for_hash(
-                            *args.next().unwrap(),
-                            trace,
-                            used_trace,
-                            map,
-                            depth,
-                        );
-                        ts.push(TypeUnitOf {
-                            id: TypeTag::TypeId(TypeId::Intrinsic(IntrinsicTypeTag::Fn)),
-                            args: smallvec::smallvec![a, b],
-                        });
-                        let lambda_id = self.get_lambda_ids_for_hash(
-                            *args.next().unwrap(),
-                            trace,
-                            used_trace,
-                            map,
-                            depth,
-                        );
-                        for (id, ()) in lambda_id {
-                            ts.push(TypeUnitOf {
-                                id: TypeTag::LambdaId(id),
-                                args: SmallVec::new(),
-                            });
-                        }
-                    } else {
-                        ts.push(TypeUnitOf {
-                            id: TypeTag::TypeId(*id),
-                            args: args
-                                .iter()
-                                .map(|t| {
-                                    self.get_type_inner_for_hash(*t, trace, used_trace, map, depth)
-                                })
-                                .collect(),
-                        })
-                    }
+        let mut ts = SmallVec::new();
+        let mut added_lambdas = FxHashSet::default();
+        for (id, args) in &map.dereference_without_find(p).type_map {
+            match id {
+                ast_step1::TypeTag::Normal(id) => ts.push(TypeUnitOf {
+                    id: TypeTag::TypeId(*id),
+                    args: args
+                        .iter()
+                        .map(|t| self.get_type_inner_for_hash(*t, trace, used_trace, map, depth))
+                        .collect(),
+                }),
+                ast_step1::TypeTag::Lambda(LambdaId { id, root_t }) => {
+                    let l = LambdaId {
+                        id: *id,
+                        root_t: self
+                            .get_type_inner_for_hash(*root_t, trace, used_trace, map, depth),
+                    };
+                    added_lambdas.insert(l);
                 }
-                TypeInnerOf::Type(TypeOf {
-                    ts: Rc::new(ts),
-                    reference: false,
-                    derefed: false,
-                    diverging: false,
-                })
             }
-            Terminal::LambdaId(_) => panic!(),
-        };
+        }
+        for l in added_lambdas {
+            ts.push(TypeUnitOf {
+                id: TypeTag::LambdaId(l),
+                args: SmallVec::new(),
+            });
+        }
+        let mut t = TypeInnerOf::Type(TypeOf {
+            ts: Rc::new(ts),
+            reference: false,
+            derefed: false,
+            diverging: false,
+        });
         trace.remove(&p);
         if self.ref_pointers.contains(&p) {
             if let TypeInnerOf::Type(t) = &mut t {
@@ -451,97 +393,60 @@ impl TypeMemo {
             }
             return;
         }
-        match map.dereference_without_find(p) {
-            Terminal::TypeMap(t) => {
-                let is_union = t
-                    .normals
-                    .iter()
-                    .map(|(id, ts)| match id {
-                        TypeId::Intrinsic(IntrinsicTypeTag::Fn) => match map.dereference_imm(ts[2])
-                        {
-                            Terminal::TypeMap(_) => panic!(),
-                            Terminal::LambdaId(l) => l.len(),
-                        },
-                        _ => 1,
-                    })
-                    .sum::<usize>()
-                    > 1;
-                let mut new_trace;
-                let trace = if is_union {
-                    divergent_stopper = Some(DivergentStopper::Union(p));
-                    new_trace = Vec::new();
-                    &mut new_trace
-                } else {
-                    trace.push(p);
-                    trace
-                };
-                trace_map.insert(p);
-                for (id, ts) in &t.normals {
-                    match id {
-                        TypeId::Intrinsic(id) => match id {
-                            IntrinsicTypeTag::Fn => {
-                                self.collect_ref_pointers_aux(
-                                    ts[2],
-                                    trace_map,
-                                    trace,
-                                    divergent_stopper,
-                                    map,
-                                );
-                                for t in &ts[..2] {
-                                    self.collect_ref_pointers_aux(
-                                        *t,
-                                        trace_map,
-                                        &mut Vec::new(),
-                                        Some(DivergentStopper::Indirect),
-                                        map,
-                                    );
-                                }
-                            }
-                            _ => {
-                                for t in ts {
-                                    self.collect_ref_pointers_aux(
-                                        *t,
-                                        trace_map,
-                                        &mut Vec::new(),
-                                        Some(DivergentStopper::Indirect),
-                                        map,
-                                    );
-                                }
-                            }
-                        },
-                        TypeId::UserDefined(_) => {
-                            for t in ts {
-                                self.collect_ref_pointers_aux(
-                                    *t,
-                                    trace_map,
-                                    trace,
-                                    divergent_stopper,
-                                    map,
-                                );
-                            }
-                        }
+        let type_map = &map.dereference_without_find(p).type_map;
+        let is_union = type_map.len()
+            - type_map
+                .get(&ast_step1::TypeTag::Normal(TypeId::Intrinsic(
+                    IntrinsicTypeTag::Fn,
+                )))
+                .is_some() as usize
+            > 1;
+        let mut new_trace;
+        let trace = if is_union {
+            divergent_stopper = Some(DivergentStopper::Union(p));
+            new_trace = Vec::new();
+            &mut new_trace
+        } else {
+            trace.push(p);
+            trace
+        };
+        trace_map.insert(p);
+        for (id, ts) in type_map {
+            match id {
+                ast_step1::TypeTag::Normal(TypeId::Intrinsic(_)) => {
+                    for t in ts {
+                        self.collect_ref_pointers_aux(
+                            *t,
+                            trace_map,
+                            &mut Vec::new(),
+                            Some(DivergentStopper::Indirect),
+                            map,
+                        );
                     }
                 }
-                if !is_union {
-                    trace.pop().unwrap();
-                }
-                trace_map.remove(&p);
-            }
-            Terminal::LambdaId(l) => {
-                for (id, ctx) in l {
-                    for t in ctx {
+                ast_step1::TypeTag::Normal(TypeId::UserDefined(_)) => {
+                    for t in ts {
                         self.collect_ref_pointers_aux(*t, trace_map, trace, divergent_stopper, map);
                     }
+                }
+                ast_step1::TypeTag::Lambda(LambdaId { id: _, root_t }) => {
                     self.collect_ref_pointers_aux(
-                        id.root_t,
+                        *root_t,
                         trace_map,
                         &mut Vec::new(),
                         Some(DivergentStopper::Indirect),
                         map,
                     );
+                    for t in ts {
+                        self.collect_ref_pointers_aux(*t, trace_map, trace, divergent_stopper, map);
+                    }
                 }
             }
         }
+        if !is_union {
+            trace.pop().unwrap();
+        }
+        trace_map.remove(&p);
         self.ref_checked_pointers.insert(p);
     }
 }
@@ -638,7 +543,7 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeOf<R> {
                     }
                 }
                 let is_single = normals.len() + function.is_some() as usize == 1;
-                let paren = p == P::Strong || !is_single || function.is_some() && p == P::Fn;
+                let paren = p != P::Weak && (!is_single || function.is_some() && p == P::Strong);
                 if paren {
                     write!(f, "(")?;
                 }
@@ -666,7 +571,9 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeOf<R> {
                         write!(f, " | ")?;
                         w(f, *id, args)?;
                     }
-                    write!(f, " | ")?;
+                    if function.is_some() {
+                        write!(f, " | ")?;
+                    }
                 }
                 if let Some((arg, ret)) = function {
                     #[cfg(feature = "display-fn-id")]
@@ -776,18 +683,21 @@ impl<R: TypeFamily> fmt::Debug for TypeUnitOf<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.id {
             TypeTag::TypeId(TypeId::Intrinsic(IntrinsicTypeTag::Fn)) => {
-                write!(f, "({:?}) -> {:?}", self.args[0], self.args[1])
+                write!(f, "({:?}) -> {:?}", self.args[0], self.args[1])?;
             }
             TypeTag::TypeId(id) => {
-                write!(f, "{id}")
+                write!(f, "{id}")?;
+                if !self.args.is_empty() {
+                    write!(f, "[{:?}]", self.args.iter().format(", "))?;
+                };
             }
             TypeTag::LambdaId(l) => {
-                write!(f, "{l}")
+                write!(f, "{l}")?;
+                if !self.args.is_empty() {
+                    write!(f, "[{:?}]", self.args.iter().format(", "))?;
+                };
             }
-        }?;
-        if !self.args.is_empty() {
-            write!(f, "[{:?}]", self.args.iter().format(", "))?;
-        }
+        };
         Ok(())
     }
 }
