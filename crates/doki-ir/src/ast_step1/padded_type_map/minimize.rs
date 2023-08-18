@@ -1,6 +1,7 @@
-use super::{BoxPoint, PaddedTypeMap, TypePointer, TypeTag};
+use super::{BoxPoint, PaddedTypeMap, TypePointer};
 use crate::ast_step1::LambdaId;
 use crate::util::dfa_minimization::Dfa;
+use crate::TypeId;
 use multimap::MultiMap;
 use rustc_hash::{FxHashMap, FxHasher};
 use std::collections::BTreeMap;
@@ -37,10 +38,16 @@ fn collect_points(
         return;
     }
     points.insert(p, 0);
-    for (tag, ps) in map.dereference_without_find(p).type_map.clone() {
-        if let TypeTag::Lambda(LambdaId { id: _, root_t }) = tag {
-            collect_points(root_t, map, points)
+    let terminal = map.dereference_without_find(p);
+    let type_map = terminal.type_map.clone();
+    let functions = terminal.functions.clone();
+    for (_, ps) in type_map {
+        for p in ps {
+            collect_points(p, map, points)
         }
+    }
+    for (l, ps) in functions {
+        collect_points(l.root_t, map, points);
         for p in ps {
             collect_points(p, map, points)
         }
@@ -49,7 +56,8 @@ fn collect_points(
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalRef<'a> {
-    pub type_map: BTreeMap<TypeTag, Vec<TypePointer>>,
+    pub type_map: BTreeMap<TypeId, Vec<TypePointer>>,
+    pub functions: Vec<(LambdaId<TypePointer>, Vec<TypePointer>)>,
     pub reference_point: &'a BoxPoint,
 }
 
@@ -67,22 +75,33 @@ impl Dfa for PaddedTypeMap {
             .type_map
             .iter()
             .map(|(id, ps)| {
-                let id = match id {
-                    TypeTag::Normal(tag) => TypeTag::Normal(*tag),
-                    TypeTag::Lambda(LambdaId { id, root_t }) => TypeTag::Lambda(LambdaId {
-                        id: *id,
-                        root_t: TypePointer(points[&self.find_imm(*root_t)]),
-                    }),
-                };
                 let ps = ps
                     .iter()
                     .map(|p| TypePointer(points[&self.find_imm(*p)]))
                     .collect();
-                (id, ps)
+                (*id, ps)
+            })
+            .collect();
+        let functions = t
+            .functions
+            .iter()
+            .map(|(l, args)| {
+                let args = args
+                    .iter()
+                    .map(|p| TypePointer(points[&self.find_imm(*p)]))
+                    .collect();
+                (
+                    LambdaId {
+                        id: l.id,
+                        root_t: TypePointer(points[&self.find_imm(l.root_t)]),
+                    },
+                    args,
+                )
             })
             .collect();
         TerminalRef {
             type_map,
+            functions,
             reference_point: &t.box_point,
         }
     }

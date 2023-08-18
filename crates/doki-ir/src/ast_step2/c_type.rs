@@ -1,4 +1,6 @@
+use super::CType;
 use crate::ast_step1::TypePointer;
+use crate::ast_step2::StructId;
 use crate::util::dfa_minimization::Dfa;
 use rustc_hash::FxHashMap;
 
@@ -25,7 +27,7 @@ pub struct PointerForCType {
 pub enum PointerModifier {
     Normal,
     UnionMember(u32),
-    Derefed,
+    Boxed,
 }
 
 impl PointerForCType {
@@ -42,7 +44,7 @@ pub trait PointerReplacer {
 }
 
 impl Dfa for CTypeEnv<'_> {
-    type Transition<'a> = CTypeScheme<u32> where Self: 'a;
+    type Transition<'a> = CTypeScheme<CType> where Self: 'a;
     type Node = PointerForCType;
 
     fn get<'a>(
@@ -50,7 +52,25 @@ impl Dfa for CTypeEnv<'_> {
         node: Self::Node,
         points: &FxHashMap<Self::Node, u32>,
     ) -> Self::Transition<'a> {
-        self.0[&node].replace_ref(|a| points[a])
+        debug_assert_ne!(PointerModifier::Boxed, node.modifier);
+        self.0[&node].replace_ref(|a| {
+            if a.modifier == PointerModifier::Boxed {
+                CType {
+                    i: StructId(
+                        points[&PointerForCType {
+                            modifier: PointerModifier::Normal,
+                            p: a.p,
+                        }] as usize,
+                    ),
+                    boxed: true,
+                }
+            } else {
+                CType {
+                    i: StructId(points[a] as usize),
+                    boxed: false,
+                }
+            }
+        })
     }
 }
 

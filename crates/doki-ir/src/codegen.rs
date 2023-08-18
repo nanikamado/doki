@@ -2,7 +2,7 @@ use crate::ast_step1::{ConstructorId, ConstructorNames};
 use crate::ast_step2::c_type::CTypeScheme;
 use crate::ast_step2::{
     self, Ast, CType, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId, Instruction,
-    LocalVariable, LocalVariableCollector, Tester, Type, VariableId,
+    LocalVariable, LocalVariableCollector, StructId, Tester, Type, VariableId, VariableInContext,
 };
 use crate::intrinsics::IntrinsicVariable;
 use crate::util::collector::Collector;
@@ -22,7 +22,10 @@ impl Display for Codegen<'_> {
             .iter()
             .map(|d| (d.decl_id, d.c_t))
             .collect();
-        let unit_t = CType(0);
+        let unit_t = CType {
+            i: StructId(0),
+            boxed: false,
+        };
         let mut mutted_types = Collector::default();
         let mut refed_types = Collector::default();
         let sorted = sort_aggregates(&ast.c_type_definitions, &mut mutted_types, &mut refed_types);
@@ -36,24 +39,30 @@ impl Display for Codegen<'_> {
             c_type_definitions: &ast.c_type_definitions,
             refed_types,
         };
-        let structs = sorted.iter().format_with("", |(i, t), f| match t {
-            CTypeScheme::Aggregate(ts) => f(&format_args!(
-                "{}{{{}}};",
-                Dis(i, env),
-                ts.iter()
-                    .enumerate()
-                    .format_with("", |(i, t), f| f(&format_args!("{} _{i};", Dis(t, env))))
-            )),
-            CTypeScheme::Union(ts) => f(&format_args!(
-                "union u{0}{{{1}}};{2}{{int tag;union u{0} value;}};",
-                i.0,
-                ts.iter().enumerate().format_with("", |(i, t), f| {
-                    f(&format_args!("{} _{i};", Dis(t, env)))
-                }),
-                Dis(i, env),
-            )),
-            _ => {
-                panic!()
+        let structs = sorted.iter().format_with("", |(i, t), f| {
+            let i = CType {
+                i: *i,
+                boxed: false,
+            };
+            match t {
+                CTypeScheme::Aggregate(ts) => f(&format_args!(
+                    "{}{{{}}};",
+                    Dis(&i, env),
+                    ts.iter()
+                        .enumerate()
+                        .format_with("", |(i, t), f| f(&format_args!("{} _{i};", Dis(t, env))))
+                )),
+                CTypeScheme::Union(ts) => f(&format_args!(
+                    "union u{0}{{{1}}};{2}{{int tag;union u{0} value;}};",
+                    i.i.0,
+                    ts.iter().enumerate().format_with("", |(i, t), f| {
+                        f(&format_args!("{} _{i};", Dis(t, env)))
+                    }),
+                    Dis(&i, env),
+                )),
+                _ => {
+                    panic!()
+                }
             }
         });
         write!(
@@ -75,7 +84,13 @@ impl Display for Codegen<'_> {
                             *tmp = a;
                             return tmp;
                         }}",
-                    Dis(t, env),
+                    Dis(
+                        &CType {
+                            i: *t,
+                            boxed: false
+                        },
+                        env
+                    ),
                 ))
             }),
             mutted_types
@@ -213,13 +228,16 @@ impl Display for PrimitiveDefPrint<'_> {
 fn sort_aggregates<'a>(
     c_type_definitions: &'a [CTypeScheme<CType>],
     mutted_types: &mut Collector<CType>,
-    refed_types: &mut Collector<CType>,
-) -> Vec<(CType, &'a CTypeScheme<CType>)> {
+    refed_types: &mut Collector<StructId>,
+) -> Vec<(StructId, &'a CTypeScheme<CType>)> {
     let mut done = FxHashSet::default();
     let mut sorted = Vec::with_capacity(c_type_definitions.len());
     for (i, _) in c_type_definitions.iter().enumerate() {
         sort_aggregates_rec(
-            CType(i),
+            CType {
+                i: StructId(i),
+                boxed: false,
+            },
             c_type_definitions,
             &mut done,
             &mut sorted,
@@ -233,27 +251,30 @@ fn sort_aggregates<'a>(
 fn sort_aggregates_rec<'a>(
     i: CType,
     h: &'a [CTypeScheme<CType>],
-    done: &mut FxHashSet<CType>,
-    sorted: &mut Vec<(CType, &'a CTypeScheme<CType>)>,
+    done: &mut FxHashSet<StructId>,
+    sorted: &mut Vec<(StructId, &'a CTypeScheme<CType>)>,
     mutted_types: &mut Collector<CType>,
-    refed_types: &mut Collector<CType>,
+    refed_types: &mut Collector<StructId>,
 ) {
-    if done.contains(&i) {
+    if i.boxed {
+        refed_types.get_or_insert(i.i);
         return;
     }
-    done.insert(i);
-    let a = &h[i.0];
+    if done.contains(&i.i) {
+        return;
+    }
+    done.insert(i.i);
+    let a = &h[i.i.0];
     use ast_step2::c_type::CTypeScheme::*;
     match a {
         Aggregate(is) | Union(is) => {
             for i in is {
                 sort_aggregates_rec(*i, h, done, sorted, mutted_types, refed_types);
             }
-            sorted.push((i, a));
+            sorted.push((i.i, a));
         }
         Mut(t) => {
             mutted_types.get_or_insert(*t);
-            refed_types.get_or_insert(*t);
         }
         _ => (),
     }
@@ -298,7 +319,7 @@ struct Env<'a> {
     global_variable_types: &'a FxHashMap<GlobalVariableId, CType>,
     constructor_names: &'a ConstructorNames,
     c_type_definitions: &'a [CTypeScheme<CType>],
-    refed_types: &'a FxHashMap<CType, usize>,
+    refed_types: &'a FxHashMap<StructId, usize>,
 }
 
 impl Env<'_> {
@@ -369,7 +390,7 @@ trait DisplayWithEnv {
 
 struct FunctionBodyWithCtx<'a> {
     f: &'a FunctionBody,
-    ctx: &'a [LocalVariable],
+    ctx: &'a [VariableInContext],
     parameter: Option<LocalVariable>,
 }
 
@@ -378,7 +399,7 @@ impl DisplayWithEnv for FunctionBodyWithCtx<'_> {
         let mut vs = FxHashSet::default();
         collect_local_variables_in_block(self.f, &mut vs);
         for c in self.ctx {
-            vs.insert(*c);
+            vs.insert(c.l);
         }
         if let Some(p) = self.parameter {
             vs.remove(&p);
@@ -396,10 +417,17 @@ impl DisplayWithEnv for FunctionBodyWithCtx<'_> {
                 ))
             }),
             self.ctx.iter().enumerate().format_with("", |(i, v), f| {
-                f(&format_args!(
-                    "{}=ctx._{i};",
-                    Dis(&VariableId::Local(*v), env),
-                ))
+                if v.boxed {
+                    f(&format_args!(
+                        "{}=*ctx._{i};",
+                        Dis(&VariableId::Local(v.l), env),
+                    ))
+                } else {
+                    f(&format_args!(
+                        "{}=ctx._{i};",
+                        Dis(&VariableId::Local(v.l), env),
+                    ))
+                }
             }),
         )?;
         for (i, bb) in self.f.basic_blocks.iter().enumerate() {
@@ -497,7 +525,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
                         args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                     ),
                     Construction(id) => {
-                        if let CTypeScheme::Diverge = env.c_type_definitions[t.0] {
+                        if let CTypeScheme::Diverge = env.c_type_definitions[t.i.0] {
                             write!(fmt, "({}){{}}", Dis(*t, env))
                         } else {
                             write!(
@@ -517,12 +545,15 @@ impl DisplayWithEnv for (&Expr, &CType) {
                             args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                         )
                     }
-                    FieldAccessor { field } => {
+                    FieldAccessor { field, boxed } => {
                         debug_assert_eq!(args.len(), 1);
                         let ct = env.get_type(args[0]);
-                        if let CTypeScheme::Diverge = env.c_type_definitions[ct.0] {
+                        if let CTypeScheme::Diverge = env.c_type_definitions[ct.i.0] {
                             write!(fmt, "(panic(\"unexpected\"),*({}*)NULL)", Dis(*t, env))
                         } else {
+                            if *boxed {
+                                write!(fmt, "*")?;
+                            }
                             write!(fmt, "{}._{field}", Dis(&args[0], env))
                         }
                     }
@@ -533,7 +564,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
                     fmt,
                     "({}){{{tag},(union u{}){}}}",
                     Dis(*t, env),
-                    t.0,
+                    t.i.0,
                     Dis(value, env)
                 )
             }
@@ -556,12 +587,8 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 write!(fmt, "{0}.value._{tag}", Dis(value, env))
             }
             Expr::Ref(v) => {
-                let t = if let CTypeScheme::Mut(t) = env.c_type_definitions[t.0] {
-                    t
-                } else {
-                    panic!("t = {:?}", env.c_type_definitions[t.0])
-                };
-                write!(fmt, "ref_{}({})", env.refed_types[&t], Dis(v, env))
+                debug_assert!(t.boxed);
+                write!(fmt, "ref_{}({})", env.refed_types[&t.i], Dis(v, env))
             }
             Expr::Deref(v) => write!(fmt, "*{}", Dis(v, env)),
         }
@@ -612,14 +639,18 @@ fn is_valid_name(name: &str) -> bool {
 
 impl DisplayWithEnv for CType {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match env.c_type_definitions[self.0] {
+        match env.c_type_definitions[self.i.0] {
             CTypeScheme::I64 => write!(f, "int64_t"),
             CTypeScheme::U8 => write!(f, "uint8_t"),
             CTypeScheme::Ptr => write!(f, "void*"),
-            CTypeScheme::Aggregate(_) => write!(f, "struct t{}", self.0),
-            CTypeScheme::Union(_) => write!(f, "struct t{}", self.0),
+            CTypeScheme::Aggregate(_) => write!(f, "struct t{}", self.i.0),
+            CTypeScheme::Union(_) => write!(f, "struct t{}", self.i.0),
             CTypeScheme::Mut(t) => write!(f, "{}*", Dis(&t, env)),
             CTypeScheme::Diverge => write!(f, "struct diverge"),
+        }?;
+        if self.boxed {
+            write!(f, "*")?
         }
+        Ok(())
     }
 }

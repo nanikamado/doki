@@ -18,10 +18,10 @@ pub enum TypeId {
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Copy, Hash)]
 pub struct TypePointer(u32);
 
-#[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash, Copy)]
-pub enum TypeTag {
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord, Copy)]
+pub enum TypeTagForBoxPoint {
     Normal(TypeId),
-    Lambda(LambdaId<TypePointer>),
+    Lambda(u32),
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash, Default)]
@@ -29,13 +29,13 @@ pub enum BoxPoint {
     #[default]
     NotSure,
     Diverging,
-    Boxed,
-    Unboxed,
+    Boxed(BTreeMap<TypeTagForBoxPoint, Vec<Option<bool>>>),
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Terminal {
-    pub type_map: BTreeMap<TypeTag, Vec<TypePointer>>,
+    pub type_map: BTreeMap<TypeId, Vec<TypePointer>>,
+    pub functions: Vec<(LambdaId<TypePointer>, Vec<TypePointer>)>,
     pub box_point: BoxPoint,
 }
 
@@ -86,9 +86,11 @@ impl PaddedTypeMap {
                             pairs.push((*a, b));
                         }
                     } else {
+                        debug_assert_eq!(b_t.box_point, BoxPoint::NotSure);
                         a_t.type_map.insert(b_id, b_normal);
                     }
                 }
+                a_t.functions.extend(b_t.functions);
             } else {
                 panic!()
             };
@@ -105,18 +107,17 @@ impl PaddedTypeMap {
         lambda_ctx: Vec<TypePointer>,
     ) {
         let t = self.dereference_mut(p);
-        let o = t.type_map.insert(TypeTag::Lambda(id), lambda_ctx);
-        debug_assert!(o.is_none());
+        t.functions.push((id, lambda_ctx));
     }
 
     pub fn insert_normal(&mut self, p: TypePointer, id: TypeId, args: Vec<TypePointer>) {
         let t = self.dereference_mut(p);
-        if let Some(t) = t.type_map.get(&TypeTag::Normal(id)) {
+        if let Some(t) = t.type_map.get(&id) {
             for (a, b) in t.clone().into_iter().zip(args) {
                 self.union(a, b);
             }
         } else {
-            t.type_map.insert(TypeTag::Normal(id), args);
+            t.type_map.insert(id, args);
         }
     }
 
@@ -150,7 +151,7 @@ impl PaddedTypeMap {
         let p = self.find(p);
         self.dereference_without_find(p)
             .type_map
-            .get(&TypeTag::Normal(TypeId::Intrinsic(IntrinsicTypeTag::Fn)))
+            .get(&TypeId::Intrinsic(IntrinsicTypeTag::Fn))
             .map(|f| (f[0], f[1]))
             .unwrap_or_else(|| {
                 let a = self.new_pointer();
@@ -220,19 +221,30 @@ impl PaddedTypeMap {
                     .iter()
                     .map(|p| self.clone_pointer(*p, replace_map))
                     .collect_vec();
-                let id = match id {
-                    TypeTag::Normal(id) => TypeTag::Normal(id),
-                    TypeTag::Lambda(id) => TypeTag::Lambda(LambdaId {
-                        id: id.id,
-                        root_t: self.clone_pointer(id.root_t, replace_map),
-                    }),
-                };
                 (id, t)
+            })
+            .collect();
+        let functions = t
+            .functions
+            .into_iter()
+            .map(|(LambdaId { id, root_t }, args)| {
+                let args = args
+                    .iter()
+                    .map(|p| self.clone_pointer(*p, replace_map))
+                    .collect_vec();
+                (
+                    LambdaId {
+                        id,
+                        root_t: self.clone_pointer(root_t, replace_map),
+                    },
+                    args,
+                )
             })
             .collect();
         self.map[new_p.0 as usize] = Node::Terminal(Terminal {
             type_map,
             box_point: BoxPoint::NotSure,
+            functions,
         });
         new_p
     }
@@ -264,30 +276,29 @@ impl PaddedTypeMap {
                 )
             }
             Node::Terminal(t) => {
-                let m = t
-                    .type_map
-                    .iter()
-                    .format_with(",", |(tag, ps), f| match tag {
-                        TypeTag::Normal(id) => f(&format_args!(
-                            r#"{id}:[{}]"#,
-                            ps.iter().format_with(",", |p, f| f(&JsonDebugRec(
-                                self,
-                                *p,
-                                &visited_pointers
-                            )))
-                        )),
-                        TypeTag::Lambda(id) => f(&format_args!(
-                            r#"lambda:{{id:{},root_t:{},args:[{}]}}"#,
-                            id.id,
-                            JsonDebugRec(self, id.root_t, &visited_pointers),
-                            ps.iter().format_with(",", |p, f| f(&JsonDebugRec(
-                                self,
-                                *p,
-                                &visited_pointers
-                            )))
-                        )),
-                    });
-                write!(f, r#""type":"type_map","v":{{{}}}}}"#, m)
+                let m = t.type_map.iter().format_with(",", |(id, ps), f| {
+                    f(&format_args!(
+                        r#"{id}:[{}]"#,
+                        ps.iter().format_with(",", |p, f| f(&JsonDebugRec(
+                            self,
+                            *p,
+                            &visited_pointers
+                        )))
+                    ))
+                });
+                let n = t.functions.iter().format_with("", |(id, args), f| {
+                    f(&format_args!(
+                        r#",lambda:{{id:{},root_t:{},args:[{}]}}"#,
+                        id.id,
+                        JsonDebugRec(self, id.root_t, &visited_pointers),
+                        args.iter().format_with(",", |p, f| f(&JsonDebugRec(
+                            self,
+                            *p,
+                            &visited_pointers
+                        )))
+                    ))
+                });
+                write!(f, r#""type":"type_map","v":{{{m}{n}}}}}"#)
             }
             Node::Null => write!(f, r#""type":"null"}}"#),
         }
@@ -409,15 +420,6 @@ impl Display for Terminal {
                     f(&format_args!("{id}({})", args.iter().format(", ")))
                 })
             )
-        }
-    }
-}
-
-impl Display for TypeTag {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TypeTag::Normal(t) => write!(f, "{t}"),
-            TypeTag::Lambda(t) => write!(f, "{t}"),
         }
     }
 }

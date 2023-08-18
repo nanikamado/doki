@@ -1,5 +1,6 @@
 use crate::ast_step2::{
     Ast, BasicBlock, EndInstruction, Expr, Function, FxLambdaId, Instruction, VariableId,
+    VariableInContext,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -95,7 +96,7 @@ pub fn run(ast: &mut Ast) {
 
 #[derive(Debug, Clone, Copy)]
 struct InlinedFn<'a> {
-    context: &'a [crate::LocalVariable2],
+    context: &'a [VariableInContext],
     parameter: crate::LocalVariable2,
     label: usize,
 }
@@ -125,10 +126,13 @@ fn eliminate_from_basic_block<'a>(
                 bb.instructions.pop();
                 for (i, ctx_v) in f.context.iter().enumerate() {
                     bb.instructions.push(Instruction::Assign(
-                        *ctx_v,
+                        ctx_v.l,
                         Expr::BasicCall {
                             args: vec![ctx],
-                            id: crate::ast_step2::BasicFunction::FieldAccessor { field: i as u32 },
+                            id: crate::ast_step2::BasicFunction::FieldAccessor {
+                                field: i as u32,
+                                boxed: ctx_v.boxed,
+                            },
                         },
                     ))
                 }
@@ -140,10 +144,13 @@ fn eliminate_from_basic_block<'a>(
                 let called_fn = &functions[&f];
                 for (i, ctx_v) in called_fn.context.iter().enumerate() {
                     bb.instructions.push(Instruction::Assign(
-                        *ctx_v,
+                        ctx_v.l,
                         Expr::BasicCall {
                             args: vec![ctx],
-                            id: crate::ast_step2::BasicFunction::FieldAccessor { field: i as u32 },
+                            id: crate::ast_step2::BasicFunction::FieldAccessor {
+                                field: i as u32,
+                                boxed: ctx_v.boxed,
+                            },
                         },
                     ))
                 }
