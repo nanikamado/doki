@@ -151,7 +151,7 @@ impl Display for Codegen<'_> {
             ast.variable_decls
                 .iter()
                 .format_with("", |d, f| f(&format_args!(
-                    "static {} init_g_{}_{}(void){{{}}}",
+                    "static {} init_g_{}_{}(void){}",
                     Dis(&d.c_t, env),
                     d.decl_id,
                     convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
@@ -525,17 +525,13 @@ impl DisplayWithEnv for (&Expr, &CType) {
                         args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                     ),
                     Construction(id) => {
-                        if let CTypeScheme::Diverge = env.c_type_definitions[t.i.0] {
-                            write!(fmt, "({}){{}}", Dis(*t, env))
-                        } else {
-                            write!(
-                                fmt,
-                                "/*{}*/({}){{{}}}",
-                                Dis(id, env),
-                                Dis(*t, env),
-                                args.iter().format_with(",", |a, f| f(&Dis(a, env)))
-                            )
-                        }
+                        write!(
+                            fmt,
+                            "/*{}*/({}){{{}}}",
+                            Dis(id, env),
+                            Dis(*t, env),
+                            args.iter().format_with(",", |a, f| f(&Dis(a, env)))
+                        )
                     }
                     IntrinsicConstruction(id) => {
                         write!(
@@ -547,15 +543,10 @@ impl DisplayWithEnv for (&Expr, &CType) {
                     }
                     FieldAccessor { field, boxed } => {
                         debug_assert_eq!(args.len(), 1);
-                        let ct = env.get_type(args[0]);
-                        if let CTypeScheme::Diverge = env.c_type_definitions[ct.i.0] {
-                            write!(fmt, "(panic(\"unexpected\"),*({}*)NULL)", Dis(*t, env))
-                        } else {
-                            if *boxed {
-                                write!(fmt, "*")?;
-                            }
-                            write!(fmt, "{}._{field}", Dis(&args[0], env))
+                        if *boxed {
+                            write!(fmt, "*")?;
                         }
+                        write!(fmt, "{}._{field}", Dis(&args[0], env))
                     }
                 }
             }

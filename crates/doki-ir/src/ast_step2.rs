@@ -459,6 +459,25 @@ impl<'a> Env<'a> {
         )
     }
 
+    fn dummy_function_body(
+        &mut self,
+        replace_map: &mut ReplaceMap,
+        ret: ast_step1::LocalVariable,
+    ) -> (Vec<BasicBlock>, VariableId) {
+        let t = self.local_variable_types_old.get(ret);
+        let t = self.map.clone_pointer(t, replace_map);
+        let ret = self.new_variable(PointerForCType::from(t));
+        (
+            vec![BasicBlock {
+                instructions: Vec::new(),
+                end_instruction: EndInstruction::Panic {
+                    msg: "unexpected".to_string(),
+                },
+            }],
+            ret.into(),
+        )
+    }
+
     // Returns true if exited with a error
     fn instruction(
         &mut self,
@@ -473,6 +492,12 @@ impl<'a> Env<'a> {
                 let p = self
                     .map
                     .clone_pointer(self.local_variable_types_old.get(v), replace_map);
+                let i = self.c_type(PointerForCType::from(p)).i.0;
+                if let CTypeScheme::Diverge = self.c_type_definitions[i] {
+                    return Err(EndInstruction::Panic {
+                        msg: "unexpected".to_string(),
+                    });
+                }
                 let e = self.expr(e, p, root_t, replace_map, basic_block_env, catch_label);
                 match e {
                     Ok(e) => {
@@ -641,7 +666,13 @@ impl<'a> Env<'a> {
             } => {
                 let (possible_functions, tag_len) = self.get_possible_functions(p);
                 let parameter = self.local_variable_def_replace(parameter, root_t, replace_map);
-                let (basic_blocks, ret) = self.function_body(body, root_t, replace_map, ret);
+                let (_, parameter_ct) = self.local_variable_collector.get_type(parameter);
+                let parameter_ct = &self.c_type_definitions[parameter_ct.i.0];
+                let (basic_blocks, ret) = if matches!(parameter_ct, CTypeScheme::Diverge) {
+                    self.dummy_function_body(replace_map, ret)
+                } else {
+                    self.function_body(body, root_t, replace_map, ret)
+                };
                 let lambda_id = LambdaId {
                     id: lambda_id.id,
                     root_t: root_t.0,
@@ -653,80 +684,50 @@ impl<'a> Env<'a> {
                 };
                 let terminal = &self.map.dereference_without_find(p);
                 let box_point = terminal.box_point.clone();
-                let make_context = |slf: &mut Env<'_>, tag| match box_point {
-                    BoxPoint::NotSure => panic!(),
-                    BoxPoint::Diverging => context
-                        .iter()
-                        .map(|v| VariableInContext {
-                            l: slf.get_defined_local_variable(*v, root_t, replace_map),
-                            boxed: false,
-                        })
-                        .collect_vec(),
-                    BoxPoint::Boxed(pss) => context
+                let i = possible_functions
+                    .binary_search_by_key(&fx_lambda_id, |l| l.lambda_id)
+                    .unwrap();
+                let f = &possible_functions[i];
+                let tag = TypeTagForBoxPoint::Lambda(f.original_lambda_id);
+                let context_ = if let BoxPoint::Boxed(pss) = box_point {
+                    context
                         .iter()
                         .zip(&pss[&tag])
                         .map(|(v, boxed): (_, &Option<bool>)| VariableInContext {
-                            l: slf.get_defined_local_variable(*v, root_t, replace_map),
+                            l: self.get_defined_local_variable(*v, root_t, replace_map),
                             boxed: boxed.unwrap(),
                         })
-                        .collect_vec(),
-                };
-                let box_context =
-                    |slf: &mut Env<'_>,
-                     context: &[VariableInContext],
-                     basic_block_env: &mut BasicBlockEnv| {
-                        context
-                            .iter()
-                            .map(|l| {
-                                if l.boxed {
-                                    let (_, lt) = *slf.local_variable_collector.get_type(l.l);
-                                    let d = slf
-                                        .local_variable_collector
-                                        .new_variable((None, CType { boxed: true, ..lt }));
-                                    basic_block_env.instructions.push(Instruction::Assign(
-                                        d,
-                                        Expr::Ref(VariableId::Local(l.l)),
-                                    ));
-                                    d
-                                } else {
-                                    l.l
-                                }
-                            })
-                            .collect()
-                    };
-                let (context, e, context_c_type) = if possible_functions.len() == 1 && tag_len == 1
-                {
-                    let context_ = make_context(
-                        self,
-                        TypeTagForBoxPoint::Lambda(possible_functions[0].original_lambda_id),
-                    );
-                    let context = box_context(self, &context_, basic_block_env);
-                    (
-                        context_,
-                        Lambda {
-                            context,
-                            lambda_id: possible_functions[0].lambda_id,
-                        },
-                        possible_functions[0].c_type,
-                    )
+                        .collect_vec()
                 } else {
-                    let i = possible_functions
-                        .binary_search_by_key(&fx_lambda_id, |l| l.lambda_id)
-                        .unwrap();
-                    let f = &possible_functions[i];
+                    panic!()
+                };
+                let context = context_
+                    .iter()
+                    .map(|l| {
+                        if l.boxed {
+                            let (_, lt) = *self.local_variable_collector.get_type(l.l);
+                            let d = self
+                                .local_variable_collector
+                                .new_variable((None, CType { boxed: true, ..lt }));
+                            basic_block_env
+                                .instructions
+                                .push(Instruction::Assign(d, Expr::Ref(VariableId::Local(l.l))));
+                            d
+                        } else {
+                            l.l
+                        }
+                    })
+                    .collect();
+                let l = Lambda {
+                    context,
+                    lambda_id: fx_lambda_id,
+                };
+                let (e, context_c_type) = if possible_functions.len() == 1 && tag_len == 1 {
+                    (l, possible_functions[0].c_type)
+                } else {
                     let d = self.local_variable_collector.new_variable((None, f.c_type));
-                    let context_ =
-                        make_context(self, TypeTagForBoxPoint::Lambda(f.original_lambda_id));
-                    let context = box_context(self, &context_, basic_block_env);
-                    basic_block_env.instructions.push(Instruction::Assign(
-                        d,
-                        Lambda {
-                            context,
-                            lambda_id: fx_lambda_id,
-                        },
-                    ));
+                    basic_block_env.instructions.push(Instruction::Assign(d, l));
                     (
-                        context_,
                         Upcast {
                             tag: f.tag,
                             value: VariableId::Local(d),
@@ -740,7 +741,7 @@ impl<'a> Env<'a> {
                         id: fx_lambda_id,
                         parameter,
                         body: FunctionBody { basic_blocks },
-                        context,
+                        context: context_,
                         context_c_type,
                         ret,
                     }),
