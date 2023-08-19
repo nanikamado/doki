@@ -1,0 +1,12 @@
+let fix = f:
+    (x: f (y: x x y))
+    (x: f (y: x x y))
+
+in let fib = fix (fib: n: a: b:
+        if n then
+            fib (minus n 1) b (plus a b)
+        else
+            a
+    )
+
+in fib 92 0 1

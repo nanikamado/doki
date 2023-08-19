@@ -1,0 +1,426 @@
+print = Str l p: intrinsic_write p l
+
+println = a: let _ = print a
+    in print "\n"
+
+div = intrinsic_div
+plus = intrinsic_plus
+mul = intrinsic_mul
+rem = intrinsic_rem
+minus = intrinsic_minus
+lt = intrinsic_lt
+le_u8 = a: b: match lt (intrinsic_u8_to_i64 a) (plus (intrinsic_u8_to_i64 b) 1) with
+        0 => False,
+        _ => True,
+    end
+eq_u8 = a: b:
+    match intrinsic_eq_u8 a b with
+        0 => False,
+        _ => True,
+    end
+malloc = intrinsic_malloc
+
+data Unit 0
+
+data Nil 0
+data Cons 2
+data True 0
+data False 0
+
+not = a: match a with
+        True => False,
+        False => True,
+    end
+
+bool_and = a: b: match a with
+        False => False,
+        True => b,
+    end
+
+bool_or = a: b: match a with
+        True => True,
+        False => b,
+    end
+
+pop_str = Str l p:
+    match l with
+        0 => Nil,
+        _ => let c = intrinsic_load_u8 p
+            in let s = Str (minus l 1) (intrinsic_add_ptr p 1)
+            in Cons c s,
+    end
+
+log10 = a: match a with
+        0 => 0,
+        _ => plus (log10 (div a 10)) 1,
+    end
+
+i64_to_string_aux = s: a: l:
+    match l with
+        0 => Unit,
+        _ =>
+            let s = intrinsic_add_ptr s -1
+            in let _ = intrinsic_store_u8 s (intrinsic_i64_to_u8 (plus 48 (rem a 10)))
+            in i64_to_string_aux s (div a 10) (minus l 1),
+    end
+
+max = a: b: match (lt a b) with
+        0 => a,
+        _ => b,
+    end
+
+i64_to_string = a:
+    let negative = (lt a 0)
+    in let l = max 1 (log10 a)
+    in let str_l = plus l negative
+    in let s = intrinsic_malloc str_l
+    in let a = match negative with
+            0 => a,
+            _ =>
+                let _ = intrinsic_store_u8 s 45u8
+                in (minus 0 a),
+        end
+    in let _ = i64_to_string_aux (intrinsic_add_ptr s str_l) a l
+    in Str str_l s
+
+memcpy = dist: src: len: match len with
+        0 => Unit,
+        _ => let _ = intrinsic_store_u8 dist (intrinsic_load_u8 src)
+            in memcpy (intrinsic_add_ptr dist 1) (intrinsic_add_ptr src 1) (minus len 1),
+    end
+
+append_str = Str l1 p1: Str l2 p2:
+    let l = plus l1 l2
+    in let p = intrinsic_malloc l
+    in let _ = memcpy p p1 l1
+    in let _ = memcpy (intrinsic_add_ptr p l1) p2 l2
+    in Str l p
+
+data None 0
+data Some 1
+
+getchar = _: let s = intrinsic_getchar 0
+    in match s with
+        -1 => None,
+        _ => Some (intrinsic_i64_to_u8 s),
+    end
+
+read_all_aux = s:
+    match getchar Unit with
+        None => s,
+        Some c => read_all_aux (Cons c s),
+    end
+
+reverse_aux = a: b:
+    match a with
+        Nil => b,
+        Cons h a => reverse_aux a (Cons h b),
+    end
+
+reverse = l: reverse_aux l Nil
+
+read_all = _: reverse (read_all_aux Nil)
+
+len = l:
+    match l with
+        Nil => 0,
+        Cons _ l => (plus (len l) 1),
+    end
+
+char_list_to_string_aux = m: l:
+    match l with
+        Nil => Unit,
+        Cons h l =>
+            let _ = intrinsic_store_u8 m h
+            in char_list_to_string_aux (intrinsic_add_ptr m 1) l,
+    end
+
+char_list_to_string = a:
+    let l = len a
+    in let s = malloc l
+    in let _ = char_list_to_string_aux s a
+    in Str l s
+
+string_to_char_list = s: match pop_str s with
+        Nil => Nil,
+        Cons a s => Cons a (string_to_char_list s)
+    end
+
+pop_input = i:
+    match i with
+        Nil => match getchar Unit with
+                    None => Nil,
+                    Some c => Cons c Nil,
+                end,
+        _ => i,
+    end
+
+memcpy = dist: src: len: match len with
+        0 => Unit,
+        _ => let _ = intrinsic_store_u8 dist (intrinsic_load_u8 src)
+            in memcpy (intrinsic_add_ptr dist 1) (intrinsic_add_ptr src 1) (minus len 1),
+    end
+
+string_eq = a: b: match Cons (pop_str a) (pop_str b) with
+        Cons Nil Nil => True,
+        Cons (Cons ah at) (Cons bh bt) => match eq_u8 ah bh with
+                False => False,
+                True => string_eq at bt,
+            end,
+    end
+
+char_list_to_num_aux = acc: s: match s with
+        Nil => acc,
+        Cons c s => match bool_and (le_u8 48u8 c) (le_u8 c 57u8) with
+            False => acc,
+            True => char_list_to_num_aux
+                    (plus (mul 10 acc) (minus (intrinsic_u8_to_i64 c) 48))
+                    s,
+        end,
+    end
+
+char_list_to_num = char_list_to_num_aux 0
+
+data Err 1
+data Ok 1
+
+parser_map = a: f: i:
+    match a i with
+        Ok (Cons a i) => Ok (Cons (f a) i),
+        Err e => Err e,
+    end
+
+just = s: i:
+    match pop_str s with
+        Nil => Ok (Cons Nil i),
+        Cons c s =>
+            match i with
+                Nil => Err Unit,
+                Cons i_c i =>
+                    match eq_u8 c i_c with
+                        False => Err Unit,
+                        True => parser_map (just s) (Cons c) i,
+                    end,
+            end,
+    end
+
+str_contains = s: c: match pop_str s with
+        Nil => False,
+        Cons s_c s => match eq_u8 s_c c with
+                False => str_contains s c,
+                True => True,
+            end,
+    end
+
+one_of = s: i: match i with
+        Nil => Err Unit,
+        Cons c i => match str_contains s c with
+                True => Ok (Cons c i),
+                False => Err Unit,
+            end,
+    end
+
+and = p1: p2: i:
+    match p1 i with
+        Err e => Err e,
+        Ok (Cons s1 i) => parser_map p2 (Cons s1) i
+    end
+
+or = p1: p2: i:
+    match p1 i with
+        Err e => p2 i,
+        Ok a => Ok a,
+    end
+
+any = i: match i with
+        Nil => Err Unit,
+        Cons c i => Ok (Cons c i),
+    end
+
+is_digit = c: bool_and (le_u8 48u8 c) (le_u8 c 57u8)
+
+filter = p: f: i: match p i with
+        Err e => Err e,
+        Ok (Cons a i) => match f a with
+                True => Ok (Cons a i),
+                False => Err Unit,
+            end,
+    end
+
+digit = filter any is_digit
+
+num = repeated_at_least_one digit
+
+repeated_aux = p: i: match p i with
+        Err _ => Cons Nil i,
+        Ok (Cons a i) => let Cons l i = repeated_aux p i
+            in Cons (Cons a l) i,
+    end
+
+repeated = p: i: Ok (repeated_aux p i)
+
+repeated_at_least_one = p: i: and p (repeated p) i
+
+is_ident_head = c: let c1 = bool_and (le_u8 65u8 c) (le_u8 c 90u8)
+    in let c2 = bool_and (le_u8 97u8 c) (le_u8 c 122u8)
+    in bool_or (bool_or c1 c2) (eq_u8 95u8 c)
+
+is_ident_continue = c: bool_or (bool_or (is_ident_head c) (is_digit c)) (eq_u8 c 39u8)
+
+ident = let ident_head = filter any is_ident_head
+    in let ident_continue = repeated (filter any is_ident_continue)
+    in let ident = and ident_head ident_continue
+    in let f = c: let c = char_list_to_string c
+        in not (bool_or (string_eq c "in")
+            (bool_or (string_eq c "let") 
+            (bool_or (string_eq c "if")
+            (bool_or (string_eq c "then")
+            (string_eq c "else")))))
+    in filter ident f
+
+data Num 1
+data Ident 1
+data ParsedLambda 2
+data Lambda 3
+data Apply 2
+data If 3
+data Plus 2
+data Minus 2
+
+and_ignore = a: b: parser_map (and a b) (Cons a _: a)
+ignore_and = a: b: parser_map (and a b) (Cons _ a: a)
+
+whitespace = repeated (one_of " \n\t")
+
+padded = p: ignore_and whitespace (and_ignore p whitespace)
+
+foldl = acc: l: f: match l with
+        Nil => acc,
+        Cons a l => foldl (f acc a) l f,
+    end
+
+expr = i: let num = parser_map num (n: Num (char_list_to_num n))
+    in let ident = padded ident
+    in let lambda = and (and_ignore ident (just ":")) expr
+    in let lambda = parser_map lambda (Cons i e: ParsedLambda i e)
+    in let let_ = and_ignore (ignore_and (just "let") ident) (just "=")
+    in let let_ = and let_ (and expr (ignore_and (just "in") expr))
+    in let let_ = parser_map let_ (Cons i (Cons e1 e2): Apply (ParsedLambda i e2) e1)
+    in let if = ignore_and (just "if")
+            (and expr (ignore_and (just "then")
+            (and expr (ignore_and (just "else") expr))))
+    in let if = parser_map if (Cons c (Cons t e): If c t e)
+    in let ident = parser_map ident Ident
+    in let paren = and_ignore (ignore_and (just "(") expr) (just ")")
+    in let single = or num (or let_ (or if (or lambda (or paren ident))))
+    in parser_map (repeated_at_least_one (padded single)) (Cons h l: foldl h l Apply) i
+
+dbg_expr = e: match e with
+        Num n => i64_to_string n,
+        Ident n => char_list_to_string n,
+        ParsedLambda i e => append_str "("
+                (append_str
+                    (char_list_to_string i)
+                    (append_str ":"
+                        (append_str (dbg_expr e) ")"))),
+        If c t e => append_str "if "
+                (append_str (dbg_expr c)
+                (append_str " then "
+                (append_str (dbg_expr t)
+                (append_str " else " (dbg_expr e))))),
+        Apply f a => append_str
+            (append_str (append_str "(" (dbg_expr f)) " ")
+            (append_str (dbg_expr a) ")"),
+        Plus a b => append_str
+            (append_str (append_str "(" (dbg_expr a)) "+")
+            (append_str (dbg_expr b) ")"),
+    end
+
+dbg_value = e: match e with
+        Num n => i64_to_string n,
+        Ident n => char_list_to_string n,
+        Lambda i e _ => append_str "("
+                (append_str
+                    (char_list_to_string i)
+                    (append_str ":"
+                        (append_str ("dbg_expr e") ")"))),
+        Apply f a => append_str
+            (append_str (append_str "(" (dbg_value f)) " ")
+            (append_str (dbg_value a) ")"),
+        Plus a b => append_str
+            (append_str (append_str "(" (dbg_value a)) "+")
+            (append_str (dbg_value b) ")"),
+    end
+
+list_eq = a: b: match Cons a b with
+        Cons (Cons ah a) (Cons bh b) => match eq_u8 ah bh with
+                True => list_eq a b,
+                False => False,
+            end,
+        Cons Nil Nil => True,
+        _ => False,
+    end
+
+get_from_list = l: a: match l with
+        Nil => None,
+        Cons (Cons k v) l => match list_eq a k with
+                True => Some v,
+                False => get_from_list l a,
+            end,
+    end
+
+flat_map = a: f: match a with
+        Err e => Err e,
+        Ok a => f a,
+    end
+
+numerical_binary = a: b: env: f: flat_map (eval a env) (a: flat_map (eval b env) (b:
+        match Cons a b with
+            Cons (Num a) (Num b) => Ok (Num (f a b)),
+            Cons _ _ => Err "not a number",
+        end
+    ))
+
+eval = e: env: match e with
+        Num n => Ok (Num n),
+        ParsedLambda i e => Ok (Lambda i e env),
+        Ident n => match get_from_list env n with
+                None => let s = char_list_to_string n
+                    in let s = append_str "ident `" s
+                    in let s = append_str s "` was not found"
+                    in Err s,
+                Some v => Ok v,
+            end,
+        Apply f a => flat_map (eval f env)
+                (f: match f with
+                        Lambda i e l_env => flat_map (eval a env)
+                                (a: let env = Cons (Cons i a) l_env
+                                    in eval e env),
+                        _ => Err "not a function",
+                    end),
+        If c t e => match eval c env with
+                Ok (Num 0) => eval e env,
+                Ok _ => eval t env,
+                Err a => Err a,
+            end,
+        Plus a b => numerical_binary a b env plus,
+        Minus a b => numerical_binary a b env minus,
+    end
+
+global_env = let a = string_to_char_list "a"
+    in let b = string_to_char_list "b"
+    in let l1 = Lambda a (ParsedLambda b (Plus (Ident a) (Ident b))) Nil
+    in let l1 = Cons (string_to_char_list "plus") l1
+    in let l2 = Lambda a (ParsedLambda b (Minus (Ident a) (Ident b))) Nil
+    in let l2 = Cons (string_to_char_list "minus") l2
+    in Cons l1 (Cons l2 Nil)
+
+main = _:
+    let s = read_all Unit
+    in match expr s with
+        Err Unit => println "err",
+        Ok (Cons e _) => match eval e global_env with
+                Ok e => println (dbg_value e),
+                Err msg => println msg,
+            end
+    end

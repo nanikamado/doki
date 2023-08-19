@@ -209,3 +209,12 @@ fn type_caching() {
 fn incomplete_parser() {
     positive_test_with_stdin("incomplete_parser.doki", "", "");
 }
+
+#[test]
+fn expr() {
+    positive_test_with_stdin(
+        "expr.doki",
+        std::str::from_utf8(include_bytes!("positive/fib.exp")).unwrap(),
+        "7540113804746346429\n",
+    );
+}
