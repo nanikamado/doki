@@ -218,3 +218,8 @@ fn expr() {
         "7540113804746346429\n",
     );
 }
+
+#[test]
+fn function_table() {
+    positive_test_with_stdin("function_table.doki", "92", "> 7540113804746346429\n");
+}
