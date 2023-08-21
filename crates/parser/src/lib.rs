@@ -8,6 +8,7 @@ use std::io::Write;
 pub struct Ast<'a> {
     pub data_decls: Vec<DataDecl<'a>>,
     pub variable_decls: Vec<VariableDecl<'a>>,
+    pub imports: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -19,11 +20,11 @@ pub struct DataDecl<'a> {
 #[derive(Clone, Debug)]
 pub struct VariableDecl<'a> {
     pub name: &'a str,
-    pub ident_span: Span,
+    pub ident_span: Span<'a>,
     pub expr: ExprWithSpan<'a>,
 }
 
-pub type ExprWithSpan<'a> = (Expr<'a>, Span);
+pub type ExprWithSpan<'a> = (Expr<'a>, Span<'a>);
 
 #[derive(Clone, Debug)]
 pub enum Expr<'a> {
@@ -47,7 +48,7 @@ pub enum Expr<'a> {
     ),
 }
 
-pub type PatternWithSpan<'a> = (Pattern<'a>, Span);
+pub type PatternWithSpan<'a> = (Pattern<'a>, Span<'a>);
 
 #[derive(Clone, Debug)]
 pub enum Pattern<'a> {
@@ -55,7 +56,7 @@ pub enum Pattern<'a> {
     Wildcard,
     Constructor {
         name: &'a str,
-        span: Span,
+        span: Span<'a>,
         fields: Vec<PatternWithSpan<'a>>,
     },
     Or(Box<PatternWithSpan<'a>>, Box<PatternWithSpan<'a>>),
@@ -65,9 +66,10 @@ pub enum Pattern<'a> {
 enum Decl<'a> {
     Data(DataDecl<'a>),
     Variable(VariableDecl<'a>),
+    Imports(String),
 }
 
-fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, char>>> {
+fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Rich<'_, char>>> {
     let comment = just("//")
         .then(any().and_is(just('\n').not()).repeated())
         .ignored();
@@ -76,7 +78,8 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
         .ignored()
         .or(comment)
         .repeated();
-    let ident = ident().filter(|s| !["match", "with", "end", "let", "in", "data"].contains(s));
+    let ident =
+        ident().filter(|s| !["match", "with", "end", "let", "in", "data", "import"].contains(s));
 
     // This `escape` is a modified version of https://github.com/zesterer/chumsky/blob/7e8d01f647640428871944885a1bb02e8a865895/examples/json.rs#L39
     // MIT License: https://github.com/zesterer/chumsky/blob/7e8d01f647640428871944885a1bb02e8a865895/LICENSE
@@ -107,20 +110,20 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
     let pattern = recursive(|pattern| {
         let p = choice((
             pattern.delimited_by(just('('), just(')')),
-            just("_").map_with_span(|_, span| (Pattern::Wildcard, Span::from(span))),
+            just("_").map_with_span(|_, span| (Pattern::Wildcard, Span::from(span, file_name))),
             just('-')
                 .or_not()
                 .then(text::int(10))
                 .map_slice(Pattern::Num)
-                .map_with_span(|p, span| (p, Span::from(span))),
+                .map_with_span(|p, span| (p, Span::from(span, file_name))),
             ident.map_with_span(|name, span| {
                 (
                     Pattern::Constructor {
                         name,
                         fields: Vec::new(),
-                        span: Span::from(span),
+                        span: Span::from(span, file_name),
                     },
-                    Span::from(span),
+                    Span::from(span, file_name),
                 )
             }),
         ));
@@ -131,9 +134,9 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
                     Pattern::Constructor {
                         name,
                         fields,
-                        span: Span::from(span),
+                        span: Span::from(span, file_name),
                     },
-                    Span::from(span),
+                    Span::from(span, file_name),
                 )
             })
             .or(p);
@@ -141,6 +144,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
             just('|').padded_by(whitespace).ignore_then(p).repeated(),
             |a, b| {
                 let span = Span {
+                    file_name,
                     start: a.1.start,
                     end: b.1.end,
                 };
@@ -191,11 +195,12 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
                 )
                 .map(Ident),
         ))
-        .map_with_span(|e, s| (e, Span::from(s)));
+        .map_with_span(|e, s| (e, Span::from(s, file_name)));
         let e = e
             .clone()
             .foldl(whitespace.ignore_then(e).repeated(), |a, b| {
                 let span = Span {
+                    file_name,
                     start: a.1.start,
                     end: b.1.end,
                 };
@@ -207,6 +212,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
             .repeated()
             .foldr(e, |(param, span), acc| {
                 let span = Span {
+                    file_name,
                     start: span.start,
                     end: acc.1.end,
                 };
@@ -227,7 +233,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
         .map(|((i, span), e)| {
             Decl::Variable(VariableDecl {
                 name: i,
-                ident_span: Span::from(span),
+                ident_span: Span::from(span, file_name),
                 expr: e,
             })
         });
@@ -241,23 +247,33 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Decl<'a>>, extra::Err<Rich<'a, c
                 field_len: len.parse().unwrap(),
             })
         });
-    variable_decl.or(data_decl).repeated().at_least(1).collect()
+    let import = keyword("import")
+        .ignore_then(string.padded_by(whitespace))
+        .padded_by(whitespace)
+        .map(Decl::Imports);
+    choice((variable_decl, data_decl, import))
+        .repeated()
+        .at_least(1)
+        .collect()
 }
 
-pub fn parse(src: &str) -> Result<Ast<'_>, ParseError<'_>> {
+pub fn parse<'a>(src: &'a str, file_name: &'a str) -> Result<Ast<'a>, ParseError<'a>> {
     let mut data_decls = Vec::new();
     let mut variable_decls = Vec::new();
-    match parser().parse(src).into_result() {
+    let mut imports = Vec::new();
+    match parser(file_name).parse(src).into_result() {
         Ok(ds) => {
             for d in ds {
                 match d {
                     Decl::Data(d) => data_decls.push(d),
                     Decl::Variable(d) => variable_decls.push(d),
+                    Decl::Imports(d) => imports.push(d),
                 }
             }
             Ok(Ast {
                 data_decls,
                 variable_decls,
+                imports,
             })
         }
         Err(es) => Err(ParseError { es }),
@@ -265,14 +281,16 @@ pub fn parse(src: &str) -> Result<Ast<'_>, ParseError<'_>> {
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Span {
+pub struct Span<'a> {
+    pub file_name: &'a str,
     pub start: usize,
     pub end: usize,
 }
 
-impl Span {
-    fn from(span: SimpleSpan) -> Self {
+impl<'a> Span<'a> {
+    fn from(span: SimpleSpan, file_name: &'a str) -> Self {
         Self {
+            file_name,
             start: span.start,
             end: span.end,
         }

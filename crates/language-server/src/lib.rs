@@ -1,11 +1,12 @@
 use compiler::{Span, SpanMapEntry};
 use dashmap::DashMap;
 use itertools::Itertools;
-use std::fs;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
+use typed_arena::Arena;
 
 type HoverMap = Vec<Vec<Option<Arc<Hover>>>>;
 
@@ -75,8 +76,7 @@ impl LanguageServer for Backend {
                 &format!("opened {}.", params.text_document.uri),
             )
             .await;
-        self.compile_uri(params.text_document.uri, Some(params.text_document.text))
-            .await;
+        self.compile_uri(params.text_document.uri).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -112,7 +112,7 @@ impl LanguageServer for Backend {
                 .log_message(MessageType::INFO, "not cached yet.")
                 .await;
         }
-        self.compile_uri(uri, params.text).await;
+        self.compile_uri(uri).await;
     }
 
     async fn did_close(&self, _: DidCloseTextDocumentParams) {
@@ -140,33 +140,38 @@ impl LanguageServer for Backend {
 }
 
 impl Backend {
-    async fn compile_uri(&self, uri: Url, text: Option<String>) {
+    async fn compile_uri(&self, uri: Url) {
         self.client
             .log_message(MessageType::INFO, "compiling.")
             .await;
-        if let Some(src) = text.or_else(|| fs::read_to_string(uri.path()).ok()) {
-            let minimize_type = self.minimize_type;
-            if let Ok(Some(hover_map)) =
-                tokio::task::spawn_blocking(move || make_hover_map(&src, minimize_type)).await
-            {
-                self.tokens.insert(
-                    uri,
-                    TokenCache {
-                        hover_map,
-                        state: TokenCacheState::Fresh,
-                    },
-                );
-                self.client
-                    .log_message(MessageType::INFO, "successfully compiled.")
-                    .await;
-            } else {
-                self.client
-                    .log_message(MessageType::INFO, format!("could not compile {uri}."))
-                    .await;
-            }
+        let minimize_type = self.minimize_type;
+        let uri_s = uri.path().to_string();
+        if let Ok(Some(hover_map)) = tokio::task::spawn_blocking(move || {
+            let arena = Arena::new();
+            let m = make_hover_map(
+                arena.alloc(uri_s),
+                &mut FxHashMap::default(),
+                minimize_type,
+                &arena,
+            );
+            drop(arena);
+            m
+        })
+        .await
+        {
+            self.tokens.insert(
+                uri,
+                TokenCache {
+                    hover_map,
+                    state: TokenCacheState::Fresh,
+                },
+            );
+            self.client
+                .log_message(MessageType::INFO, "successfully compiled.")
+                .await;
         } else {
             self.client
-                .log_message(MessageType::INFO, format!("{uri} not found."))
+                .log_message(MessageType::INFO, "could not compile.")
                 .await;
         }
     }
@@ -183,9 +188,14 @@ pub async fn run(minimize_type: bool) {
     Server::new(stdin, stdout, socket).serve(service).await;
 }
 
-fn make_hover_map(src: &str, minimize_type: bool) -> Option<HoverMap> {
-    let (utf8_to_utf16_map, utf16_to_utf8_map) = make_map(src);
-    let r = compiler::token_map(src, minimize_type).ok()?;
+fn make_hover_map<'a>(
+    file_name: &'a str,
+    src_files: &mut FxHashMap<&'a str, &'a str>,
+    minimize_type: bool,
+    arena: &'a Arena<String>,
+) -> Option<HoverMap> {
+    let r = compiler::token_map(file_name, src_files, minimize_type, arena).ok()?;
+    let (utf8_to_utf16_map, utf16_to_utf8_map) = make_map(src_files[file_name]);
     let mut span_map = r.span_map;
     let mut working_span_list: Vec<(Span, _)> = Vec::new();
     let mut cache: Option<Arc<Hover>> = None;

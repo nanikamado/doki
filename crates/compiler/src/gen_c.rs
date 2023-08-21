@@ -15,17 +15,22 @@ struct Env<'a> {
     global_variable_map: FxHashMap<&'a str, GlobalVariable>,
     data_decl_map: FxHashMap<&'a str, doki_ir::ConstructorId>,
     build_env: doki_ir::Env<'a>,
-    local_variable_span_map: BTreeMap<Span, LocalVariable>,
-    global_variable_span_map: BTreeMap<Span, GlobalVariable>,
+    local_variable_span_map: BTreeMap<Span<'a>, LocalVariable>,
+    global_variable_span_map: BTreeMap<Span<'a>, GlobalVariable>,
     str_constructor_id: Option<ConstructorId>,
-    file_name: &'a str,
-    utf8_to_utf16_ln_col_map: Vec<(u32, u32)>,
+    utf8_to_utf16_ln_col_map: FxHashMap<&'a str, Vec<(u32, u32)>>,
 }
 
-fn build<'a>(ast: Ast<'a>, file_name: &'a str, src: &'a str, minimize_types: bool) -> Env<'a> {
-    let utf8_to_utf16_ln_col_map = utf8_to_utf16_ln_col(src);
+fn build<'a>(
+    ast: Ast<'a>,
+    src_files: &FxHashMap<&'a str, &'a str>,
+    minimize_types: bool,
+) -> Env<'a> {
+    let utf8_to_utf16_ln_col_map = src_files
+        .iter()
+        .map(|(n, s)| (*n, utf8_to_utf16_ln_col(s)))
+        .collect();
     let mut env = Env {
-        file_name,
         utf8_to_utf16_ln_col_map,
         local_variable_map: Default::default(),
         global_variable_map: Default::default(),
@@ -111,11 +116,10 @@ fn build<'a>(ast: Ast<'a>, file_name: &'a str, src: &'a str, minimize_types: boo
 
 pub fn gen_c<'a>(
     ast: Ast<'a>,
-    file_name: &'a str,
-    src: &'a str,
+    src_files: &mut FxHashMap<&'a str, &'a str>,
     minimize_types: bool,
 ) -> impl Display + 'a {
-    let env = build(ast, file_name, src, minimize_types);
+    let env = build(ast, src_files, minimize_types);
     let entry_point = env.global_variable_map["main"];
     env.build_env.gen_c(entry_point)
 }
@@ -125,8 +129,13 @@ pub enum SpanMapEntry {
     GlobalVariable { ts: Vec<doki_ir::TypeForHash> },
 }
 
-pub fn token_map(ast: Ast, src: &str, minimize_types: bool) -> AnalyzedSrc {
-    let env = build(ast, "", src, minimize_types);
+pub fn token_map<'a>(
+    ast: Ast<'a>,
+    path: &str,
+    src_files: &FxHashMap<&'a str, &'a str>,
+    minimize_types: bool,
+) -> AnalyzedSrc<'a> {
+    let env = build(ast, src_files, minimize_types);
     let entry_point = env.global_variable_map["main"];
     let ast = env.build_env.build_ast_step2(entry_point);
     let global_variables: multimap::MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> = ast
@@ -143,14 +152,18 @@ pub fn token_map(ast: Ast, src: &str, minimize_types: bool) -> AnalyzedSrc {
     let mut span_map: BTreeMap<_, _> = env
         .global_variable_span_map
         .into_iter()
-        .map(|(s, g)| {
-            let ts = global_variables
-                .get_vec(&g)
-                .into_iter()
-                .flatten()
-                .map(|(t, _)| t.clone())
-                .collect_vec();
-            (s, SpanMapEntry::GlobalVariable { ts })
+        .flat_map(|(s, g)| {
+            if s.file_name == path {
+                let ts = global_variables
+                    .get_vec(&g)
+                    .into_iter()
+                    .flatten()
+                    .map(|(t, _)| t.clone())
+                    .collect_vec();
+                Some((s, SpanMapEntry::GlobalVariable { ts }))
+            } else {
+                None
+            }
         })
         .collect();
     let m: multimap::MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> = ast
@@ -158,20 +171,24 @@ pub fn token_map(ast: Ast, src: &str, minimize_types: bool) -> AnalyzedSrc {
         .into_iter()
         .map(|((l, (id, g)), l2)| (l, (g, id, l2)))
         .collect();
-    span_map.extend(env.local_variable_span_map.into_iter().map(|(s, l)| {
-        let ts = m
-            .get_vec(&l)
-            .into_iter()
-            .flatten()
-            .sorted_by_key(|(g, id, _)| {
-                global_variables
-                    .get_vec(g)
-                    .unwrap()
-                    .binary_search_by_key(id, |(_, id)| *id)
-            })
-            .map(|(_, _, l)| ast.variable_types.get_type(*l).clone().0.unwrap())
-            .collect();
-        (s, SpanMapEntry::Expr(ts))
+    span_map.extend(env.local_variable_span_map.into_iter().flat_map(|(s, l)| {
+        if s.file_name == path {
+            let ts = m
+                .get_vec(&l)
+                .into_iter()
+                .flatten()
+                .sorted_by_key(|(g, id, _)| {
+                    global_variables
+                        .get_vec(g)
+                        .unwrap()
+                        .binary_search_by_key(id, |(_, id)| *id)
+                })
+                .map(|(_, _, l)| ast.variable_types.get_type(*l).clone().0.unwrap())
+                .collect();
+            Some((s, SpanMapEntry::Expr(ts)))
+        } else {
+            None
+        }
     }));
     AnalyzedSrc {
         span_map,
@@ -195,10 +212,10 @@ impl<'a> Env<'a> {
             Expr::Lambda { param, expr } => {
                 let l = self.build_env.lambda(block, ret);
                 let mut b = self.build_env.new_block();
-                let (ln, col) = self.utf8_to_utf16_ln_col_map[param.1.start];
+                let (ln, col) = self.utf8_to_utf16_ln_col_map[param.1.file_name][param.1.start];
                 b.panic(format!(
                     "pattern is not exhaustive\n{}:{ln}:{col}",
-                    self.file_name,
+                    param.1.file_name,
                 ));
                 let mut b2 = self.build_env.new_block();
                 self.let_in(l.ret, param, l.parameter, *expr, &mut b2);
@@ -230,14 +247,12 @@ impl<'a> Env<'a> {
                 )
             }
             Expr::Match { operand, branches } => {
-                let (ln, col) = self.utf8_to_utf16_ln_col_map[operand.1.start];
+                let file_name = operand.1.file_name;
+                let (ln, col) = self.utf8_to_utf16_ln_col_map[operand.1.file_name][operand.1.start];
                 let operand_v = self.build_env.new_local_variable();
                 self.expr(*operand, operand_v, block);
                 let mut b = Block::default();
-                b.panic(format!(
-                    "match is not exhaustive\n{}:{ln}:{col}",
-                    self.file_name,
-                ));
+                b.panic(format!("match is not exhaustive\n{}:{ln}:{col}", file_name,));
                 for (p, e) in branches.into_iter().rev() {
                     let mut b2 = Block::default();
                     self.let_in(ret, p, operand_v, e, &mut b2);
@@ -249,10 +264,10 @@ impl<'a> Env<'a> {
                 let l = self.build_env.new_local_variable();
                 self.expr(*e1, l, block);
                 let mut b = self.build_env.new_block();
-                let (ln, col) = self.utf8_to_utf16_ln_col_map[p.1.start];
+                let (ln, col) = self.utf8_to_utf16_ln_col_map[p.1.file_name][p.1.start];
                 b.panic(format!(
                     "pattern is not exhaustive\n{}:{ln}:{col}",
-                    self.file_name,
+                    p.1.file_name,
                 ));
                 let mut b2 = self.build_env.new_block();
                 self.let_in(ret, p, l, *e2, &mut b2);

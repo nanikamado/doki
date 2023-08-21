@@ -8,11 +8,12 @@ mod run_c;
 use clap::{Parser, Subcommand};
 use compiler::gen_c;
 use log::LevelFilter;
+use rustc_hash::FxHashMap;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 use std::fmt::{Debug, Display};
-use std::fs;
 use std::io::stderr;
 use std::process::ExitCode;
+use typed_arena::Arena;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -43,14 +44,15 @@ enum Commands {
 }
 
 fn compile<'a>(
-    src: &'a str,
     file_name: &'a str,
     no_type_minimization: bool,
+    src_files: &mut FxHashMap<&'a str, &'a str>,
+    arena: &'a mut Arena<String>,
 ) -> Result<impl Display + 'a, ()> {
-    match compiler::parse(src) {
-        Ok(ast) => Ok(gen_c(ast, file_name, src, !no_type_minimization)),
-        Err(e) => {
-            e.write(stderr(), file_name, src).unwrap();
+    match compiler::parse(file_name, src_files, arena) {
+        Ok(ast) => Ok(gen_c(ast, src_files, !no_type_minimization)),
+        Err((file_name, e)) => {
+            e.write(stderr(), file_name, src_files[file_name]).unwrap();
             Err(())
         }
     }
@@ -80,13 +82,14 @@ fn main() -> ExitCode {
         ColorChoice::Auto,
     )
     .unwrap();
+    let mut arena = Arena::new();
+    let mut src_files = FxHashMap::default();
     match args.command {
         Commands::Run {
             file,
             clang_options,
         } => {
-            let src = fs::read_to_string(&file).unwrap();
-            let r = compile(&src, &file, args.no_type_minimization);
+            let r = compile(&file, args.no_type_minimization, &mut src_files, &mut arena);
             match r {
                 Ok(c) => {
                     if let Ok(exit_status) =
@@ -101,8 +104,7 @@ fn main() -> ExitCode {
             }
         }
         Commands::EmitC { file } => {
-            let src = fs::read_to_string(&file).unwrap();
-            let r = compile(&src, &file, args.no_type_minimization);
+            let r = compile(&file, args.no_type_minimization, &mut src_files, &mut arena);
             match r {
                 Ok(c) => {
                     print!("{}", c);
