@@ -1,34 +1,14 @@
-data Unit 0
+import "../../library/prelude.doki"
 
-print = Str l p: intrinsic_write p l
-
-println = a: let _ = print a
-    in print "\n"
-
-div = intrinsic_div
-plus = intrinsic_plus
-rem = intrinsic_rem
-minus = intrinsic_minus
-lt = intrinsic_lt
-mul = intrinsic_mul
-le = a: b: lt a (plus b 1)
-
-read_num = a:
-    let c = intrinsic_getchar 0
-    in match (mul (le 48 c) (le c 57)) with
-            0 => a,
-            _ => read_num (plus (mul 10 a) (minus c 48)),
-        end
-
-data Cons 3
+data C 3
 
 loop = n: k:
     match n with
         0 => Unit,
         _ =>
             let _ = println "#"
-            in loop (minus n 1) (a: k (Cons "1" 1 a)),
+            in loop (minus n 1) (a: k (C "1" 1 a)),
     end
 
 main = _:
-    loop (read_num 0) (Cons a b _: a)
+    loop (read_num 0) (C a b _: a)

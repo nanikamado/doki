@@ -1,24 +1,8 @@
-print = Str l p: intrinsic_write p l
+import "../library/prelude.doki"
 
-println = a: let _ = print a
-    in print "\n"
-
-data True 0
-data False 0
-
-p = a: println (to_string a)
-
-to_string = a: match a with
+p = a: println match a with
         True => "True",
         False => "False",
-    end
-
-and = a: b: match a with
-        True => match b with
-                True => True,
-                False => False,
-            end,
-        False => False,
     end
 
 taut = f: match f with
@@ -30,4 +14,3 @@ main = _: let _ = p (taut True)
         in let _ = p (taut (_: True))
         in let _ = p (taut (_: False))
         in p (taut (_: _: True))
-

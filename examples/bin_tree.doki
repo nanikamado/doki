@@ -1,33 +1,4 @@
-print = Str l p: intrinsic_write p l
-
-println = a: let _ = print a
-    in print "\n"
-
-data True 0
-data False 0
-
-lt = a: b: match intrinsic_lt a b with
-        0 => False,
-        _ => True,
-    end
-
-bool_to_string = a: match a with
-        True => "True",
-        False => "False",
-    end
-
-not = a: match a with
-        True => False,
-        False => True,
-    end
-
-and = a: b: match a with
-        True => match b with
-                True => True,
-                False => False,
-            end,
-        False => False,
-    end
+import "../library/prelude.doki"
 
 data E 0
 data T 3

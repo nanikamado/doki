@@ -1,9 +1,4 @@
-data Unit 0
-
-print = Str l p: intrinsic_write p l
-
-println = a: let _ = print a
-    in print "\n"
+import "../library/prelude.doki"
 
 main = _: let a = "a"
     in let f = _: a

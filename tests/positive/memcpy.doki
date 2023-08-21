@@ -1,8 +1,4 @@
-data Unit 0
-
-plus = intrinsic_plus
-
-minus = intrinsic_minus
+import "../../library/prelude.doki"
 
 memcpy = dist: src: len: match len with
         0 => Unit,
@@ -16,10 +12,5 @@ append_str = Str l1 p1: Str l2 p2:
     in let _ = memcpy p p1 l1
     in let _ = memcpy (intrinsic_add_ptr p l1) p2 l2
     in Str l p
-
-print = Str l p: intrinsic_write p l
-
-println = a: let _ = print a
-    in print "\n"
 
 main = _: println (append_str "Hello, " "world.")

@@ -1,29 +1,4 @@
-print = Str l p: intrinsic_write p l
-
-println = a: let _ = print a
-    in print "\n"
-
-data True 0
-data False 0
-data Pair 2
-
-lt = a: b: match intrinsic_lt a b with
-        0 => False,
-        _ => True,
-    end
-
-not = a: match a with
-        True => False,
-        False => True,
-    end
-
-and = a: b: match a with
-        True => match b with
-                True => True,
-                False => False,
-            end,
-        False => False,
-    end
+import "../library/prelude.doki"
 
 data E 0
 data T 4
@@ -36,9 +11,9 @@ insert = x: t: match insert_rec x t with
 
 insert_rec = x: t: match t with
         E => T R x E E,
-        T color y a b => match Pair (lt x y) (lt y x) with
-                Pair True _ => balance (T color y (insert_rec x a) b),
-                Pair _ True => balance (T color y a (insert_rec x b)),
+        T color y a b => match Cons (lt x y) (lt y x) with
+                Cons True _ => balance (T color y (insert_rec x a) b),
+                Cons _ True => balance (T color y a (insert_rec x b)),
                 _ => T B y a b,
             end,
     end
@@ -54,9 +29,9 @@ balance = t: match t with
 
 contains = x: t: match t with
         E => False,
-        T _ v l r => match Pair (lt x v) (lt v x) with
-                Pair True _ => contains x l,
-                Pair _ True => contains x r,
+        T _ v l r => match Cons (lt x v) (lt v x) with
+                Cons True _ => contains x l,
+                Cons _ True => contains x r,
                 _ => True,
             end,
     end

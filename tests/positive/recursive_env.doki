@@ -1,10 +1,4 @@
-print = Str l p: intrinsic_write p l
-
-println = a: let _ = print a
-    in print "\n"
-
-data Nil 0
-data Cons 2
+import "../../library/prelude.doki"
 
 print_list = l: match l with
         Nil => Nil,

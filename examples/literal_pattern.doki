@@ -1,7 +1,4 @@
-print = Str l p: intrinsic_write p l
-
-println = a: let _ = print a
-    in print "\n"
+import "../library/prelude.doki"
 
 test_zero = a: match a with
         0 => println "is zero",

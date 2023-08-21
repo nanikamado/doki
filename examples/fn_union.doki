@@ -1,14 +1,7 @@
-print = Str l p: intrinsic_write p l
-
-println = a: let _ = print a
-    in print "\n"
-
-data Unit 0
+import "../library/prelude.doki"
 
 data A 0
 data B 0
-data Cons 2
-data Nil 0
 
 p = s: _: print s
 

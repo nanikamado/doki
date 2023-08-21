@@ -1,15 +1,4 @@
-data True 0
-data False 0
-
-print = Str l p: intrinsic_write p l
-
-println = a: let _ = print a
-    in print "\n"
-
-eq = a: b: match intrinsic_eq a b with
-        1 => True,
-        0 => False,
-    end
+import "../library/prelude.doki"
 
 main = _: match eq 0 0 with
         True => println "True",

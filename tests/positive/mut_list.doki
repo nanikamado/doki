@@ -1,59 +1,15 @@
-data Unit 0
-
-print = Str l p: intrinsic_write p l
-
-println = a: let _ = print a
-    in print "\n"
-
-div = intrinsic_div
-plus = intrinsic_plus
-rem = intrinsic_rem
-minus = intrinsic_minus
-lt = intrinsic_lt
-
-log10 = a: match a with
-        0 => 0,
-        _ => plus (log10 (div a 10)) 1,
-    end
-
-i64_to_string_aux = s: a: l:
-    match l with
-        0 => Unit,
-        _ =>
-            let s = intrinsic_add_ptr s -1
-            in let _ = intrinsic_store_u8 s (intrinsic_i64_to_u8 (plus 48 (rem a 10)))
-            in i64_to_string_aux s (div a 10) (minus l 1),
-    end
-
-max = a: b: match (lt a b) with
-        0 => a,
-        _ => b,
-    end
-
-i64_to_string = a:
-    let negative = (lt a 0)
-    in let l = max 1 (log10 a)
-    in let str_l = plus l negative
-    in let s = intrinsic_malloc str_l
-    in let a = match negative with
-            0 => a,
-            _ =>
-                let _ = intrinsic_store_u8 s 45u8
-                in (minus 0 a),
-        end
-    in let _ = i64_to_string_aux (intrinsic_add_ptr s str_l) a l
-    in Str str_l s
+import "../../library/prelude.doki"
 
 seq = a: match a with
         0 => Unit,
-        _ => intrinsic_mut (seq (intrinsic_minus a 1)),
+        _ => intrinsic_mut (seq (minus a 1)),
     end
 
-len = a: match a with
+ml_len = a: match a with
         Unit => 0,
-        _ => intrinsic_plus (len (intrinsic_get a)) 1,
+        _ => intrinsic_plus (ml_len (intrinsic_get a)) 1,
     end
 
 main = _:
-    let a = len (seq 10)
+    let a = ml_len (seq 10)
     in println (i64_to_string a)
