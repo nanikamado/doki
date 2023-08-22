@@ -169,11 +169,11 @@ impl<'a> Ast<'a> {
             ast.type_map,
             ast.constructor_names,
         );
-        memo.monomorphize_decl_rec(
-            ast.entry_point,
-            ast.type_of_entry_point,
-            &mut Default::default(),
-        );
+        let mut replace_map = Default::default();
+        let type_of_entry_point = memo
+            .map
+            .clone_pointer(ast.type_of_entry_point, &mut replace_map);
+        memo.monomorphize_decl_rec(ast.entry_point, type_of_entry_point, &mut replace_map);
         let mut variable_names = FxHashMap::default();
         for v in &memo.monomorphized_variables {
             variable_names.insert(VariableId::Global(v.decl_id), v.name.to_string());
@@ -313,7 +313,7 @@ impl<'a> Env<'a> {
         p: TypePointer,
         replace_map: &mut ReplaceMap,
     ) -> GlobalVariableId {
-        let p = self.map.clone_pointer(p, replace_map);
+        debug_assert!(self.map.is_terminal(p));
         let t_for_hash = self.get_type_for_hash(p);
         let t_id = self
             .type_memo
@@ -395,9 +395,12 @@ impl<'a> Env<'a> {
             ast_step1::VariableId::Global(d, r, p) => {
                 let p1 = self.map.clone_pointer(p, replace_map);
                 let mut r = replace_map.clone().merge(r, &mut self.map);
-                let p2 = self.map.clone_pointer(p, &mut r);
-                debug_assert_eq!(p1, p2);
-                VariableId::Global(self.monomorphize_decl_rec(d, p, &mut r))
+                #[cfg(debug_assertions)]
+                {
+                    let p2 = self.map.clone_pointer(p, &mut r);
+                    assert_eq!(p1, p2);
+                }
+                VariableId::Global(self.monomorphize_decl_rec(d, p1, &mut r))
             }
         }
     }

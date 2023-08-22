@@ -572,7 +572,7 @@ impl<'a> Env<'a> {
                 scc.insert(*v, i as u32);
             }
         }
-        let mut env_next = TypeInfEnv {
+        let mut env = TypeInfEnv {
             type_map: self.type_map,
             unreplicatable_pointers: Default::default(),
             local_variable_types: self.local_variable_types,
@@ -589,25 +589,24 @@ impl<'a> Env<'a> {
             current_scc_id: 0,
         };
         for c in scc_v.into_iter().rev() {
-            env_next.current_scc_id = env_next.scc[&c[0]];
+            env.current_scc_id = env.scc[&c[0]];
             for v in &c {
-                let ret = env_next.global_variables_before_type_inf[v].ret;
-                let t = env_next.local_variable_types.get(ret);
-                env_next.global_variable_types.insert(*v, t);
+                let ret = env.global_variables_before_type_inf[v].ret;
+                let t = env.local_variable_types.get(ret);
+                env.global_variable_types.insert(*v, t);
             }
             for v in c {
-                env_next.get_type_global(v);
+                env.get_type_global(v);
             }
         }
-        let type_of_entry_point = env_next.global_variable_types[&entry_point];
-        let (p, _) = env_next.type_map.get_fn(type_of_entry_point);
-        env_next
-            .type_map
+        let type_of_entry_point = env.global_variable_types[&entry_point];
+        let (p, _) = env.type_map.get_fn(type_of_entry_point);
+        env.type_map
             .insert_normal(p, TypeId::Intrinsic(IntrinsicTypeTag::Unit), Vec::new());
-        let type_map = env_next.type_map;
-        let local_variable_types_old = env_next.local_variable_types;
+        let type_map = env.type_map;
+        let local_variable_types_old = env.local_variable_types;
         Ast {
-            variable_decls: env_next.global_variables,
+            variable_decls: env.global_variables,
             entry_point,
             type_of_entry_point,
             local_variable_types: local_variable_types_old,
