@@ -362,11 +362,11 @@ mod replace_map {
     }
 
     impl ReplaceMap {
-        pub fn merge(mut self, new: Self, map: &mut PaddedTypeMap) -> Self {
+        pub fn merge(mut self, new: &Self, map: &mut PaddedTypeMap) -> Self {
             let mut new_map: FxHashMap<_, _> = new
                 .map
-                .into_iter()
-                .map(|(from, to)| (from, map.clone_pointer(to, &mut self)))
+                .iter()
+                .map(|(from, to)| (*from, map.clone_pointer(*to, &mut self)))
                 .collect();
             for (from, to) in self.map {
                 let o = new_map.insert(from, to);

@@ -163,8 +163,9 @@ pub struct Function {
 
 impl<'a> Ast<'a> {
     pub fn from(ast: ast_step1::Ast<'a>) -> Self {
+        let variable_decls = ast.variable_decls.iter().map(|d| (d.decl_id, d)).collect();
         let mut memo = Env::new(
-            ast.variable_decls,
+            variable_decls,
             ast.local_variable_types,
             ast.type_map,
             ast.constructor_names,
@@ -216,8 +217,8 @@ struct FnId {
     lambda_id: LambdaId<TypeForHash>,
 }
 
-pub struct Env<'a> {
-    variable_decls: FxHashMap<GlobalVariable, ast_step1::VariableDecl<'a>>,
+struct Env<'a, 'b> {
+    variable_decls: FxHashMap<GlobalVariable, &'b ast_step1::VariableDecl<'a>>,
     monomorphized_variable_map: FxHashMap<Root, GlobalVariableId>,
     monomorphized_variables: Vec<VariableDecl<'a>>,
     map: PaddedTypeMap,
@@ -275,9 +276,9 @@ impl BasicBlockEnv {
     }
 }
 
-impl<'a> Env<'a> {
-    pub fn new(
-        variable_decls: Vec<ast_step1::VariableDecl<'a>>,
+impl<'a, 'b> Env<'a, 'b> {
+    fn new(
+        variable_decls: FxHashMap<GlobalVariable, &'b ast_step1::VariableDecl<'a>>,
         local_variable_types: LocalVariableTypes,
         map: PaddedTypeMap,
         constructor_names: ConstructorNames,
@@ -287,7 +288,7 @@ impl<'a> Env<'a> {
             .get_or_insert(CTypeForHash(vec![CTypeForHashUnit::Aggregate(Vec::new())]));
         let c_type_definitions = vec![CTypeScheme::Aggregate(Vec::new())];
         Env {
-            variable_decls: variable_decls.into_iter().map(|d| (d.decl_id, d)).collect(),
+            variable_decls,
             monomorphized_variable_map: Default::default(),
             monomorphized_variables: Default::default(),
             map,
@@ -326,9 +327,9 @@ impl<'a> Env<'a> {
         } else {
             let new_decl_id = GlobalVariableId(self.global_variable_count);
             self.global_variable_count += 1;
-            let d = self.variable_decls.get(&decl_id).unwrap().clone();
             self.monomorphized_variable_map.insert(root, new_decl_id);
-            let (instructions, _) = self.function_body(d.value, root, replace_map, d.ret);
+            let d = *self.variable_decls.get(&decl_id).unwrap();
+            let (instructions, _) = self.function_body(&d.value, root, replace_map, d.ret);
             let d = VariableDecl {
                 value: FunctionBody {
                     basic_blocks: instructions,
@@ -384,36 +385,36 @@ impl<'a> Env<'a> {
 
     fn get_defined_variable_id(
         &mut self,
-        v: ast_step1::VariableId,
+        v: &ast_step1::VariableId,
         root_t: Root,
         replace_map: &mut ReplaceMap,
     ) -> VariableId {
         match v {
             ast_step1::VariableId::Local(d) => {
-                VariableId::Local(self.get_defined_local_variable(d, root_t, replace_map))
+                VariableId::Local(self.get_defined_local_variable(*d, root_t, replace_map))
             }
             ast_step1::VariableId::Global(d, r, p) => {
-                let p1 = self.map.clone_pointer(p, replace_map);
+                let p1 = self.map.clone_pointer(*p, replace_map);
                 let mut r = replace_map.clone().merge(r, &mut self.map);
                 #[cfg(debug_assertions)]
                 {
-                    let p2 = self.map.clone_pointer(p, &mut r);
+                    let p2 = self.map.clone_pointer(*p, &mut r);
                     assert_eq!(p1, p2);
                 }
-                VariableId::Global(self.monomorphize_decl_rec(d, p1, &mut r))
+                VariableId::Global(self.monomorphize_decl_rec(*d, p1, &mut r))
             }
         }
     }
 
     fn block(
         &mut self,
-        block: ast_step1::Block,
+        block: &ast_step1::Block,
         catch_label: usize,
         root_t: Root,
         replace_map: &mut ReplaceMap,
         basic_block_env: &mut BasicBlockEnv,
     ) -> Result<(), EndInstruction> {
-        for i in block.instructions {
+        for i in &block.instructions {
             self.instruction(i, catch_label, root_t, replace_map, basic_block_env)?;
         }
         Ok(())
@@ -421,7 +422,7 @@ impl<'a> Env<'a> {
 
     fn function_body(
         &mut self,
-        block: ast_step1::Block,
+        block: &ast_step1::Block,
         root_t: Root,
         replace_map: &mut ReplaceMap,
         ret: ast_step1::LocalVariable,
@@ -445,7 +446,7 @@ impl<'a> Env<'a> {
             (end, VariableId::Local(ret))
         } else {
             let ret = self.get_defined_variable_id(
-                ast_step1::VariableId::Local(ret),
+                &ast_step1::VariableId::Local(ret),
                 root_t,
                 replace_map,
             );
@@ -484,7 +485,7 @@ impl<'a> Env<'a> {
     // Returns true if exited with a error
     fn instruction(
         &mut self,
-        instruction: ast_step1::Instruction,
+        instruction: &ast_step1::Instruction,
         catch_label: usize,
         root_t: Root,
         replace_map: &mut ReplaceMap,
@@ -494,7 +495,7 @@ impl<'a> Env<'a> {
             ast_step1::Instruction::Assign(v, e) => {
                 let p = self
                     .map
-                    .clone_pointer(self.local_variable_types_old.get(v), replace_map);
+                    .clone_pointer(self.local_variable_types_old.get(*v), replace_map);
                 let i = self.c_type(PointerForCType::from(p)).i.0;
                 if let CTypeScheme::Diverge = self.c_type_definitions[i] {
                     return Err(EndInstruction::Panic {
@@ -505,11 +506,11 @@ impl<'a> Env<'a> {
                 match e {
                     Ok(e) => {
                         let new_v =
-                            if let Some(v) = self.local_variable_replace_map.get(&(v, root_t)) {
+                            if let Some(v) = self.local_variable_replace_map.get(&(*v, root_t)) {
                                 *v
                             } else {
                                 let new_v = self.new_variable(PointerForCType::from(p));
-                                self.local_variable_replace_map.insert((v, root_t), new_v);
+                                self.local_variable_replace_map.insert((*v, root_t), new_v);
                                 new_v
                             };
                         basic_block_env
@@ -524,9 +525,9 @@ impl<'a> Env<'a> {
                 let type_id = TypeId::Intrinsic(IntrinsicTypeTag::I64);
                 let p = self
                     .map
-                    .clone_pointer(self.local_variable_types_old.get(l), replace_map);
+                    .clone_pointer(self.local_variable_types_old.get(*l), replace_map);
                 let a = self.downcast(
-                    l,
+                    *l,
                     p,
                     root_t,
                     type_id,
@@ -538,7 +539,7 @@ impl<'a> Env<'a> {
                 match a {
                     Ok(a) => {
                         basic_block_env.instructions.push(Instruction::Test {
-                            tester: Tester::I64 { value },
+                            tester: Tester::I64 { value: *value },
                             operand: a.into(),
                             catch_label,
                         });
@@ -550,9 +551,9 @@ impl<'a> Env<'a> {
             ast_step1::Instruction::Test(ast_step1::Tester::Constructor { id }, a) => {
                 let p = self
                     .map
-                    .clone_pointer(self.local_variable_types_old.get(a), replace_map);
-                let a = self.get_defined_local_variable(a, root_t, replace_map);
-                match self.get_tag_normal(p, id) {
+                    .clone_pointer(self.local_variable_types_old.get(*a), replace_map);
+                let a = self.get_defined_local_variable(*a, root_t, replace_map);
+                match self.get_tag_normal(p, *id) {
                     GetTagNormalResult::Tagged(tag) => {
                         basic_block_env.instructions.push(Instruction::Test {
                             tester: Tester::Tag { tag },
@@ -598,7 +599,9 @@ impl<'a> Env<'a> {
                 }
             }
             ast_step1::Instruction::FailTest => Err(EndInstruction::Goto { label: catch_label }),
-            ast_step1::Instruction::Panic { msg } => Err(EndInstruction::Panic { msg }),
+            ast_step1::Instruction::Panic { msg } => {
+                Err(EndInstruction::Panic { msg: msg.clone() })
+            }
         }
     }
 
@@ -651,7 +654,7 @@ impl<'a> Env<'a> {
     // Returns `None` if impossible type error
     fn expr(
         &mut self,
-        e: ast_step1::Expr,
+        e: &ast_step1::Expr,
         p: TypePointer,
         root_t: Root,
         replace_map: &mut ReplaceMap,
@@ -668,13 +671,13 @@ impl<'a> Env<'a> {
                 context,
             } => {
                 let (possible_functions, tag_len) = self.get_possible_functions(p);
-                let parameter = self.local_variable_def_replace(parameter, root_t, replace_map);
+                let parameter = self.local_variable_def_replace(*parameter, root_t, replace_map);
                 let (_, parameter_ct) = self.local_variable_collector.get_type(parameter);
                 let parameter_ct = &self.c_type_definitions[parameter_ct.i.0];
                 let (basic_blocks, ret) = if matches!(parameter_ct, CTypeScheme::Diverge) {
-                    self.dummy_function_body(replace_map, ret)
+                    self.dummy_function_body(replace_map, *ret)
                 } else {
-                    self.function_body(body, root_t, replace_map, ret)
+                    self.function_body(body, root_t, replace_map, *ret)
                 };
                 let lambda_id = LambdaId {
                     id: lambda_id.id,
@@ -752,19 +755,19 @@ impl<'a> Env<'a> {
                 e
             }
             ast_step1::Expr::I64(s) => self.add_tags_to_expr(
-                I64(s),
+                I64(*s),
                 p,
                 TypeId::Intrinsic(IntrinsicTypeTag::I64),
                 &mut basic_block_env.instructions,
             ),
             ast_step1::Expr::U8(s) => self.add_tags_to_expr(
-                U8(s),
+                U8(*s),
                 p,
                 TypeId::Intrinsic(IntrinsicTypeTag::U8),
                 &mut basic_block_env.instructions,
             ),
             ast_step1::Expr::Str(s) => self.add_tags_to_expr(
-                Str(s),
+                Str(s.clone()),
                 p,
                 TypeId::Intrinsic(IntrinsicTypeTag::Ptr),
                 &mut basic_block_env.instructions,
@@ -773,7 +776,7 @@ impl<'a> Env<'a> {
                 match v {
                     ast_step1::VariableId::Local(_) => (),
                     ast_step1::VariableId::Global(_, _, p2) => {
-                        let p2 = self.map.clone_pointer(p2, replace_map);
+                        let p2 = self.map.clone_pointer(*p2, replace_map);
                         debug_assert_eq!(p, p2);
                     }
                 }
@@ -781,11 +784,11 @@ impl<'a> Env<'a> {
                 Ident(v)
             }
             ast_step1::Expr::Call { f, a } => {
-                let f_t = self.local_variable_types_old.get(f);
+                let f_t = self.local_variable_types_old.get(*f);
                 let f_t_p = self.map.clone_pointer(f_t, replace_map);
                 let (possible_functions, tag_len) = self.get_possible_functions(f_t_p);
-                let f = VariableId::Local(self.get_defined_local_variable(f, root_t, replace_map));
-                let a = VariableId::Local(self.get_defined_local_variable(a, root_t, replace_map));
+                let f = VariableId::Local(self.get_defined_local_variable(*f, root_t, replace_map));
+                let a = VariableId::Local(self.get_defined_local_variable(*a, root_t, replace_map));
                 if possible_functions.is_empty() {
                     return Err("not a function".to_string());
                 }
@@ -848,10 +851,10 @@ impl<'a> Env<'a> {
             } => {
                 let box_point = self.map.dereference_without_find(p).box_point.clone();
                 let args = if let BoxPoint::Boxed(b) = box_point {
-                    args.into_iter()
-                        .zip(&b[&TypeTagForBoxPoint::Normal(TypeId::UserDefined(id))])
+                    args.iter()
+                        .zip(&b[&TypeTagForBoxPoint::Normal(TypeId::UserDefined(*id))])
                         .map(|(a, boxed)| {
-                            let a = self.get_defined_local_variable(a, root_t, replace_map);
+                            let a = self.get_defined_local_variable(*a, root_t, replace_map);
                             VariableId::Local(if boxed.unwrap() {
                                 let (_, ct) = self.local_variable_collector.get_type(a);
                                 debug_assert!(!ct.boxed);
@@ -872,19 +875,19 @@ impl<'a> Env<'a> {
                         })
                         .collect()
                 } else {
-                    args.into_iter()
+                    args.iter()
                         .map(|a| {
-                            let a = self.get_defined_local_variable(a, root_t, replace_map);
+                            let a = self.get_defined_local_variable(*a, root_t, replace_map);
                             VariableId::Local(a)
                         })
                         .collect()
                 };
                 let e = BasicCall {
                     args,
-                    id: BasicFunction::Construction(id),
+                    id: BasicFunction::Construction(*id),
                 };
                 let instructions: &mut Vec<Instruction> = &mut basic_block_env.instructions;
-                match self.get_tag_normal(p, TypeId::UserDefined(id)) {
+                match self.get_tag_normal(p, TypeId::UserDefined(*id)) {
                     GetTagNormalResult::Tagged(tag) => {
                         let d = self.new_variable(PointerForCType {
                             p,
@@ -908,10 +911,10 @@ impl<'a> Env<'a> {
                 self.add_tags_to_expr(
                     BasicCall {
                         args: Vec::new(),
-                        id: BasicFunction::IntrinsicConstruction(id),
+                        id: BasicFunction::IntrinsicConstruction(*id),
                     },
                     p,
-                    TypeId::Intrinsic(id.into()),
+                    TypeId::Intrinsic((*id).into()),
                     &mut basic_block_env.instructions,
                 )
             }
@@ -920,15 +923,15 @@ impl<'a> Env<'a> {
                 id: ast_step1::BasicFunction::FieldAccessor { constructor, field },
             } => {
                 debug_assert_eq!(args.len(), 1);
-                let a = args.into_iter().next().unwrap();
+                let a = args.iter().next().unwrap();
                 let p = self
                     .map
-                    .clone_pointer(self.local_variable_types_old.get(a), replace_map);
+                    .clone_pointer(self.local_variable_types_old.get(*a), replace_map);
                 let a = self.downcast(
-                    a,
+                    *a,
                     p,
                     root_t,
-                    TypeId::UserDefined(constructor),
+                    TypeId::UserDefined(*constructor),
                     replace_map,
                     &mut basic_block_env.instructions,
                     false,
@@ -938,14 +941,14 @@ impl<'a> Env<'a> {
                     BoxPoint::NotSure => panic!(),
                     BoxPoint::Diverging => false,
                     BoxPoint::Boxed(pss) => pss
-                        [&TypeTagForBoxPoint::Normal(TypeId::UserDefined(constructor))]
-                        [field as usize]
+                        [&TypeTagForBoxPoint::Normal(TypeId::UserDefined(*constructor))]
+                        [*field as usize]
                         .unwrap(),
                 };
                 BasicCall {
                     args: vec![a.into()],
                     id: BasicFunction::FieldAccessor {
-                        field,
+                        field: *field,
                         boxed: deref,
                     },
                 }
@@ -957,13 +960,13 @@ impl<'a> Env<'a> {
                 let arg_restrictions = id.runtime_arg_type_restriction();
                 let mut args_new = Vec::with_capacity(args.len());
                 let mut arg_ts = Vec::with_capacity(args.len());
-                for (a, param_t) in args.into_iter().zip_eq(arg_restrictions) {
+                for (a, param_t) in args.iter().zip_eq(arg_restrictions) {
                     let a = if let Some(param_t) = param_t {
                         let p = self
                             .map
-                            .clone_pointer(self.local_variable_types_old.get(a), replace_map);
+                            .clone_pointer(self.local_variable_types_old.get(*a), replace_map);
                         self.downcast(
-                            a,
+                            *a,
                             p,
                             root_t,
                             param_t,
@@ -973,7 +976,7 @@ impl<'a> Env<'a> {
                             catch_label,
                         )?
                     } else {
-                        self.get_defined_local_variable(a, root_t, replace_map)
+                        self.get_defined_local_variable(*a, root_t, replace_map)
                     };
                     args_new.push(a.into());
                     arg_ts.push(self.local_variable_collector.get_type(a).1);
@@ -993,11 +996,11 @@ impl<'a> Env<'a> {
                 let ret_t = self.c_type(ct_p);
                 let count = self
                     .used_intrinsic_variables
-                    .get_or_insert((id, arg_ts, ret_t));
+                    .get_or_insert((*id, arg_ts, ret_t));
                 let e = BasicCall {
                     args: args_new,
                     id: BasicFunction::Intrinsic {
-                        v: id,
+                        v: *id,
                         id: count as u32,
                     },
                 };
@@ -1507,7 +1510,7 @@ impl<'a> Env<'a> {
         }
         let terminal = self.map.dereference_without_find(p);
         let mut tag = 0;
-        let mut add_args = |slf: &mut Env<'_>, args: &[TypePointer]| {
+        let mut add_args = |slf: &mut Env<'_, '_>, args: &[TypePointer]| {
             for t in args {
                 slf.collect_pointers(*t, pointers);
             }
