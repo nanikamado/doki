@@ -69,6 +69,94 @@ enum Decl<'a> {
     Imports(String),
 }
 
+fn string<'a>() -> impl Parser<'a, &'a str, String, extra::Err<Rich<'a, char>>> + Copy {
+    let validator = |digits, span, emitter: &mut chumsky::input::Emitter<_>| {
+        char::from_u32(u32::from_str_radix(digits, 16).unwrap()).unwrap_or_else(|| {
+            emitter.emit(Rich::custom(span, "invalid unicode character"));
+            '\u{FFFD}'
+        })
+    };
+    let escape = choice((
+        just('\\'),
+        just('n').to('\n'),
+        just('r').to('\r'),
+        just('t').to('\t'),
+        just('0').to('\0'),
+        just('x').ignore_then(text::digits(16).exactly(2).slice().validate(validator)),
+        text::digits(16)
+            .at_most(6)
+            .slice()
+            .validate(validator)
+            .delimited_by(just("u{{"), just("}}")),
+    ));
+    let string = none_of(r#"\""#)
+        .or(just('\\').ignore_then(escape.or(just('"'))))
+        .repeated()
+        .collect()
+        .delimited_by(just('"'), just('"'));
+    let string_with_hash = custom(move |inp| {
+        let mut s = String::new();
+        match inp.parse(
+            just('#')
+                .repeated()
+                .at_least(1)
+                .count()
+                .then_ignore(just('"')),
+        ) {
+            Ok(h) => loop {
+                let marker = inp.save();
+                if inp
+                    .parse(just('"').then(just('#').repeated().exactly(h)))
+                    .is_ok()
+                {
+                    break Ok(s);
+                } else {
+                    inp.rewind(marker);
+                    match inp.parse(escape.or(any())) {
+                        Ok(a) => {
+                            s.push(a);
+                        }
+                        Err(e) => {
+                            break Err(e);
+                        }
+                    }
+                }
+            },
+            Err(e) => Err(e),
+        }
+    });
+    string.or(string_with_hash)
+}
+
+fn raw_string<'a>() -> impl Parser<'a, &'a str, &'a str, extra::Err<Rich<'a, char>>> + Copy {
+    just('r').ignore_then(custom(move |inp| {
+        match inp.parse(just('#').repeated().count().then_ignore(just('\"'))) {
+            Ok(h) => {
+                let start_offset = inp.offset();
+                loop {
+                    let marker = inp.save();
+                    let end_offset = inp.offset();
+                    if inp
+                        .parse(just('\"').then(just('#').repeated().exactly(h)))
+                        .is_ok()
+                    {
+                        break Ok(inp.slice(std::ops::Range {
+                            start: start_offset,
+                            end: end_offset,
+                        }));
+                    } else {
+                        inp.rewind(marker);
+                        if let Err(e) = inp.parse(any()) {
+                            break Err(e);
+                        }
+                    }
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }))
+}
+
 fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Rich<'_, char>>> {
     let comment = just("//")
         .then(any().and_is(just('\n').not()).repeated())
@@ -80,32 +168,7 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
         .repeated();
     let ident =
         ident().filter(|s| !["match", "with", "end", "let", "in", "data", "import"].contains(s));
-
-    // This `escape` is a modified version of https://github.com/zesterer/chumsky/blob/7e8d01f647640428871944885a1bb02e8a865895/examples/json.rs#L39
-    // MIT License: https://github.com/zesterer/chumsky/blob/7e8d01f647640428871944885a1bb02e8a865895/LICENSE
-    let escape = just('\\').ignore_then(choice((
-        just('\\'),
-        just('/'),
-        just('"'),
-        just('b').to('\x08'),
-        just('f').to('\x0C'),
-        just('n').to('\n'),
-        just('r').to('\r'),
-        just('t').to('\t'),
-        just('u').ignore_then(text::digits(16).exactly(4).slice().validate(
-            |digits, span, emitter| {
-                char::from_u32(u32::from_str_radix(digits, 16).unwrap()).unwrap_or_else(|| {
-                    emitter.emit(Rich::custom(span, "invalid unicode character"));
-                    '\u{FFFD}' // unicode replacement character
-                })
-            },
-        )),
-    )));
-    let string = none_of("\\\"")
-        .or(escape)
-        .repeated()
-        .collect()
-        .delimited_by(just('"'), just('"'));
+    let string = choice((string(), raw_string().map(|s| s.to_string())));
     use Expr::*;
     let pattern = recursive(|pattern| {
         let p = choice((
