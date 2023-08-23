@@ -174,6 +174,7 @@ impl Display for Codegen<'_> {
             }}",
             ast.variable_decls
                 .iter()
+                .rev()
                 .format_with("", |d, f| f(&format_args!(
                     "g_{0}_{1}=init_g_{0}_{1}();",
                     d.decl_id,
