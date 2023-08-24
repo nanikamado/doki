@@ -1402,7 +1402,9 @@ impl<'a, 'b> Env<'a, 'b> {
         trace.insert(p, depth);
         let depth = depth + 1;
         let mut ts = Vec::new();
-        let BoxPoint::Boxed(reference_point) = reference_point else { panic!() };
+        let BoxPoint::Boxed(reference_point) = reference_point else {
+            panic!()
+        };
         self.collect_hash_unit(p, &reference_point, &mut ts, trace, used_trace, depth);
         let t = CTypeForHash(ts);
         trace.remove(&p);
@@ -1640,8 +1642,7 @@ impl<'a, 'b> Env<'a, 'b> {
             } = divergent_stopper.unwrap()
             {
                 let terminal = self.map.dereference_without_find_mut(p);
-                let BoxPoint::Boxed(pss) = &mut terminal.box_point
-                else {
+                let BoxPoint::Boxed(pss) = &mut terminal.box_point else {
                     panic!()
                 };
                 pss.get_mut(&union_index).unwrap()[field as usize] = Some(true);
