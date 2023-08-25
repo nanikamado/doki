@@ -9,4 +9,4 @@ in let fib = fix (fib: n: a: b:
             a
     )
 
-in fib 92 0 1
+in fib 91 0 1

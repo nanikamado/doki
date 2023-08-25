@@ -3,7 +3,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 const OPTIONS_FOR_CLANG: &str =
-    "-C=-Wpedantic -Wno-gnu-union-cast -Wno-gnu-empty-struct -Wno-gnu-empty-initializer";
+    "-C=-Wpedantic -Wno-gnu-union-cast -Wno-gnu-empty-struct -Wno-gnu-empty-initializer -fsanitize=undefined";
 
 fn test_example(file_name: &str, stdout: &str) {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
@@ -142,17 +142,17 @@ fn global_variables() {
 
 #[test]
 fn fib() {
-    positive_test_with_stdin("fib.doki", "92\n", "> 7540113804746346429\n");
+    positive_test_with_stdin("fib.doki", "91\n", "> 4660046610375530309\n");
 }
 
 #[test]
 fn fixed_point_fib() {
-    positive_test_with_stdin("fixed_point_fib.doki", "92\n", "> 7540113804746346429\n");
+    positive_test_with_stdin("fixed_point_fib.doki", "91\n", "> 4660046610375530309\n");
 }
 
 #[test]
 fn fixed_point_fib_lambda() {
-    positive_test_with_stdin("fixed_point_fib.doki", "92\n", "> 7540113804746346429\n");
+    positive_test_with_stdin("fixed_point_fib.doki", "91\n", "> 4660046610375530309\n");
 }
 
 #[test]
@@ -215,11 +215,11 @@ fn expr() {
     positive_test_with_stdin(
         "expr.doki",
         std::str::from_utf8(include_bytes!("positive/fib.exp")).unwrap(),
-        "7540113804746346429\n",
+        "4660046610375530309\n",
     );
 }
 
 #[test]
 fn function_table() {
-    positive_test_with_stdin("function_table.doki", "92", "> 7540113804746346429\n");
+    positive_test_with_stdin("function_table.doki", "91", "> 4660046610375530309\n");
 }
