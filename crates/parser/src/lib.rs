@@ -1,7 +1,7 @@
 use ariadne::{sources, Color, Label, Report, ReportKind};
 use chumsky::prelude::*;
-use chumsky::text::int;
-use chumsky::text::unicode::{ident, keyword};
+use chumsky::text::unicode::keyword;
+use chumsky::text::{int, Char};
 use std::io::Write;
 
 #[derive(Clone, Debug)]
@@ -166,14 +166,16 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
         .ignored()
         .or(comment)
         .repeated();
-    let ident =
-        ident().filter(|s| !["match", "with", "end", "let", "in", "data", "import"].contains(s));
+    let ident = any()
+        .filter(|c: &char| c.is_ident_start() || *c == '_')
+        .then(any().filter(|c: &char| c.is_ident_continue()).repeated())
+        .slice()
+        .filter(|s| !["match", "with", "end", "let", "in", "data", "import"].contains(s));
     let string = choice((string(), raw_string().map(|s| s.to_string())));
     use Expr::*;
     let pattern = recursive(|pattern| {
         let p = choice((
             pattern.delimited_by(just('('), just(')')),
-            just("_").map_with_span(|_, span| (Pattern::Wildcard, Span::from(span, file_name))),
             just('-')
                 .or_not()
                 .then(text::int(10))
@@ -181,10 +183,14 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
                 .map_with_span(|p, span| (p, Span::from(span, file_name))),
             ident.map_with_span(|name, span| {
                 (
-                    Pattern::Constructor {
-                        name,
-                        fields: Vec::new(),
-                        span: Span::from(span, file_name),
+                    if name == "_" {
+                        Pattern::Wildcard
+                    } else {
+                        Pattern::Constructor {
+                            name,
+                            fields: Vec::new(),
+                            span: Span::from(span, file_name),
+                        }
                     },
                     Span::from(span, file_name),
                 )
