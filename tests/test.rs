@@ -3,7 +3,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 const OPTIONS_FOR_CLANG: &str =
-    "-C=-Wpedantic -Wno-gnu-union-cast -Wno-gnu-empty-struct -Wno-gnu-empty-initializer -fsanitize=undefined";
+    "-C=-Wpedantic -Wno-gnu-empty-struct -Wno-gnu-empty-initializer -fsanitize=undefined";
 
 fn test_example(file_name: &str, stdout: &str) {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))

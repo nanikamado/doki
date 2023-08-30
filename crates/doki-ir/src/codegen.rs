@@ -552,7 +552,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
             Expr::Upcast { tag, value } => {
                 write!(
                     fmt,
-                    "({}){{{tag},(union u{}){}}}",
+                    "({}){{{tag},(union u{}){{._{tag}={}}}}}",
                     Dis(*t, env),
                     t.i.0,
                     Dis(value, env)
