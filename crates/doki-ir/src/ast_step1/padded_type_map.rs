@@ -37,6 +37,8 @@ pub struct Terminal {
     pub type_map: BTreeMap<TypeId, Vec<TypePointer>>,
     pub functions: Vec<(LambdaId<TypePointer>, Vec<TypePointer>)>,
     pub box_point: BoxPoint,
+    /// Cloning is not allowed
+    pub fixed: bool,
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
@@ -78,24 +80,41 @@ impl PaddedTypeMap {
         if a != b {
             let b_t = mem::replace(&mut self.map[b.0 as usize], Node::Pointer(a));
             let mut pairs = Vec::new();
-            if let (Node::Terminal(a_t), Node::Terminal(b_t)) = (&mut self.map[a.0 as usize], b_t) {
-                debug_assert_eq!(a_t.box_point, b_t.box_point);
-                for (b_id, b_normal) in b_t.type_map {
-                    if let Some(a_normal) = a_t.type_map.get(&b_id) {
-                        for (a, b) in a_normal.iter().zip(b_normal) {
-                            pairs.push((*a, b));
-                        }
-                    } else {
-                        debug_assert_eq!(b_t.box_point, BoxPoint::NotSure);
-                        a_t.type_map.insert(b_id, b_normal);
-                    }
-                }
-                a_t.functions.extend(b_t.functions);
-            } else {
+            let (Node::Terminal(a_t), Node::Terminal(b_t)) = (&mut self.map[a.0 as usize], b_t)
+            else {
                 panic!()
             };
+            debug_assert_eq!(a_t.box_point, b_t.box_point);
+            let fix_b = a_t.fixed && !b_t.fixed;
+            let mut fix = Vec::new();
+            for (b_id, b_normal) in b_t.type_map {
+                if let Some(a_normal) = a_t.type_map.get(&b_id) {
+                    for (a, b) in a_normal.iter().zip(b_normal) {
+                        pairs.push((*a, b));
+                    }
+                } else {
+                    debug_assert_eq!(b_t.box_point, BoxPoint::NotSure);
+                    if fix_b {
+                        fix.extend(&b_normal);
+                    }
+                    a_t.type_map.insert(b_id, b_normal.clone());
+                }
+            }
+            if fix_b {
+                fix.extend(b_t.functions.iter().flat_map(|(_, ps)| ps));
+            }
+            a_t.functions.extend(b_t.functions);
+            let fix_a = !a_t.fixed && b_t.fixed;
             for (a, b) in pairs {
                 self.union(a, b);
+            }
+            if fix_a {
+                self.fix_pointer(a);
+                debug_assert!(fix.is_empty());
+            } else {
+                for p in fix {
+                    self.fix_pointer(p)
+                }
             }
         }
     }
@@ -107,7 +126,12 @@ impl PaddedTypeMap {
         lambda_ctx: Vec<TypePointer>,
     ) {
         let t = self.dereference_mut(p);
-        t.functions.push((id, lambda_ctx));
+        t.functions.push((id, lambda_ctx.clone()));
+        if t.fixed {
+            for p in lambda_ctx {
+                self.fix_pointer(p)
+            }
+        }
     }
 
     pub fn insert_normal(&mut self, p: TypePointer, id: TypeId, args: Vec<TypePointer>) {
@@ -117,7 +141,12 @@ impl PaddedTypeMap {
                 self.union(a, b);
             }
         } else {
-            t.type_map.insert(id, args);
+            t.type_map.insert(id, args.clone());
+            if t.fixed {
+                for p in args {
+                    self.fix_pointer(p)
+                }
+            }
         }
     }
 
@@ -206,6 +235,9 @@ impl PaddedTypeMap {
 
     pub fn clone_pointer(&mut self, p: TypePointer, replace_map: &mut ReplaceMap) -> TypePointer {
         let p = self.find(p);
+        if self.dereference_without_find(p).fixed {
+            return p;
+        }
         if let Some(p) = replace_map.get(p, self) {
             return p;
         }
@@ -245,12 +277,34 @@ impl PaddedTypeMap {
             type_map,
             box_point: BoxPoint::NotSure,
             functions,
+            fixed: false,
         });
         new_p
     }
 
     pub fn minimize(&mut self, root: TypePointer) {
         minimize::minimize(root, self)
+    }
+
+    pub fn fix_pointer(&mut self, p: TypePointer) {
+        let terminal = &mut self.dereference_mut(p);
+        if terminal.fixed {
+            return;
+        }
+        terminal.fixed = true;
+        let type_map = terminal.type_map.values().cloned().collect_vec();
+        let functions = terminal.functions.clone();
+        for ps in type_map {
+            for p in ps {
+                self.fix_pointer(p)
+            }
+        }
+        for (id, ps) in functions {
+            self.fix_pointer(id.root_t);
+            for p in ps {
+                self.fix_pointer(p)
+            }
+        }
     }
 
     #[cfg(debug_assertions)]
@@ -262,16 +316,16 @@ impl PaddedTypeMap {
     ) -> Result<(), std::fmt::Error> {
         let mut visited_pointers = visited_pointers.clone();
         if visited_pointers.contains(&p) {
-            return write!(f, r#"{{"p":"{p}","type":"rec"}}"#);
+            return write!(f, r#"{{p:"{p}",type:rec}}"#);
         } else {
             visited_pointers.insert(p);
         }
-        write!(f, r#"{{"p":"{p}","#)?;
+        write!(f, r#"{{p:"{p}","#)?;
         match &self.map[p.0 as usize] {
             Node::Pointer(p2) => {
                 write!(
                     f,
-                    r#""type":"pointer","v":{}}}"#,
+                    r#"pointer:{}}}"#,
                     JsonDebugRec(self, *p2, &visited_pointers)
                 )
             }
@@ -298,9 +352,18 @@ impl PaddedTypeMap {
                         )))
                     ))
                 });
-                write!(f, r#""type":"type_map","v":{{{m}{n}}}}}"#)
+                let fixed = if t.fixed {
+                    if t.type_map.is_empty() {
+                        "fixed:true"
+                    } else {
+                        ",fixed:true"
+                    }
+                } else {
+                    ""
+                };
+                write!(f, r#"type_map:{{{m}{n}{fixed}}}}}"#)
             }
-            Node::Null => write!(f, r#""type":"null"}}"#),
+            Node::Null => write!(f, r#"type:null}}"#),
         }
     }
 }
@@ -379,9 +442,16 @@ mod replace_map {
         }
 
         pub fn get(&mut self, p: TypePointer, map: &mut PaddedTypeMap) -> Option<TypePointer> {
-            if let Some(p2) = self.map.get(&p) {
-                debug_assert!(!self.replaced.contains(&p));
-                let p2 = map.clone_pointer(*p2, self);
+            debug_assert!(map.is_terminal(p));
+            if let Some(&p2) = self.map.get(&p) {
+                #[cfg(debug_assertions)]
+                {
+                    assert!(!self.replaced.contains(&p));
+                    let p2 = map.find(p2);
+                    assert_ne!(p, p2);
+                }
+                let p2 = map.clone_pointer(p2, self);
+                debug_assert_ne!(p, p2);
                 self.map.insert(p, p2);
                 Some(p2)
             } else if self.replaced.contains(&p) {
@@ -392,6 +462,7 @@ mod replace_map {
         }
 
         pub fn insert(&mut self, from: TypePointer, to: TypePointer) {
+            debug_assert_ne!(from, to);
             let o = self.map.insert(from, to);
             debug_assert!(o.is_none());
             self.replaced.insert(to);
@@ -399,10 +470,6 @@ mod replace_map {
 
         pub fn is_empty(&self) -> bool {
             self.map.is_empty() && self.replaced.is_empty()
-        }
-
-        pub fn add_unreplicatable(&mut self, i: impl IntoIterator<Item = TypePointer>) {
-            self.replaced.extend(i)
         }
     }
 }

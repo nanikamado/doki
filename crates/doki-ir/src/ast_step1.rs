@@ -115,15 +115,15 @@ struct TypeInfEnv<'a> {
     field_len: Vec<usize>,
     used_local_variables: FxHashSet<LocalVariable>,
     defined_local_variables: FxHashSet<LocalVariable>,
-    unreplicatable_pointers_of_current_scc: Vec<TypePointer>,
     unfixed_unreplicatable_pointers_in_local_variables: FxHashMap<LocalVariable, Vec<TypePointer>>,
     unfixed_unreplicatable_pointers_of_current_scc: Vec<TypePointer>,
     scc: FxHashMap<GlobalVariable, u32>,
     current_scc_id: u32,
 }
 
+#[derive(Debug)]
 struct UnreplicatablePointers {
-    fixed: Vec<TypePointer>,
+    // Type pointers that can be replicated, but will be unreplicatable after fixed
     unfixed: Vec<TypePointer>,
 }
 
@@ -134,15 +134,9 @@ impl TypeInfEnv<'_> {
             .remove(&decl_id)
             .unwrap();
         let root_t = self.global_variable_types[&decl_id];
-        let unreplicatable_pointers_tmp =
-            std::mem::take(&mut self.unreplicatable_pointers_of_current_scc);
         let unfixed_unreplicatable_pointers_tmp =
             std::mem::take(&mut self.unfixed_unreplicatable_pointers_of_current_scc);
         self.block(&mut d.value, root_t, true);
-        let unreplicatable_pointers = std::mem::replace(
-            &mut self.unreplicatable_pointers_of_current_scc,
-            unreplicatable_pointers_tmp,
-        );
         let unfixed_unreplicatable_pointers = std::mem::replace(
             &mut self.unfixed_unreplicatable_pointers_of_current_scc,
             unfixed_unreplicatable_pointers_tmp,
@@ -150,7 +144,6 @@ impl TypeInfEnv<'_> {
         self.unreplicatable_pointers.insert(
             decl_id,
             UnreplicatablePointers {
-                fixed: unreplicatable_pointers.clone(),
                 unfixed: unfixed_unreplicatable_pointers.clone(),
             },
         );
@@ -235,9 +228,6 @@ impl TypeInfEnv<'_> {
                             } else {
                                 let unreplicatables =
                                     self.unreplicatable_pointers.get(decl_id).unwrap();
-                                replace_map.add_unreplicatable(
-                                    unreplicatables.fixed.iter().map(|p| self.type_map.find(*p)),
-                                );
                                 let v_cloned = self.type_map.clone_pointer(p, replace_map);
                                 self.type_map.union(t, v_cloned);
                                 *pp = t;
@@ -265,8 +255,9 @@ impl TypeInfEnv<'_> {
                                 .get(f)
                             {
                                 if outside_of_fn {
-                                    self.unreplicatable_pointers_of_current_scc
-                                        .extend(unfixed_unreplicatables.iter())
+                                    for p in unfixed_unreplicatables {
+                                        self.type_map.fix_pointer(*p)
+                                    }
                                 }
                             }
                             self.used_local_variables.insert(*f);
@@ -335,11 +326,13 @@ impl TypeInfEnv<'_> {
                             let mut p = Vec::new();
                             v.insert_return_type(t, &mut self.type_map, &arg_types, &mut p);
                             if outside_of_fn {
-                                self.unreplicatable_pointers_of_current_scc
-                                    .append(&mut p.clone())
+                                for p in p {
+                                    self.type_map.fix_pointer(p);
+                                }
+                            } else {
+                                self.unfixed_unreplicatable_pointers_of_current_scc
+                                    .append(&mut p);
                             }
-                            self.unfixed_unreplicatable_pointers_of_current_scc
-                                .append(&mut p);
                         }
                     }
                     self.defined_local_variables.insert(*v);
@@ -582,7 +575,6 @@ impl<'a> Env<'a> {
             field_len: self.field_len,
             used_local_variables: Default::default(),
             defined_local_variables: Default::default(),
-            unreplicatable_pointers_of_current_scc: Default::default(),
             unfixed_unreplicatable_pointers_of_current_scc: Default::default(),
             unfixed_unreplicatable_pointers_in_local_variables: Default::default(),
             scc,

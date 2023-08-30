@@ -523,9 +523,8 @@ impl<'a, 'b> Env<'a, 'b> {
     ) -> Result<(), EndInstruction> {
         match instruction {
             ast_step1::Instruction::Assign(v, e) => {
-                let p = self
-                    .map
-                    .clone_pointer(self.local_variable_types_old.get(*v), replace_map);
+                let p = self.local_variable_types_old.get(*v);
+                let p = self.map.clone_pointer(p, replace_map);
                 let i = self.c_type(PointerForCType::from(p)).i.0;
                 if let CTypeScheme::Diverge = self.c_type_definitions[i] {
                     return Err(EndInstruction::Panic {
