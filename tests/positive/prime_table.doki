@@ -4,33 +4,22 @@ is_prime_aux = i: n: match eq i n with
         True => True,
         False => match rem n i with
                 0 => False,
-                _ => let a = f "1"
-                    in let _ = intrinsic_set (lookup_fs "1") (f "0")
-                    in let _ = intrinsic_set (lookup_fs "0") (is_prime_aux (plus i 3))
-                    in a n,
+                _ => f "is_prime_aux" (plus i 1) n,
             end,
     end
 
-mut = intrinsic_mut
-
-fs = mut Unit
+fs = Cons (Cons "read_num" read_num)
+        (Cons (Cons "is_prime_aux" is_prime_aux)
+        (Cons (Cons "bool_to_string" bool_to_string)
+        (Cons (Cons "println" println)
+        Nil)))
 
 lookup = Cons (Cons k v) t: s: match str_eq s k with
         True => v,
         False => lookup t s,
     end
 
-lookup_fs = s: lookup (intrinsic_get fs) s
-
-f = s: intrinsic_get (lookup_fs s)
+f = s: lookup fs s
 
 main = _:
-    let t = Cons (Cons "read_num" (mut read_num))
-        (Cons (Cons "is_prime" (mut (is_prime_aux 2)))
-        (Cons (Cons "bool_to_string" (mut bool_to_string))
-        (Cons (Cons "println" (mut println))
-        (Cons (Cons "0" (mut (is_prime_aux 4)))
-        (Cons (Cons "1" (mut (is_prime_aux 3)))
-        Nil)))))
-    in let _ = intrinsic_set fs t
-    in f "println" (f "bool_to_string" (f "is_prime" (f "read_num" 0)))
+    f "println" (f "bool_to_string" (f "is_prime_aux" 2 (f "read_num" 0)))

@@ -1,0 +1,15 @@
+import "../../library/prelude.doki"
+
+fix = f:
+    (x: f (y: x x y))
+    (x: f (y: x x y))
+
+main = _:
+    let is_prime_aux = fix (is_prime_aux: i: n: match eq i n with
+            True => True,
+            False => match rem n i with
+                    0 => False,
+                    _ => is_prime_aux (plus i 1) n,
+                end,
+        end)
+    in println (bool_to_string (is_prime_aux 2 (read_num 0)))

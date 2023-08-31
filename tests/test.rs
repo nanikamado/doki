@@ -146,13 +146,15 @@ fn fib() {
 }
 
 #[test]
-fn fixed_point_fib() {
-    positive_test_with_stdin("fixed_point_fib.doki", "91\n", "> 4660046610375530309\n");
+fn fixed_point_prime() {
+    positive_test_with_stdin("fixed_point_prime.doki", "2147483647\n", "True\n");
+    positive_test_with_stdin("fixed_point_prime.doki", "68718821377\n", "False\n");
 }
 
 #[test]
-fn fixed_point_fib_lambda() {
-    positive_test_with_stdin("fixed_point_fib.doki", "91\n", "> 4660046610375530309\n");
+fn fixed_point_lambda_prime() {
+    positive_test_with_stdin("fixed_point_lambda_prime.doki", "2147483647\n", "True\n");
+    positive_test_with_stdin("fixed_point_lambda_prime.doki", "68718821377\n", "False\n");
 }
 
 #[test]
@@ -229,24 +231,25 @@ fn expr_prime() {
 }
 
 #[test]
-fn function_table() {
-    positive_test_with_stdin("function_table.doki", "91", "> 4660046610375530309\n");
+fn prime() {
+    positive_test_with_stdin("prime.doki", "2147483647", "True\n");
+    positive_test_with_stdin("prime.doki", "68718821377", "False\n");
 }
 
 #[test]
-fn prime() {
-    positive_test_with_stdin("prime.doki", "2147483647", "True\n");
-    positive_test_with_stdin("prime.doki", "2147483643", "False\n");
+fn prime_table_mut() {
+    positive_test_with_stdin("prime_table_mut.doki", "524287", "True\n");
+    positive_test_with_stdin("prime_table_mut.doki", "68718821377", "False\n");
+}
+
+#[test]
+fn prime_table_global_mut() {
+    positive_test_with_stdin("prime_table_global_mut.doki", "524287", "True\n");
+    positive_test_with_stdin("prime_table_global_mut.doki", "68718821377", "False\n");
 }
 
 #[test]
 fn prime_table() {
-    positive_test_with_stdin("prime_table.doki", "104729", "True\n");
-    positive_test_with_stdin("prime_table.doki", "2147483643", "False\n");
-}
-
-#[test]
-fn prime_table_global_init() {
-    positive_test_with_stdin("prime_table_global_init.doki", "104729", "True\n");
-    positive_test_with_stdin("prime_table_global_init.doki", "2147483643", "False\n");
+    positive_test_with_stdin("prime_table.doki", "524287", "True\n");
+    positive_test_with_stdin("prime_table.doki", "68718821377", "False\n");
 }
