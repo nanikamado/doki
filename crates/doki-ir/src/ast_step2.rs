@@ -16,11 +16,10 @@ use crate::ast_step1::{
     ReplaceMap, TypeId, TypePointer, TypeTagForBoxPoint,
 };
 use crate::ast_step2::c_type::PointerModifier;
-use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariable};
+use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
 use crate::util::collector::Collector;
 use crate::util::dfa_minimization::Dfa;
 use crate::util::id_generator::{self, IdGenerator};
-use crate::ConstructorId;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -100,10 +99,6 @@ pub enum EndInstruction {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expr {
-    Lambda {
-        lambda_id: FxLambdaId,
-        context: Vec<LocalVariable>,
-    },
     I64(i64),
     U8(u8),
     Str(String),
@@ -134,8 +129,7 @@ pub enum Expr {
 #[derive(Debug, PartialEq, Clone, Copy, Eq)]
 pub enum BasicFunction {
     Intrinsic { v: IntrinsicVariable, id: u32 },
-    Construction(ConstructorId),
-    IntrinsicConstruction(IntrinsicConstructor),
+    Construction,
     FieldAccessor { field: u32, boxed: bool },
 }
 
@@ -762,15 +756,15 @@ impl<'a, 'b> Env<'a, 'b> {
                             basic_block_env
                                 .instructions
                                 .push(Instruction::Assign(d, Expr::Ref(VariableId::Local(l.l))));
-                            d
+                            VariableId::Local(d)
                         } else {
-                            l.l
+                            VariableId::Local(l.l)
                         }
                     })
                     .collect();
-                let l = Lambda {
-                    context,
-                    lambda_id: fx_lambda_id,
+                let l = BasicCall {
+                    args: context,
+                    id: BasicFunction::Construction,
                 };
                 let context_c_type = if possible_functions.len() == 1 && tag_len == 1 {
                     basic_block_env.assign(v, l);
@@ -939,7 +933,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 };
                 let e = BasicCall {
                     args,
-                    id: BasicFunction::Construction(*id),
+                    id: BasicFunction::Construction,
                 };
                 let instructions: &mut Vec<Instruction> = &mut basic_block_env.instructions;
                 let e = match self.get_tag_normal(p, TypeId::UserDefined(*id)) {
@@ -967,7 +961,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 let e = self.add_tags_to_expr(
                     BasicCall {
                         args: Vec::new(),
-                        id: BasicFunction::IntrinsicConstruction(*id),
+                        id: BasicFunction::Construction,
                     },
                     p,
                     TypeId::Intrinsic((*id).into()),

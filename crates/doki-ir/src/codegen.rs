@@ -362,11 +362,6 @@ fn collect_local_variables_in_block(b: &FunctionBody, vs: &mut FxHashSet<LocalVa
 
 fn collect_local_variables_in_expr(e: &Expr, vs: &mut FxHashSet<LocalVariable>) {
     match e {
-        Expr::Lambda { context, .. } => {
-            for l in context {
-                vs.insert(*l);
-            }
-        }
         Expr::I64(_) | Expr::U8(_) | Expr::Str(_) => (),
         Expr::Call { ctx, a, .. } => {
             collect_local_variables_in_variable(*ctx, vs);
@@ -506,18 +501,6 @@ impl DisplayWithEnv for (&Expr, &CType) {
     fn fmt_with_env(&self, env: Env<'_>, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (e, t) = self;
         match e {
-            Expr::Lambda {
-                lambda_id: _,
-                context,
-            } => write!(
-                fmt,
-                r#"({}){{{}}}"#,
-                Dis(*t, env),
-                context.iter().format_with(",", |c, f| f(&format_args!(
-                    "{}",
-                    Dis(&VariableId::Local(*c), env)
-                )))
-            ),
             Expr::I64(a) => write!(fmt, "{a}"),
             Expr::U8(a) => write!(fmt, "{a}"),
             Expr::Str(a) => write!(fmt, "{a:?}"),
@@ -539,19 +522,10 @@ impl DisplayWithEnv for (&Expr, &CType) {
                         "intrinsic_{v}_{id}({})",
                         args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                     ),
-                    Construction(id) => {
+                    Construction => {
                         write!(
                             fmt,
-                            "/*{}*/({}){{{}}}",
-                            Dis(id, env),
-                            Dis(*t, env),
-                            args.iter().format_with(",", |a, f| f(&Dis(a, env)))
-                        )
-                    }
-                    IntrinsicConstruction(id) => {
-                        write!(
-                            fmt,
-                            "/*{id}*/({}){{{}}}",
+                            "({}){{{}}}",
                             Dis(*t, env),
                             args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                         )
