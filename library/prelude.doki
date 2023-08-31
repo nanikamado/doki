@@ -13,6 +13,7 @@ lt = a: b: match intrinsic_lt a b with
         _ => True,
     end
 le = a: b: lt a (plus b 1)
+lt_u8 = a: b: lt (intrinsic_u8_to_i64 a) (intrinsic_u8_to_i64 b)
 le_u8 = a: b: le (intrinsic_u8_to_i64 a) (intrinsic_u8_to_i64 b)
 eq = a: b: match intrinsic_eq a b with
         1 => True,
@@ -26,9 +27,6 @@ eq_u8 = a: b:
 malloc = intrinsic_malloc
 
 data Unit 0
-
-data Nil 0
-data Cons 2
 data True 0
 data False 0
 
@@ -45,6 +43,19 @@ and = a: b: match a with
 or = a: b: match a with
         True => True,
         False => b,
+    end
+
+bool_to_string = a: match a with
+        True => "True",
+        False => "False",
+    end
+
+data Nil 0
+data Cons 2
+
+list_map = l: f: match l with
+        Nil => Nil,
+        Cons h t => Cons (f h) (list_map t f),
     end
 
 pop_str = Str l p:
@@ -209,3 +220,30 @@ str_eq = Str n1 s1: Str n2 s2: match eq n1 n2 with
         True => str_eq_aux n1 s1 s2,
         False => False,
     end
+
+data Gt 0
+data Lt 0
+data Eq 0
+
+u8_cmp = a: b: match Cons (lt_u8 a b) (lt_u8 b a) with
+        Cons True _ => Lt,
+        Cons _ True => Gt,
+        _ => Eq,
+    end
+
+str_cmp_aux = n1: s1: n2: s2: match Cons n1 n2 with
+        Cons 0 0 => Eq,
+        Cons 0 _ => Lt,
+        Cons _ 0 => Gt,
+        Cons _ _ => match u8_cmp (intrinsic_load_u8 s1) (intrinsic_load_u8 s2) with
+                Eq => str_cmp_aux
+                    (minus n1 1)
+                    (intrinsic_add_ptr s1 1)
+                    (minus n2 1)
+                    (intrinsic_add_ptr s2 1),
+                c => c,
+            end,
+    end
+
+str_cmp = Str n1 s1: Str n2 s2: str_cmp_aux n1 s1 n2 s2
+

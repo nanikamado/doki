@@ -223,3 +223,21 @@ fn expr() {
 fn function_table() {
     positive_test_with_stdin("function_table.doki", "91", "> 4660046610375530309\n");
 }
+
+#[test]
+fn prime() {
+    positive_test_with_stdin("prime.doki", "2147483647", "True\n");
+    positive_test_with_stdin("prime.doki", "2147483643", "False\n");
+}
+
+#[test]
+fn prime_table() {
+    positive_test_with_stdin("prime_table.doki", "104729", "True\n");
+    positive_test_with_stdin("prime_table.doki", "2147483643", "False\n");
+}
+
+#[test]
+fn prime_table_global_init() {
+    positive_test_with_stdin("prime_table_global_init.doki", "104729", "True\n");
+    positive_test_with_stdin("prime_table_global_init.doki", "2147483643", "False\n");
+}

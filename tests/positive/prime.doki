@@ -1,0 +1,14 @@
+import "../../library/prelude.doki"
+
+is_prime_aux = i: n: match eq i n with
+        True => True,
+        False => match rem n i with
+                0 => False,
+                _ => is_prime_aux (plus i 1) n,
+            end,
+    end
+
+is_prime = n: is_prime_aux 2 n
+
+main = _:
+     println (bool_to_string (is_prime (read_num 0)))
