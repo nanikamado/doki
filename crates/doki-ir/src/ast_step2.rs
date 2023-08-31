@@ -30,7 +30,7 @@ use std::fmt::{Debug, Display};
 #[derive(Debug)]
 pub struct Ast<'a> {
     pub variable_decls: Vec<VariableDecl<'a>>,
-    pub entry_point: FxLambdaId,
+    pub entry_block: FunctionBody,
     pub variable_names: FxHashMap<VariableId, String>,
     pub functions: Vec<Function>,
     pub variable_types: LocalVariableCollector<(Option<Type>, CType)>,
@@ -170,11 +170,27 @@ impl<'a> Ast<'a> {
             ast.type_map,
             ast.constructor_names,
         );
-        let mut replace_map = Default::default();
-        let type_of_entry_point = memo
-            .map
-            .clone_pointer(ast.type_of_entry_point, &mut replace_map);
-        memo.monomorphize_decl_rec(ast.entry_point, type_of_entry_point, replace_map);
+        let entry_block = {
+            let mut replace_map = Default::default();
+            let ast_step1::Instruction::Assign(ret, _) =
+                ast.entry_block.instructions.last().unwrap()
+            else {
+                panic!()
+            };
+            let p = memo.map.new_pointer();
+            let t = memo.get_type_for_hash(p);
+            let type_id = memo.type_memo.type_id_generator.get_or_insert(t);
+            let (mut entry_block, _) = memo.function_body(
+                &ast.entry_block,
+                (type_id, ast.global_variable_for_entry_block),
+                &mut replace_map,
+                *ret,
+            );
+            entry_block.pop();
+            FunctionBody {
+                basic_blocks: entry_block,
+            }
+        };
         debug_assert_eq!(memo.job_stack.len(), 1);
         while let Some(j) = memo.job_stack.pop() {
             memo.handle_job(j);
@@ -183,34 +199,25 @@ impl<'a> Ast<'a> {
         for v in &memo.monomorphized_variables {
             variable_names.insert(VariableId::Global(v.decl_id), v.name.to_string());
         }
-        let b = &memo.monomorphized_variables[0].value;
-        if let Instruction::Assign(_, Expr::Lambda { lambda_id, context }) =
-            &b.basic_blocks[0].instructions[0]
-        {
-            debug_assert!(context.is_empty());
-            let entry_point = *lambda_id;
-            let functions = memo
-                .functions
-                .into_values()
-                .map(|f| match f {
-                    FunctionEntry::Placeholder(_) => panic!(),
-                    FunctionEntry::Function(f) => f,
-                })
-                .collect();
-            Self {
-                variable_decls: memo.monomorphized_variables,
-                entry_point,
-                functions,
-                variable_names,
-                variable_types: memo.local_variable_collector,
-                constructor_names: memo.constructor_names,
-                type_id_generator: memo.type_memo.type_id_generator,
-                local_variable_replace_map: memo.local_variable_replace_map,
-                used_intrinsic_variables: memo.used_intrinsic_variables,
-                c_type_definitions: memo.c_type_definitions,
-            }
-        } else {
-            panic!()
+        let functions = memo
+            .functions
+            .into_values()
+            .map(|f| match f {
+                FunctionEntry::Placeholder(_) => panic!(),
+                FunctionEntry::Function(f) => f,
+            })
+            .collect();
+        Self {
+            variable_decls: memo.monomorphized_variables,
+            entry_block,
+            functions,
+            variable_names,
+            variable_types: memo.local_variable_collector,
+            constructor_names: memo.constructor_names,
+            type_id_generator: memo.type_memo.type_id_generator,
+            local_variable_replace_map: memo.local_variable_replace_map,
+            used_intrinsic_variables: memo.used_intrinsic_variables,
+            c_type_definitions: memo.c_type_definitions,
         }
     }
 }
@@ -340,7 +347,6 @@ impl<'a, 'b> Env<'a, 'b> {
             .type_memo
             .type_id_generator
             .get_or_insert(t_for_hash.clone());
-
         let root_t = (t_id, decl_id);
         if let Some(d) = self.monomorphized_variable_map.get(&root_t) {
             *d

@@ -164,11 +164,29 @@ impl Display for Codegen<'_> {
                 ))),
         )?;
         write_fns(f, &ast.functions, env, true);
+        debug_assert_eq!(ast.entry_block.basic_blocks.len(), 1);
+        let EndInstruction::Ret(l) = ast.entry_block.basic_blocks[0].end_instruction else {
+            panic!()
+        };
+        let l_t = env.get_type(l);
+        write!(
+            f,
+            "static {} inner_main(void){}",
+            Dis(&l_t, env),
+            Dis(
+                &FunctionBodyWithCtx {
+                    f: &ast.entry_block,
+                    ctx: &[],
+                    parameter: None
+                },
+                env
+            )
+        )?;
         writeln!(
             f,
             "int main(void) {{
-                {0}
-                {1}(({2}){{}},({2}){{}});
+                {}
+                inner_main();
             }}",
             ast.variable_decls
                 .iter()
@@ -178,8 +196,6 @@ impl Display for Codegen<'_> {
                     d.decl_id,
                     convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
                 ))),
-            ast.entry_point,
-            Dis(&unit_t, env),
         )
     }
 }

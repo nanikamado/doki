@@ -15,8 +15,8 @@ use std::mem;
 #[derive(Debug)]
 pub struct Ast<'a> {
     pub variable_decls: Vec<VariableDecl<'a>>,
-    pub entry_point: GlobalVariable,
-    pub type_of_entry_point: TypePointer,
+    pub global_variable_for_entry_block: GlobalVariable,
+    pub entry_block: Block,
     pub local_variable_types: LocalVariableTypes,
     pub type_map: PaddedTypeMap,
     pub constructor_names: ConstructorNames,
@@ -557,7 +557,9 @@ impl<'a> Env<'a> {
         ConstructorId(self.field_len.len() as u32 - 1)
     }
 
-    pub(crate) fn build(self, entry_point: GlobalVariable) -> Ast<'a> {
+    pub(crate) fn build(mut self, entry_point: GlobalVariable) -> Ast<'a> {
+        let mut entry_block = self.make_entry_block(entry_point);
+        let global_variable_for_entry_block = self.new_global_variable();
         let scc_v = scc(entry_point, &self.global_variables);
         let mut scc = FxHashMap::default();
         for (i, c) in scc_v.iter().enumerate() {
@@ -591,20 +593,28 @@ impl<'a> Env<'a> {
                 env.get_type_global(v);
             }
         }
-        let type_of_entry_point = env.global_variable_types[&entry_point];
-        let (p, _) = env.type_map.get_fn(type_of_entry_point);
-        env.type_map
-            .insert_normal(p, TypeId::Intrinsic(IntrinsicTypeTag::Unit), Vec::new());
+        env.block(&mut entry_block, PaddedTypeMap::null_pointer(), true);
         let type_map = env.type_map;
         let local_variable_types_old = env.local_variable_types;
         Ast {
             variable_decls: env.global_variables,
-            entry_point,
-            type_of_entry_point,
+            entry_block,
+            global_variable_for_entry_block,
             local_variable_types: local_variable_types_old,
             type_map,
             constructor_names: self.constructor_names,
         }
+    }
+
+    fn make_entry_block(&mut self, entry_point: GlobalVariable) -> Block {
+        let mut entry_point_block = self.new_block();
+        let f = self.new_local_variable();
+        self.global_variable(f, entry_point, &mut entry_point_block);
+        let unit = self.new_local_variable();
+        self.intrinsic_construction(unit, IntrinsicConstructor::Unit, &mut entry_point_block);
+        let l = self.new_local_variable();
+        self.call(f, unit, l, &mut entry_point_block);
+        entry_point_block
     }
 }
 
