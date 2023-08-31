@@ -289,6 +289,10 @@ impl BasicBlockEnv {
         });
         self.current_basic_block = None;
     }
+
+    fn assign(&mut self, v: LocalVariable, e: Expr) {
+        self.instructions.push(Instruction::Assign(v, e));
+    }
 }
 
 impl<'a, 'b> Env<'a, 'b> {
@@ -531,23 +535,26 @@ impl<'a, 'b> Env<'a, 'b> {
                         msg: "unexpected".to_string(),
                     });
                 }
-                let e = self.expr(e, p, root_t, replace_map, basic_block_env, catch_label);
-                match e {
-                    Ok(e) => {
-                        let new_v =
-                            if let Some(v) = self.local_variable_replace_map.get(&(*v, root_t)) {
-                                *v
-                            } else {
-                                let new_v = self.new_variable(PointerForCType::from(p));
-                                self.local_variable_replace_map.insert((*v, root_t), new_v);
-                                new_v
-                            };
-                        basic_block_env
-                            .instructions
-                            .push(Instruction::Assign(new_v, e));
-                        Ok(())
-                    }
-                    Err(msg) => Err(EndInstruction::Panic { msg }),
+                let new_v = if let Some(v) = self.local_variable_replace_map.get(&(*v, root_t)) {
+                    *v
+                } else {
+                    let new_v = self.new_variable(PointerForCType::from(p));
+                    self.local_variable_replace_map.insert((*v, root_t), new_v);
+                    new_v
+                };
+                let e = self.expr(
+                    e,
+                    p,
+                    new_v,
+                    root_t,
+                    replace_map,
+                    basic_block_env,
+                    catch_label,
+                );
+                if let Err(msg) = e {
+                    Err(EndInstruction::Panic { msg })
+                } else {
+                    Ok(())
                 }
             }
             ast_step1::Instruction::Test(ast_step1::Tester::I64 { value }, l) => {
@@ -680,18 +687,20 @@ impl<'a, 'b> Env<'a, 'b> {
         }
     }
 
-    // Returns `None` if impossible type error
+    #[allow(clippy::too_many_arguments)]
+    /// Returns `Err` if type error
     fn expr(
         &mut self,
         e: &ast_step1::Expr,
         p: TypePointer,
+        v: LocalVariable,
         root_t: Root,
         replace_map: &mut ReplaceMap,
         basic_block_env: &mut BasicBlockEnv,
         catch_label: usize,
-    ) -> Result<Expr, String> {
+    ) -> Result<(), String> {
         use Expr::*;
-        let e = match e {
+        match e {
             ast_step1::Expr::Lambda {
                 lambda_id,
                 parameter,
@@ -757,18 +766,20 @@ impl<'a, 'b> Env<'a, 'b> {
                     context,
                     lambda_id: fx_lambda_id,
                 };
-                let (e, context_c_type) = if possible_functions.len() == 1 && tag_len == 1 {
-                    (l, possible_functions[0].c_type)
+                let context_c_type = if possible_functions.len() == 1 && tag_len == 1 {
+                    basic_block_env.assign(v, l);
+                    possible_functions[0].c_type
                 } else {
                     let d = self.local_variable_collector.new_variable((None, f.c_type));
                     basic_block_env.instructions.push(Instruction::Assign(d, l));
-                    (
+                    basic_block_env.assign(
+                        v,
                         Upcast {
                             tag: f.tag,
                             value: VariableId::Local(d),
                         },
-                        f.c_type,
-                    )
+                    );
+                    f.c_type
                 };
                 self.functions.insert(
                     lambda_id,
@@ -781,36 +792,44 @@ impl<'a, 'b> Env<'a, 'b> {
                         ret,
                     }),
                 );
-                e
             }
-            ast_step1::Expr::I64(s) => self.add_tags_to_expr(
-                I64(*s),
-                p,
-                TypeId::Intrinsic(IntrinsicTypeTag::I64),
-                &mut basic_block_env.instructions,
-            ),
-            ast_step1::Expr::U8(s) => self.add_tags_to_expr(
-                U8(*s),
-                p,
-                TypeId::Intrinsic(IntrinsicTypeTag::U8),
-                &mut basic_block_env.instructions,
-            ),
-            ast_step1::Expr::Str(s) => self.add_tags_to_expr(
-                Str(s.clone()),
-                p,
-                TypeId::Intrinsic(IntrinsicTypeTag::Ptr),
-                &mut basic_block_env.instructions,
-            ),
-            ast_step1::Expr::Ident(v) => {
-                match v {
+            ast_step1::Expr::I64(s) => {
+                let e = self.add_tags_to_expr(
+                    I64(*s),
+                    p,
+                    TypeId::Intrinsic(IntrinsicTypeTag::I64),
+                    &mut basic_block_env.instructions,
+                );
+                basic_block_env.assign(v, e)
+            }
+            ast_step1::Expr::U8(s) => {
+                let e = self.add_tags_to_expr(
+                    U8(*s),
+                    p,
+                    TypeId::Intrinsic(IntrinsicTypeTag::U8),
+                    &mut basic_block_env.instructions,
+                );
+                basic_block_env.assign(v, e)
+            }
+            ast_step1::Expr::Str(s) => {
+                let e = self.add_tags_to_expr(
+                    Str(s.clone()),
+                    p,
+                    TypeId::Intrinsic(IntrinsicTypeTag::Ptr),
+                    &mut basic_block_env.instructions,
+                );
+                basic_block_env.assign(v, e)
+            }
+            ast_step1::Expr::Ident(l) => {
+                match l {
                     ast_step1::VariableId::Local(_) => (),
                     ast_step1::VariableId::Global(_, _, p2) => {
                         let p2 = self.map.clone_pointer(*p2, replace_map);
                         debug_assert_eq!(p, p2);
                     }
                 }
-                let v = self.get_defined_variable_id(v, root_t, replace_map);
-                Ident(v)
+                let l = self.get_defined_variable_id(l, root_t, replace_map);
+                basic_block_env.assign(v, Ident(l));
             }
             ast_step1::Expr::Call { f, a } => {
                 let f_t = self.local_variable_types_old.get(*f);
@@ -822,14 +841,16 @@ impl<'a, 'b> Env<'a, 'b> {
                     return Err("not a function".to_string());
                 }
                 if possible_functions.len() == 1 && tag_len == 1 {
-                    Call {
-                        ctx: f,
-                        a,
-                        f: possible_functions[0].lambda_id,
-                        tail_call: RefCell::new(false),
-                    }
+                    basic_block_env.assign(
+                        v,
+                        Call {
+                            ctx: f,
+                            a,
+                            f: possible_functions[0].lambda_id,
+                            tail_call: RefCell::new(false),
+                        },
+                    )
                 } else {
-                    let ret_v = self.new_variable(PointerForCType::from(p));
                     let skip = basic_block_env.new_label();
                     for PossibleFunction {
                         tag,
@@ -856,7 +877,7 @@ impl<'a, 'b> Env<'a, 'b> {
                             },
                         ));
                         basic_block_env.instructions.push(Instruction::Assign(
-                            ret_v,
+                            v,
                             Expr::Call {
                                 ctx: VariableId::Local(new_f),
                                 a,
@@ -871,7 +892,6 @@ impl<'a, 'b> Env<'a, 'b> {
                         msg: "not a function".to_string(),
                     });
                     basic_block_env.current_basic_block = Some(skip);
-                    Ident(VariableId::Local(ret_v))
                 }
             }
             ast_step1::Expr::BasicCall {
@@ -916,7 +936,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     id: BasicFunction::Construction(*id),
                 };
                 let instructions: &mut Vec<Instruction> = &mut basic_block_env.instructions;
-                match self.get_tag_normal(p, TypeId::UserDefined(*id)) {
+                let e = match self.get_tag_normal(p, TypeId::UserDefined(*id)) {
                     GetTagNormalResult::Tagged(tag) => {
                         let d = self.new_variable(PointerForCType {
                             p,
@@ -930,14 +950,15 @@ impl<'a, 'b> Env<'a, 'b> {
                     }
                     GetTagNormalResult::NotTagged => e,
                     GetTagNormalResult::Impossible => panic!(),
-                }
+                };
+                basic_block_env.assign(v, e);
             }
             ast_step1::Expr::BasicCall {
                 args,
                 id: ast_step1::BasicFunction::IntrinsicConstruction(id),
             } => {
                 debug_assert!(args.is_empty());
-                self.add_tags_to_expr(
+                let e = self.add_tags_to_expr(
                     BasicCall {
                         args: Vec::new(),
                         id: BasicFunction::IntrinsicConstruction(*id),
@@ -945,7 +966,8 @@ impl<'a, 'b> Env<'a, 'b> {
                     p,
                     TypeId::Intrinsic((*id).into()),
                     &mut basic_block_env.instructions,
-                )
+                );
+                basic_block_env.assign(v, e)
             }
             ast_step1::Expr::BasicCall {
                 args,
@@ -974,13 +996,16 @@ impl<'a, 'b> Env<'a, 'b> {
                         [*field as usize]
                         .unwrap(),
                 };
-                BasicCall {
-                    args: vec![a.into()],
-                    id: BasicFunction::FieldAccessor {
-                        field: *field,
-                        boxed: deref,
+                basic_block_env.assign(
+                    v,
+                    BasicCall {
+                        args: vec![a.into()],
+                        id: BasicFunction::FieldAccessor {
+                            field: *field,
+                            boxed: deref,
+                        },
                     },
-                }
+                )
             }
             ast_step1::Expr::BasicCall {
                 args,
@@ -1033,7 +1058,7 @@ impl<'a, 'b> Env<'a, 'b> {
                         id: count as u32,
                     },
                 };
-                match id.runtime_return_type() {
+                let e = match id.runtime_return_type() {
                     Some(rt) => self.add_tags_to_expr(
                         e,
                         p,
@@ -1041,10 +1066,11 @@ impl<'a, 'b> Env<'a, 'b> {
                         &mut basic_block_env.instructions,
                     ),
                     None => e,
-                }
+                };
+                basic_block_env.assign(v, e);
             }
         };
-        Ok(e)
+        Ok(())
     }
 
     fn get_possible_functions(&mut self, ot: TypePointer) -> (Vec<PossibleFunction>, u32) {
