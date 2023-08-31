@@ -102,6 +102,7 @@ data Apply 2
 data If 3
 data Plus 2
 data Minus 2
+data Rem 2
 
 then_ignore = a: b: parser_map (then a b) (Cons a _: a)
 ignore_then = a: b: parser_map (then a b) (Cons _ a: a)
@@ -215,15 +216,18 @@ eval = e: env: match e with
             end,
         Plus a b => numerical_binary a b env plus,
         Minus a b => numerical_binary a b env minus,
+        Rem a b => numerical_binary a b env rem,
     end
 
 global_env = let a = string_to_char_list "a"
     in let b = string_to_char_list "b"
-    in let l1 = Lambda a (LambdaAst b (Plus (Ident a) (Ident b))) Nil
-    in let l1 = Cons (string_to_char_list "plus") l1
-    in let l2 = Lambda a (LambdaAst b (Minus (Ident a) (Ident b))) Nil
-    in let l2 = Cons (string_to_char_list "minus") l2
-    in Cons l1 (Cons l2 Nil)
+    in let make = c: s:
+        let l = Lambda a (LambdaAst b (c (Ident a) (Ident b))) Nil
+        in Cons (string_to_char_list s) l
+    in let l1 = make Plus "plus"
+    in let l2 = make Minus "minus"
+    in let l3 = make Rem "rem"
+    in Cons l3 (Cons l1 (Cons l2 Nil))
 
 main = _:
     let s = read_all Unit

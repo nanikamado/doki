@@ -1,0 +1,15 @@
+let fix = f:
+    (x: f (y: x x y))
+    (x: f (y: x x y))
+
+in let is_prime = fix (is_prime: i: n:
+        if minus n i then
+            if rem n i then
+                is_prime (plus i 1) n
+            else
+                0
+        else
+            1
+    )
+
+in plus (is_prime 2 131071) (is_prime 2 68718821377)

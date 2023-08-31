@@ -184,6 +184,7 @@ string_eq = a: b: match Cons (pop_str a) (pop_str b) with
                 False => False,
                 True => string_eq at bt,
             end,
+        _ => False,
     end
 
 char_list_to_num_aux = acc: s: match s with

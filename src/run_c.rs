@@ -11,7 +11,7 @@ pub fn run(f: impl Display, clang_options: &str) -> Result<ExitStatus, ()> {
         .unwrap();
     let tmp_path = tmp.path().to_str().unwrap().to_string();
     match process::Command::new("clang")
-        .args(["-std=c17", "-x", "c", "-O1", "-o", &tmp_path, "-"])
+        .args(["-std=c17", "-x", "c", "-O2", "-o", &tmp_path, "-"])
         .args(clang_options.split_ascii_whitespace())
         .stdin(Stdio::piped())
         .spawn()

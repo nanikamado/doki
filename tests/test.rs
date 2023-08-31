@@ -211,11 +211,20 @@ fn incomplete_parser() {
 }
 
 #[test]
-fn expr() {
+fn expr_fib() {
     positive_test_with_stdin(
         "expr.doki",
-        std::str::from_utf8(include_bytes!("positive/fib.exp")).unwrap(),
+        std::str::from_utf8(include_bytes!("positive/expr_inputs/fib.exp")).unwrap(),
         "4660046610375530309\n",
+    );
+}
+
+#[test]
+fn expr_prime() {
+    positive_test_with_stdin(
+        "expr.doki",
+        std::str::from_utf8(include_bytes!("positive/expr_inputs/prime.exp")).unwrap(),
+        "1\n",
     );
 }
 
