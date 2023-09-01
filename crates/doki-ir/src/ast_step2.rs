@@ -104,8 +104,7 @@ pub enum Expr {
     Str(String),
     Ident(VariableId),
     Call {
-        ctx: VariableId,
-        a: VariableId,
+        args: Vec<VariableId>,
         f: FxLambdaId,
         tail_call: RefCell<bool>,
     },
@@ -148,9 +147,7 @@ pub struct VariableInContext {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Function {
     pub id: FxLambdaId,
-    pub context: Vec<VariableInContext>,
-    pub context_c_type: CType,
-    pub parameter: LocalVariable,
+    pub parameters: Vec<LocalVariable>,
     pub body: FunctionBody,
     pub ret: VariableId,
 }
@@ -687,6 +684,41 @@ impl<'a, 'b> Env<'a, 'b> {
         }
     }
 
+    fn fn_call(
+        &mut self,
+        v: LocalVariable,
+        f: PossibleFunction,
+        a: VariableId,
+        ctx: VariableId,
+        ctx_box_point: &[Option<bool>],
+        basic_block_env: &mut BasicBlockEnv,
+    ) {
+        use Expr::*;
+        let mut args = vec![a];
+        for (i, (c, b)) in f.ctx.iter().zip(ctx_box_point).enumerate() {
+            let l = self.new_variable(PointerForCType::from(*c));
+            basic_block_env.assign(
+                l,
+                BasicCall {
+                    args: vec![ctx],
+                    id: BasicFunction::FieldAccessor {
+                        field: i as u32,
+                        boxed: b.unwrap(),
+                    },
+                },
+            );
+            args.push(VariableId::Local(l));
+        }
+        basic_block_env.assign(
+            v,
+            Call {
+                args,
+                f: f.lambda_id,
+                tail_call: RefCell::new(false),
+            },
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// Returns `Err` if type error
     fn expr(
@@ -726,39 +758,38 @@ impl<'a, 'b> Env<'a, 'b> {
                 else {
                     panic!()
                 };
-                let terminal = &self.map.dereference_without_find(p);
-                let box_point = terminal.box_point.clone();
+                let box_point = &self.map.dereference_without_find(p).box_point;
                 let i = possible_functions
                     .binary_search_by_key(&fx_lambda_id, |l| l.lambda_id)
                     .unwrap();
                 let f = &possible_functions[i];
                 let tag = TypeTagForBoxPoint::Lambda(f.original_lambda_id);
-                let context_ = if let BoxPoint::Boxed(pss) = box_point {
-                    context
-                        .iter()
-                        .zip(&pss[&tag])
-                        .map(|(v, boxed): (_, &Option<bool>)| VariableInContext {
-                            l: self.get_defined_local_variable(*v, root_t, replace_map),
-                            boxed: boxed.unwrap(),
-                        })
-                        .collect_vec()
-                } else {
+                let BoxPoint::Boxed(pss) = box_point else {
                     panic!()
                 };
-                let context = context_
+                let bs = pss[&tag].clone();
+                let parameters = std::iter::once(parameter)
+                    .chain(
+                        context
+                            .iter()
+                            .map(|l| self.get_defined_local_variable(*l, root_t, replace_map)),
+                    )
+                    .collect_vec();
+                let context = parameters[1..]
                     .iter()
-                    .map(|l| {
-                        if l.boxed {
-                            let (_, lt) = *self.local_variable_collector.get_type(l.l);
+                    .zip(bs)
+                    .map(|(l, boxed)| {
+                        if boxed.unwrap() {
+                            let (_, lt) = *self.local_variable_collector.get_type(*l);
                             let d = self
                                 .local_variable_collector
                                 .new_variable((None, CType { boxed: true, ..lt }));
                             basic_block_env
                                 .instructions
-                                .push(Instruction::Assign(d, Expr::Ref(VariableId::Local(l.l))));
+                                .push(Instruction::Assign(d, Expr::Ref(VariableId::Local(*l))));
                             VariableId::Local(d)
                         } else {
-                            VariableId::Local(l.l)
+                            VariableId::Local(*l)
                         }
                     })
                     .collect();
@@ -766,9 +797,8 @@ impl<'a, 'b> Env<'a, 'b> {
                     args: context,
                     id: BasicFunction::Construction,
                 };
-                let context_c_type = if possible_functions.len() == 1 && tag_len == 1 {
+                if possible_functions.len() == 1 && tag_len == 1 {
                     basic_block_env.assign(v, l);
-                    possible_functions[0].c_type
                 } else {
                     let d = self.local_variable_collector.new_variable((None, f.c_type));
                     basic_block_env.instructions.push(Instruction::Assign(d, l));
@@ -779,16 +809,13 @@ impl<'a, 'b> Env<'a, 'b> {
                             value: VariableId::Local(d),
                         },
                     );
-                    f.c_type
                 };
                 self.functions.insert(
                     lambda_id,
                     FunctionEntry::Function(Function {
                         id: fx_lambda_id,
-                        parameter,
+                        parameters,
                         body: FunctionBody { basic_blocks },
-                        context: context_,
-                        context_c_type,
                         ret,
                     }),
                 );
@@ -837,54 +864,51 @@ impl<'a, 'b> Env<'a, 'b> {
                 let (possible_functions, tag_len) = self.get_possible_functions(f_t_p);
                 let f = VariableId::Local(self.get_defined_local_variable(*f, root_t, replace_map));
                 let a = VariableId::Local(self.get_defined_local_variable(*a, root_t, replace_map));
+                let BoxPoint::Boxed(box_point_of_f) =
+                    &self.map.dereference_without_find(f_t_p).box_point
+                else {
+                    panic!()
+                };
                 if possible_functions.is_empty() {
                     return Err("not a function".to_string());
                 }
                 if possible_functions.len() == 1 && tag_len == 1 {
-                    basic_block_env.assign(
-                        v,
-                        Call {
-                            ctx: f,
-                            a,
-                            f: possible_functions[0].lambda_id,
-                            tail_call: RefCell::new(false),
-                        },
-                    )
+                    let possible_function = possible_functions[0].clone();
+                    let tag = TypeTagForBoxPoint::Lambda(possible_function.original_lambda_id);
+                    let ctx_box_point = box_point_of_f[&tag].clone();
+                    self.fn_call(v, possible_function, a, f, &ctx_box_point, basic_block_env);
                 } else {
+                    let box_point_of_f = box_point_of_f.clone();
                     let skip = basic_block_env.new_label();
-                    for PossibleFunction {
-                        tag,
-                        lambda_id: id,
-                        c_type: casted_ct,
-                        original_lambda_id: _,
-                    } in possible_functions
-                    {
+                    for possible_function in possible_functions {
                         let next = basic_block_env.new_label();
                         basic_block_env.instructions.push(Instruction::Test {
-                            tester: Tester::Tag { tag },
+                            tester: Tester::Tag {
+                                tag: possible_function.tag,
+                            },
                             operand: f,
                             catch_label: next,
                         });
                         let new_f = self
                             .local_variable_collector
-                            .new_variable((None, casted_ct));
+                            .new_variable((None, possible_function.c_type));
                         basic_block_env.instructions.push(Instruction::Assign(
                             new_f,
-                            Expr::Downcast {
-                                tag,
+                            Downcast {
+                                tag: possible_function.tag,
                                 value: f,
                                 check: false,
                             },
                         ));
-                        basic_block_env.instructions.push(Instruction::Assign(
+                        let tag = TypeTagForBoxPoint::Lambda(possible_function.original_lambda_id);
+                        self.fn_call(
                             v,
-                            Expr::Call {
-                                ctx: VariableId::Local(new_f),
-                                a,
-                                f: id,
-                                tail_call: RefCell::new(false),
-                            },
-                        ));
+                            possible_function,
+                            a,
+                            VariableId::Local(new_f),
+                            &box_point_of_f[&tag],
+                            basic_block_env,
+                        );
                         basic_block_env.end_current_block(EndInstruction::Goto { label: skip });
                         basic_block_env.current_basic_block = Some(next);
                     }
@@ -1077,7 +1101,7 @@ impl<'a, 'b> Env<'a, 'b> {
         let ot = self.map.find(ot);
         self.c_type(PointerForCType::from(ot));
         let mut fs = Vec::new();
-        let type_map = &self.map.dereference(ot).type_map;
+        let type_map = &self.map.dereference_without_find(ot).type_map;
         let normals_len = type_map.len()
             - type_map
                 .get(&TypeId::Intrinsic(IntrinsicTypeTag::Fn))
@@ -1085,7 +1109,11 @@ impl<'a, 'b> Env<'a, 'b> {
         let ls = self.type_memo.get_lambda_ids_pointer(ot, &mut self.map);
         let ls_len = ls.len();
         let mut tag = normals_len as u32;
-        for (lambda_id, original_lambda_id) in ls.iter().map(|(l, (o, _))| (*l, *o)).collect_vec() {
+        for (lambda_id, original_lambda_id, ctx) in ls
+            .iter()
+            .map(|(l, (o, ctx))| (*l, *o, ctx.clone()))
+            .collect_vec()
+        {
             let len = self.functions.len() as u32;
             let e = self
                 .functions
@@ -1117,6 +1145,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     boxed: false,
                 },
                 original_lambda_id,
+                ctx,
             });
             tag += 1;
         }
@@ -1751,11 +1780,13 @@ impl<'a, 'b> Env<'a, 'b> {
     }
 }
 
+#[derive(Debug, Clone)]
 struct PossibleFunction {
     tag: u32,
     lambda_id: FxLambdaId,
     original_lambda_id: u32,
     c_type: CType,
+    ctx: Vec<TypePointer>,
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]

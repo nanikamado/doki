@@ -2,7 +2,7 @@ use crate::ast_step1::{ConstructorId, ConstructorNames};
 use crate::ast_step2::c_type::CTypeScheme;
 use crate::ast_step2::{
     self, Ast, CType, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId, Instruction,
-    LocalVariable, LocalVariableCollector, StructId, Tester, Type, VariableId, VariableInContext,
+    LocalVariable, LocalVariableCollector, StructId, Tester, Type, VariableId,
 };
 use crate::intrinsics::IntrinsicVariable;
 use crate::util::collector::Collector;
@@ -156,8 +156,7 @@ impl Display for Codegen<'_> {
                     Dis(
                         &FunctionBodyWithCtx {
                             f: &d.value,
-                            ctx: &[],
-                            parameter: None
+                            parameters: &[],
                         },
                         env
                     )
@@ -176,8 +175,7 @@ impl Display for Codegen<'_> {
             Dis(
                 &FunctionBodyWithCtx {
                     f: &ast.entry_block,
-                    ctx: &[],
-                    parameter: None
+                    parameters: &[],
                 },
                 env
             )
@@ -300,22 +298,26 @@ fn write_fns(s: &mut std::fmt::Formatter<'_>, functions: &[Function], env: Env, 
         s,
         "{}",
         functions.iter().format_with("", |function, f| {
-            let (t, ct) = env.local_variable_types.get_type(function.parameter);
+            let ps = function.parameters.iter().format_with(",", |l, f| {
+                let (t, ct) = env.local_variable_types.get_type(*l);
+                f(&format_args!(
+                    "{} {}/*{}*/",
+                    Dis(ct, env),
+                    Dis(&VariableId::Local(*l), env),
+                    ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
+                ))
+            });
             f(&format_args!(
-                "static {} {}({} {}/*{}*/,{} ctx)",
+                "static {} {}({})",
                 Dis(&env.get_type(function.ret), env),
                 function.id,
-                Dis(ct, env),
-                Dis(&VariableId::Local(function.parameter), env),
-                ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
-                Dis(&function.context_c_type, env),
+                ps
             ))?;
             if write_body {
                 f(&Dis(
                     &FunctionBodyWithCtx {
                         f: &function.body,
-                        ctx: &function.context,
-                        parameter: Some(function.parameter),
+                        parameters: &function.parameters,
                     },
                     env,
                 ))
@@ -363,11 +365,7 @@ fn collect_local_variables_in_block(b: &FunctionBody, vs: &mut FxHashSet<LocalVa
 fn collect_local_variables_in_expr(e: &Expr, vs: &mut FxHashSet<LocalVariable>) {
     match e {
         Expr::I64(_) | Expr::U8(_) | Expr::Str(_) => (),
-        Expr::Call { ctx, a, .. } => {
-            collect_local_variables_in_variable(*ctx, vs);
-            collect_local_variables_in_variable(*a, vs);
-        }
-        Expr::BasicCall { args, .. } => {
+        Expr::Call { args, .. } | Expr::BasicCall { args, .. } => {
             for a in args {
                 collect_local_variables_in_variable(*a, vs);
             }
@@ -400,23 +398,19 @@ trait DisplayWithEnv {
 
 struct FunctionBodyWithCtx<'a> {
     f: &'a FunctionBody,
-    ctx: &'a [VariableInContext],
-    parameter: Option<LocalVariable>,
+    parameters: &'a [LocalVariable],
 }
 
 impl DisplayWithEnv for FunctionBodyWithCtx<'_> {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut vs = FxHashSet::default();
         collect_local_variables_in_block(self.f, &mut vs);
-        for c in self.ctx {
-            vs.insert(c.l);
-        }
-        if let Some(p) = self.parameter {
-            vs.remove(&p);
+        for p in self.parameters {
+            vs.remove(p);
         }
         write!(
             f,
-            "{{{}{}",
+            "{{{}",
             vs.iter().format_with("", |v, f| {
                 let (t, ct) = env.local_variable_types.get_type(*v);
                 f(&format_args!(
@@ -425,19 +419,6 @@ impl DisplayWithEnv for FunctionBodyWithCtx<'_> {
                     ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
                     Dis(&VariableId::Local(*v), env),
                 ))
-            }),
-            self.ctx.iter().enumerate().format_with("", |(i, v), f| {
-                if v.boxed {
-                    f(&format_args!(
-                        "{}=*ctx._{i};",
-                        Dis(&VariableId::Local(v.l), env),
-                    ))
-                } else {
-                    f(&format_args!(
-                        "{}=ctx._{i};",
-                        Dis(&VariableId::Local(v.l), env),
-                    ))
-                }
             }),
         )?;
         for (i, bb) in self.f.basic_blocks.iter().enumerate() {
@@ -509,11 +490,14 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 i.fmt_with_env(env, fmt)
             }
             Expr::Call {
-                ctx: g,
-                a,
+                args,
                 f,
                 tail_call: _,
-            } => write!(fmt, "{f}({},{})", Dis(a, env), Dis(g, env)),
+            } => write!(
+                fmt,
+                "{f}({})",
+                args.iter().format_with(",", |a, f| f(&Dis(a, env)))
+            ),
             Expr::BasicCall { args, id } => {
                 use crate::ast_step2::BasicFunction::*;
                 match id {

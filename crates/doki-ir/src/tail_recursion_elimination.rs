@@ -1,7 +1,7 @@
 use crate::ast_step2::{
     Ast, BasicBlock, EndInstruction, Expr, Function, FxLambdaId, Instruction, VariableId,
-    VariableInContext,
 };
+use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 
@@ -61,8 +61,7 @@ pub fn run(ast: &mut Ast) {
         let mut inlining_queue = VecDeque::new();
         let mut inlined_fns = FxHashMap::default();
         let current_function = InlinedFn {
-            context: &f.context,
-            parameter: f.parameter,
+            parameters: &f.parameters,
             label: 0,
         };
         inlined_fns.insert(id, current_function);
@@ -96,8 +95,7 @@ pub fn run(ast: &mut Ast) {
 
 #[derive(Debug, Clone, Copy)]
 struct InlinedFn<'a> {
-    context: &'a [VariableInContext],
-    parameter: crate::LocalVariable2,
+    parameters: &'a [crate::LocalVariable2],
     label: usize,
 }
 
@@ -110,59 +108,29 @@ fn eliminate_from_basic_block<'a>(
     inlined_fns: &mut FxHashMap<FxLambdaId, InlinedFn<'a>>,
 ) {
     match bb.instructions.last() {
-        Some(Instruction::Assign(
-            _,
-            Expr::Call {
-                f,
-                tail_call,
-                ctx,
-                a,
-            },
-        )) if *tail_call.borrow() => {
-            let ctx = *ctx;
-            let a = *a;
+        Some(Instruction::Assign(_, Expr::Call { f, tail_call, args })) if *tail_call.borrow() => {
             let f = *f;
+            let args = args.clone();
             if let Some(&f) = inlined_fns.get(&f) {
                 bb.instructions.pop();
-                for (i, ctx_v) in f.context.iter().enumerate() {
-                    bb.instructions.push(Instruction::Assign(
-                        ctx_v.l,
-                        Expr::BasicCall {
-                            args: vec![ctx],
-                            id: crate::ast_step2::BasicFunction::FieldAccessor {
-                                field: i as u32,
-                                boxed: ctx_v.boxed,
-                            },
-                        },
-                    ))
+                for (p, a) in f.parameters.iter().zip_eq(args) {
+                    bb.instructions
+                        .push(Instruction::Assign(*p, Expr::Ident(a)));
                 }
-                bb.instructions
-                    .push(Instruction::Assign(f.parameter, Expr::Ident(a)));
                 bb.end_instruction = EndInstruction::Goto { label: f.label };
             } else if cycle.contains(&f) {
                 bb.instructions.pop();
                 let called_fn = &functions[&f];
-                for (i, ctx_v) in called_fn.context.iter().enumerate() {
-                    bb.instructions.push(Instruction::Assign(
-                        ctx_v.l,
-                        Expr::BasicCall {
-                            args: vec![ctx],
-                            id: crate::ast_step2::BasicFunction::FieldAccessor {
-                                field: i as u32,
-                                boxed: ctx_v.boxed,
-                            },
-                        },
-                    ))
+                for (p, a) in called_fn.parameters.iter().zip_eq(args) {
+                    bb.instructions
+                        .push(Instruction::Assign(*p, Expr::Ident(a)));
                 }
-                bb.instructions
-                    .push(Instruction::Assign(called_fn.parameter, Expr::Ident(a)));
                 bb.end_instruction = EndInstruction::Goto { label: *free_label };
                 inlining_queue.push_back((f, *free_label));
                 inlined_fns.insert(
                     f,
                     InlinedFn {
-                        context: &called_fn.context,
-                        parameter: called_fn.parameter,
+                        parameters: &called_fn.parameters,
                         label: *free_label,
                     },
                 );
