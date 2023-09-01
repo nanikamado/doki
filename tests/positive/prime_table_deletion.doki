@@ -1,0 +1,38 @@
+import "../../library/prelude.doki"
+
+table = intrinsic_mut
+    (Cons (Cons "read_num" read_num)
+    (Cons (Cons "is_prime" (is_prime_aux 2))
+    (Cons (Cons "bool_to_string" bool_to_string)
+    (Cons (Cons "println" println)
+    Nil))))
+
+remove_aux = Cons (Cons k v) t: s: match str_eq s k with
+        True => Cons t v,
+        False => let Cons t w = remove_aux t s
+                in Cons (Cons (Cons k v) t) w
+    end
+
+remove = s: let inn = intrinsic_get table
+    in let Cons inn v = remove_aux inn s
+    in let _ = intrinsic_set table inn
+    in v
+
+is_prime_aux = i: n: match eq i n with
+        True => True,
+        False => match rem n i with
+                0 => False,
+                _ => match rem i 3 with
+                        0 => remove "0" n,
+                        1 => remove "1" n,
+                        2 => let inn = intrinsic_get table
+                            in let entry0 = Cons "0" (is_prime_aux (plus i 2))
+                            in let entry1 = Cons "1" (is_prime_aux (plus i 3))
+                            in let _ = intrinsic_set table (Cons entry0 (Cons entry1 inn))
+                            in is_prime_aux (plus i 1) n,
+                    end,
+            end,
+    end
+
+main = _:
+    remove "println" (remove "bool_to_string" (remove "is_prime" (remove "read_num" 0)))
