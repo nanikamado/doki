@@ -763,7 +763,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     .binary_search_by_key(&fx_lambda_id, |l| l.lambda_id)
                     .unwrap();
                 let f = &possible_functions[i];
-                let tag = TypeTagForBoxPoint::Lambda(f.original_lambda_id);
+                let tag = TypeTagForBoxPoint::Lambda(f.index_in_type_map);
                 let BoxPoint::Boxed(pss) = box_point else {
                     panic!()
                 };
@@ -874,7 +874,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 }
                 if possible_functions.len() == 1 && tag_len == 1 {
                     let possible_function = possible_functions[0].clone();
-                    let tag = TypeTagForBoxPoint::Lambda(possible_function.original_lambda_id);
+                    let tag = TypeTagForBoxPoint::Lambda(possible_function.index_in_type_map);
                     let ctx_box_point = box_point_of_f[&tag].clone();
                     self.fn_call(v, possible_function, a, f, &ctx_box_point, basic_block_env);
                 } else {
@@ -900,7 +900,7 @@ impl<'a, 'b> Env<'a, 'b> {
                                 check: false,
                             },
                         ));
-                        let tag = TypeTagForBoxPoint::Lambda(possible_function.original_lambda_id);
+                        let tag = TypeTagForBoxPoint::Lambda(possible_function.index_in_type_map);
                         self.fn_call(
                             v,
                             possible_function,
@@ -1109,9 +1109,9 @@ impl<'a, 'b> Env<'a, 'b> {
         let ls = self.type_memo.get_lambda_ids_pointer(ot, &mut self.map);
         let ls_len = ls.len();
         let mut tag = normals_len as u32;
-        for (lambda_id, original_lambda_id, ctx) in ls
+        for (index_in_type_map, lambda_id, ctx) in ls
             .iter()
-            .map(|(l, (o, ctx))| (*l, *o, ctx.clone()))
+            .map(|(l, (i, ctx))| (*i, *l, ctx.clone()))
             .collect_vec()
         {
             let len = self.functions.len() as u32;
@@ -1144,7 +1144,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     i: StructId(ct),
                     boxed: false,
                 },
-                original_lambda_id,
+                index_in_type_map,
                 ctx,
             });
             tag += 1;
@@ -1417,11 +1417,11 @@ impl<'a, 'b> Env<'a, 'b> {
             }
         }
         let ids = self.type_memo.get_lambda_ids_pointer(p, &mut self.map);
-        for (l, args) in ids.values().cloned().collect_vec() {
+        for (index_in_type_map, args) in ids.values().cloned().collect_vec() {
             let args = collect_args(
                 self,
                 args,
-                &boxing[&TypeTagForBoxPoint::Lambda(l)],
+                &boxing[&TypeTagForBoxPoint::Lambda(index_in_type_map)],
                 trace,
                 used_trace,
             );
@@ -1543,11 +1543,11 @@ impl<'a, 'b> Env<'a, 'b> {
             }
         }
         let ids = self.type_memo.get_lambda_ids_pointer(node.p, &mut self.map);
-        for (l, args) in ids.values() {
+        for (index_in_type_map, args) in ids.values() {
             ts.push(CTypeScheme::Aggregate(
                 args.iter()
                     .copied()
-                    .zip(&boxing[&TypeTagForBoxPoint::Lambda(*l)])
+                    .zip(&boxing[&TypeTagForBoxPoint::Lambda(*index_in_type_map)])
                     .map(|(p, boxed)| {
                         let modifier = if boxed.unwrap() {
                             PointerModifier::Boxed
@@ -1661,9 +1661,12 @@ impl<'a, 'b> Env<'a, 'b> {
                     )
                 })
                 .collect();
-            for (l, args) in &terminal.functions {
-                pss.entry(TypeTagForBoxPoint::Lambda(l.id))
-                    .or_insert_with(|| args.iter().map(|_| None).collect_vec());
+            for (i, (_, args)) in terminal.functions.iter().enumerate() {
+                let o = pss.insert(
+                    TypeTagForBoxPoint::Lambda(i as u32),
+                    args.iter().map(|_| None).collect_vec(),
+                );
+                debug_assert!(o.is_none());
             }
             terminal.box_point = BoxPoint::Boxed(pss)
         }
@@ -1749,7 +1752,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 }
             }
         }
-        for (l, args) in functions {
+        for (i, (l, args)) in functions.into_iter().enumerate() {
             self.collect_box_points_aux(
                 l.root_t,
                 None,
@@ -1760,7 +1763,7 @@ impl<'a, 'b> Env<'a, 'b> {
             for (j, t) in args.iter().enumerate() {
                 self.collect_box_points_aux(
                     *t,
-                    Some((p, TypeTagForBoxPoint::Lambda(l.id), j as u32)),
+                    Some((p, TypeTagForBoxPoint::Lambda(i as u32), j as u32)),
                     trace_map,
                     non_union_trace,
                     divergent_stopper,
@@ -1784,7 +1787,7 @@ impl<'a, 'b> Env<'a, 'b> {
 struct PossibleFunction {
     tag: u32,
     lambda_id: FxLambdaId,
-    original_lambda_id: u32,
+    index_in_type_map: u32,
     c_type: CType,
     ctx: Vec<TypePointer>,
 }

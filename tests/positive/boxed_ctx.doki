@@ -1,0 +1,11 @@
+import "../../library/prelude.doki"
+
+p = d: a: b: let _ = d
+    in plus a b
+
+main = _:
+    let id = a: a
+    in let r = id (p (id p))
+    in let a = r 1 2
+    in let b = id (p 1) 3 4
+    in println (i64_to_string (plus a b))

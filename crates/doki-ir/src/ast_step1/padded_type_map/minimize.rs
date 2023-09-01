@@ -19,7 +19,7 @@ pub fn minimize(root: TypePointer, m: &mut PaddedTypeMap) {
             if v.len() >= 2 {
                 let p = v[0];
                 for p2 in &v[1..] {
-                    m.union(p, *p2);
+                    m.union_without_insertion(p, *p2);
                 }
             }
             let p = v[0];

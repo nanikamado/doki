@@ -271,6 +271,11 @@ fn sort_aggregates_rec<'a>(
 ) {
     if i.boxed {
         refed_types.get_or_insert(i.i);
+        #[cfg(debug_assertions)]
+        {
+            let a = &h[i.i.0];
+            assert!(matches!(a, Union(_)))
+        }
         return;
     }
     if done.contains(&i.i) {

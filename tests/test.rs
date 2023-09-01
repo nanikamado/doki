@@ -253,3 +253,8 @@ fn prime_table() {
     positive_test_with_stdin("prime_table.doki", "524287", "True\n");
     positive_test_with_stdin("prime_table.doki", "68718821377", "False\n");
 }
+
+#[test]
+fn boxed_ctx() {
+    positive_test_with_stdin("boxed_ctx.doki", "", "10\n");
+}

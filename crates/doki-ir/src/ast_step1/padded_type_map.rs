@@ -103,6 +103,7 @@ impl PaddedTypeMap {
             if fix_b {
                 fix.extend(b_t.functions.iter().flat_map(|(_, ps)| ps));
             }
+            debug_assert_eq!(a_t.box_point, BoxPoint::NotSure);
             a_t.functions.extend(b_t.functions);
             let fix_a = !a_t.fixed && b_t.fixed;
             for (a, b) in pairs {
@@ -119,6 +120,37 @@ impl PaddedTypeMap {
         }
     }
 
+    pub fn union_without_insertion(&mut self, a: TypePointer, b: TypePointer) {
+        let a = self.find(a);
+        let b = self.find(b);
+        let (a, b) = if a < b { (a, b) } else { (b, a) };
+        if a != b {
+            let b_t = mem::replace(&mut self.map[b.0 as usize], Node::Pointer(a));
+            let (Node::Terminal(a_t), Node::Terminal(b_t)) = (&self.map[a.0 as usize], b_t) else {
+                panic!()
+            };
+            debug_assert_eq!(a_t.box_point, b_t.box_point);
+            let functions = a_t.functions.clone();
+            for (a, b) in a_t
+                .type_map
+                .values()
+                .flatten()
+                .copied()
+                .collect_vec()
+                .into_iter()
+                .zip_eq(b_t.type_map.values().flatten())
+            {
+                self.union_without_insertion(a, *b);
+            }
+            for ((l_a, a), (l_b, b)) in functions.into_iter().zip_eq(b_t.functions) {
+                self.union_without_insertion(l_a.root_t, l_b.root_t);
+                for (a, b) in a.into_iter().zip_eq(b) {
+                    self.union_without_insertion(a, b);
+                }
+            }
+        }
+    }
+
     pub fn insert_lambda_id(
         &mut self,
         p: TypePointer,
@@ -126,6 +158,7 @@ impl PaddedTypeMap {
         lambda_ctx: Vec<TypePointer>,
     ) {
         let t = self.dereference_mut(p);
+        debug_assert_eq!(t.box_point, BoxPoint::NotSure);
         t.functions.push((id, lambda_ctx.clone()));
         if t.fixed {
             for p in lambda_ctx {

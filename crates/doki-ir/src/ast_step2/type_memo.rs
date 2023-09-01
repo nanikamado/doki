@@ -191,18 +191,19 @@ impl TypeMemo {
             &self.lambda_ids_pointer_memo[&p]
         } else {
             let mut new_ids = BTreeMap::new();
-            for (original_id, args) in map
+            for (i, (original_id, args)) in map
                 .dereference_without_find(p)
                 .functions
                 .clone()
                 .into_iter()
+                .enumerate()
             {
                 let id = original_id.map_type(|p| {
                     let t = self.get_type_for_hash(p, map);
                     debug_assert!(!t.contains_broken_link());
                     self.type_id_generator.get_or_insert(t)
                 });
-                new_ids.entry(id).or_insert((original_id.id, args));
+                new_ids.entry(id).or_insert((i as u32, args));
             }
             self.lambda_ids_pointer_memo.insert(p, new_ids);
             &self.lambda_ids_pointer_memo[&p]
@@ -257,10 +258,10 @@ impl TypeMemo {
                 args,
             })
         }
-        for (id, (original_id, ctx)) in self.get_lambda_ids_pointer(p, map).clone() {
+        for (id, (index_in_type_map, ctx)) in self.get_lambda_ids_pointer(p, map).clone() {
             let args = ctx.iter().map(|c| self.get_type_inner(*c, map));
             let args = if let Some(box_point) = &box_point {
-                args.zip_eq(&box_point[&TypeTagForBoxPoint::Lambda(original_id)])
+                args.zip_eq(&box_point[&TypeTagForBoxPoint::Lambda(index_in_type_map)])
                     .map(|(t, boxed)| set_refed(t, *boxed))
                     .collect()
             } else {
