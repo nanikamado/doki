@@ -1,14 +1,6 @@
 import "../../library/prelude.doki"
 
-is_prime_aux = i: n: match eq i n with
-        True => True,
-        False => match rem n i with
-                0 => False,
-                _ => f "is_prime_aux" (plus i 1) n,
-            end,
-    end
-
-fs = Cons (Cons "read_num" read_num)
+table = Cons (Cons "read_num" read_num)
         (Cons (Cons "is_prime_aux" is_prime_aux)
         (Cons (Cons "bool_to_string" bool_to_string)
         (Cons (Cons "println" println)
@@ -19,7 +11,15 @@ lookup = Cons (Cons k v) t: s: match str_eq s k with
         False => lookup t s,
     end
 
-f = s: lookup fs s
+f = s: lookup table s
+
+is_prime_aux = i: n: match eq i n with
+        True => True,
+        False => match rem n i with
+                0 => False,
+                _ => f "is_prime_aux" (plus i 1) n,
+            end,
+    end
 
 main = _:
     f "println" (f "bool_to_string" (f "is_prime_aux" 2 (f "read_num" 0)))
