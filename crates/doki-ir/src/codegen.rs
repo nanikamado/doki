@@ -447,7 +447,7 @@ impl DisplayWithEnv for FunctionBodyWithCtx<'_> {
                     write!(f, "goto label_{label};")?;
                 }
                 EndInstruction::Panic { msg } => {
-                    write!(f, "panic({msg:?});")?;
+                    write!(f, r#"panic("{}");"#, StringEscape(msg))?;
                 }
             }
         }
@@ -497,7 +497,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
         match e {
             Expr::I64(a) => write!(fmt, "{a}"),
             Expr::U8(a) => write!(fmt, "{a}"),
-            Expr::Str(a) => write!(fmt, "{a:?}"),
+            Expr::Str(a) => write!(fmt, "\"{}\"", StringEscape(a)),
             Expr::Ident(i) => {
                 debug_assert_eq!(**t, env.get_type(*i));
                 i.fmt_with_env(env, fmt)
@@ -631,6 +631,27 @@ impl DisplayWithEnv for CType {
         }?;
         if self.boxed {
             write!(f, "*")?
+        }
+        Ok(())
+    }
+}
+
+struct StringEscape<'a>(&'a str);
+
+impl Display for StringEscape<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for c in self.0.bytes() {
+            match c {
+                b'\'' => write!(f, r"\'"),
+                b'\"' => write!(f, r#"\""#),
+                b'\\' => write!(f, r"\\"),
+                b'?' => write!(f, r"\?"),
+                b' '..=b'~' => write!(f, "{}", c as char),
+                b'\n' => write!(f, r"\n"),
+                b'\t' => write!(f, r"\t"),
+                b'\r' => write!(f, r"\r"),
+                _ => write!(f, r"\x{:02X}", c),
+            }?;
         }
         Ok(())
     }
