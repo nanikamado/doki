@@ -270,3 +270,16 @@ fn prime_table_deletion() {
 fn boxed_ctx() {
     positive_test_with_stdin("boxed_ctx.doki", "", "10\n");
 }
+
+#[test]
+fn global_order() {
+    positive_test_with_stdin("global_order.doki", "", "306\n");
+}
+
+#[test]
+fn global_order_negative() {
+    negative_test("global_order.doki")
+        .stderr("error: cycle detected when initializing global variables\n")
+        .stdout("")
+        .code(1);
+}

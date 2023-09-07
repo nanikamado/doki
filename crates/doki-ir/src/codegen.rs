@@ -38,6 +38,7 @@ impl Display for Codegen<'_> {
             constructor_names: &ast.constructor_names,
             c_type_definitions: &ast.c_type_definitions,
             refed_types,
+            global_variable_initialization: false,
         };
         let structs = sorted.iter().format_with("", |(i, t), f| {
             let i = CType {
@@ -109,11 +110,10 @@ impl Display for Codegen<'_> {
             ast.variable_decls
                 .iter()
                 .format_with("", |d, f| f(&format_args!(
-                    "static {} g_{}_{};",
+                    "static {0} {1};static {0} init_{1}(void);",
                     Dis(&d.c_t, env),
-                    d.decl_id,
-                    convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
-                )))
+                    Dis(&VariableId::Global(d.decl_id), env),
+                ))),
         )?;
         write!(
             f,
@@ -149,16 +149,24 @@ impl Display for Codegen<'_> {
             ast.variable_decls
                 .iter()
                 .format_with("", |d, f| f(&format_args!(
-                    "static {} init_g_{}_{}(void){}",
+                    "static {0} init_{1}_inner(void){2}\
+                    static char init_status_{1}=0;\
+                    static {0} init_{1}(void){{\
+                        if(init_status_{1}==2)return {1};\
+                        else if(init_status_{1}==1)panic(\"cycle detected when initializing global variables\");\
+                        init_status_{1}=1;\
+                        {1}=init_{1}_inner();\
+                        init_status_{1}=2;\
+                        return {1};\
+                    }}",
                     Dis(&d.c_t, env),
-                    d.decl_id,
-                    convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
+                    Dis(&VariableId::Global(d.decl_id), env),
                     Dis(
                         &FunctionBodyWithCtx {
                             f: &d.value,
                             parameters: &[],
                         },
-                        env
+                        Env { global_variable_initialization: true, ..env }
                     )
                 ))),
         )?;
@@ -190,9 +198,8 @@ impl Display for Codegen<'_> {
                 .iter()
                 .rev()
                 .format_with("", |d, f| f(&format_args!(
-                    "g_{0}_{1}=init_g_{0}_{1}();",
-                    d.decl_id,
-                    convert_name(&env.variable_names[&VariableId::Global(d.decl_id)]),
+                    "init_{0}();",
+                    Dis(&VariableId::Global(d.decl_id), env),
                 ))),
         )
     }
@@ -336,12 +343,13 @@ fn write_fns(s: &mut std::fmt::Formatter<'_>, functions: &[Function], env: Env, 
 
 #[derive(Debug, Clone, Copy)]
 struct Env<'a> {
-    variable_names: &'a FxHashMap<VariableId, String>,
+    variable_names: &'a FxHashMap<GlobalVariableId, String>,
     local_variable_types: &'a LocalVariableCollector<(Option<Type>, CType)>,
     global_variable_types: &'a FxHashMap<GlobalVariableId, CType>,
     constructor_names: &'a ConstructorNames,
     c_type_definitions: &'a [CTypeScheme<CType>],
     refed_types: &'a FxHashMap<StructId, usize>,
+    global_variable_initialization: bool,
 }
 
 impl Env<'_> {
@@ -568,7 +576,11 @@ impl DisplayWithEnv for VariableId {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VariableId::Global(d) => {
-                write!(f, "g_{d}_{}", convert_name(&env.variable_names[self]))
+                if env.global_variable_initialization {
+                    write!(f, "init_g_{d}_{}()", convert_name(&env.variable_names[d]))
+                } else {
+                    write!(f, "g_{d}_{}", convert_name(&env.variable_names[d]))
+                }
             }
             VariableId::Local(d) => {
                 write!(f, "l_{d}")

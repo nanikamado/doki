@@ -1,0 +1,10 @@
+import "../../library/prelude.doki"
+
+e = plus (plus d a) d
+d = plus c 1
+c = plus b 1
+b = plus a 1
+a = 100
+
+main = _:
+    println (i64_to_string e)

@@ -30,7 +30,7 @@ use std::fmt::{Debug, Display};
 pub struct Ast<'a> {
     pub variable_decls: Vec<VariableDecl<'a>>,
     pub entry_block: FunctionBody,
-    pub variable_names: FxHashMap<VariableId, String>,
+    pub variable_names: FxHashMap<GlobalVariableId, String>,
     pub functions: Vec<Function>,
     pub variable_types: LocalVariableCollector<(Option<Type>, CType)>,
     pub constructor_names: ConstructorNames,
@@ -188,7 +188,7 @@ impl<'a> Ast<'a> {
         }
         let mut variable_names = FxHashMap::default();
         for v in &memo.monomorphized_variables {
-            variable_names.insert(VariableId::Global(v.decl_id), v.name.to_string());
+            variable_names.insert(v.decl_id, v.name.to_string());
         }
         let functions = memo
             .functions
@@ -848,11 +848,12 @@ impl<'a, 'b> Env<'a, 'b> {
                 basic_block_env.assign(v, e)
             }
             ast_step1::Expr::Ident(l) => {
+                #[cfg(debug_assertions)]
                 match l {
                     ast_step1::VariableId::Local(_) => (),
                     ast_step1::VariableId::Global(_, _, p2) => {
                         let p2 = self.map.clone_pointer(*p2, replace_map);
-                        debug_assert_eq!(p, p2);
+                        assert_eq!(p, p2);
                     }
                 }
                 let l = self.get_defined_variable_id(l, root_t, replace_map);
