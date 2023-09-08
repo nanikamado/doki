@@ -72,7 +72,6 @@ impl Display for Codegen<'_> {
             #include <stdio.h>
             #include <stdlib.h>
             #include <inttypes.h>
-            #include <unistd.h>
             struct diverge{{}};
             {}{}{}",
             structs,
@@ -224,10 +223,7 @@ impl Display for PrimitiveDefPrint<'_> {
             Lt => write!(f, "return _0 < _1;"),
             Eq => write!(f, "return _0 == _1;"),
             EqU8 => write!(f, "return _0 == _1;"),
-            Write => write!(
-                f,
-                r#"write(STDOUT_FILENO, _0, _1);return intrinsic_unit();"#
-            ),
+            Write => write!(f, r#"fwrite(_0,1,_1,stdout);return intrinsic_unit();"#),
             Mut => {
                 let n = self.mutted_types[&self.arg_ts[0]];
                 write!(f, "return mut_{n}(_0);")
