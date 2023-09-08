@@ -103,7 +103,7 @@ impl Display for Codegen<'_> {
                     Dis(t, env),
                 )))
         )?;
-        write_fns(f, &ast.functions, env, false);
+        write_fns(f, &ast.functions, env, false)?;
         write!(
             f,
             "{}",
@@ -170,7 +170,7 @@ impl Display for Codegen<'_> {
                     )
                 ))),
         )?;
-        write_fns(f, &ast.functions, env, true);
+        write_fns(f, &ast.functions, env, true)?;
         debug_assert_eq!(ast.entry_block.basic_blocks.len(), 1);
         let EndInstruction::Ret(l) = ast.entry_block.basic_blocks[0].end_instruction else {
             panic!()
@@ -305,40 +305,46 @@ fn sort_aggregates_rec<'a>(
     }
 }
 
-fn write_fns(s: &mut std::fmt::Formatter<'_>, functions: &[Function], env: Env, write_body: bool) {
-    write!(
-        s,
-        "{}",
-        functions.iter().format_with("", |function, f| {
-            let ps = function.parameters.iter().format_with(",", |l, f| {
-                let (t, ct) = env.local_variable_types.get_type(*l);
-                f(&format_args!(
-                    "{} {}/*{}*/",
-                    Dis(ct, env),
-                    Dis(&VariableId::Local(*l), env),
-                    ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
-                ))
-            });
+fn write_fns(
+    f: &mut std::fmt::Formatter<'_>,
+    functions: &[Function],
+    env: Env,
+    write_body: bool,
+) -> std::fmt::Result {
+    for function in functions {
+        let ps = function.parameters.iter().format_with(",", |l, f| {
+            let (t, ct) = env.local_variable_types.get_type(*l);
             f(&format_args!(
-                "static {} {}({})",
-                Dis(&env.get_type(function.ret), env),
-                function.id,
-                ps
-            ))?;
-            if write_body {
-                f(&Dis(
+                "{} {}/*{}*/",
+                Dis(ct, env),
+                Dis(&VariableId::Local(*l), env),
+                ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
+            ))
+        });
+        write!(
+            f,
+            "static {} {}({})",
+            Dis(&env.get_type(function.ret), env),
+            function.id,
+            ps
+        )?;
+        if write_body {
+            write!(
+                f,
+                "{}",
+                Dis(
                     &FunctionBodyWithCtx {
                         f: &function.body,
                         parameters: &function.parameters,
                     },
                     env,
-                ))
-            } else {
-                f(&";")
-            }
-        })
-    )
-    .unwrap()
+                )
+            )?;
+        } else {
+            write!(f, ";")?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
