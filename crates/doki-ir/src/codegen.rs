@@ -312,37 +312,55 @@ fn write_fns(
     write_body: bool,
 ) -> std::fmt::Result {
     for function in functions {
-        let ps = function.parameters.iter().format_with(",", |l, f| {
-            let (t, ct) = env.local_variable_types.get_type(*l);
-            f(&format_args!(
-                "{} {}/*{}*/",
-                Dis(ct, env),
-                Dis(&VariableId::Local(*l), env),
-                ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
-            ))
-        });
-        write!(
-            f,
-            "static {} {}({})",
-            Dis(&env.get_type(function.ret), env),
-            function.id,
-            ps
-        )?;
-        if write_body {
+        fn write_fn(
+            f: &mut std::fmt::Formatter<'_>,
+            function: &Function,
+            env: Env,
+            write_body: bool,
+            global_variable_initialization: bool,
+        ) -> std::fmt::Result {
+            let ps = function.parameters.iter().format_with(",", |l, f| {
+                let (t, ct) = env.local_variable_types.get_type(*l);
+                f(&format_args!(
+                    "{} {}/*{}*/",
+                    Dis(ct, env),
+                    Dis(&VariableId::Local(*l), env),
+                    ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
+                ))
+            });
             write!(
                 f,
-                "{}",
-                Dis(
-                    &FunctionBodyWithCtx {
-                        f: &function.body,
-                        parameters: &function.parameters,
-                    },
-                    env,
-                )
+                "static {} {}{}({})",
+                Dis(&env.get_type(function.ret), env),
+                if global_variable_initialization {
+                    "init_"
+                } else {
+                    ""
+                },
+                function.id,
+                ps
             )?;
-        } else {
-            write!(f, ";")?;
+            if write_body {
+                write!(
+                    f,
+                    "{}",
+                    Dis(
+                        &FunctionBodyWithCtx {
+                            f: &function.body,
+                            parameters: &function.parameters,
+                        },
+                        Env {
+                            global_variable_initialization,
+                            ..env
+                        }
+                    )
+                )
+            } else {
+                write!(f, ";")
+            }
         }
+        write_fn(f, function, env, write_body, false)?;
+        write_fn(f, function, env, write_body, true)?;
     }
     Ok(())
 }
@@ -514,7 +532,12 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 tail_call: _,
             } => write!(
                 fmt,
-                "{f}({})",
+                "{}{f}({})",
+                if env.global_variable_initialization {
+                    "init_"
+                } else {
+                    ""
+                },
                 args.iter().format_with(",", |a, f| f(&Dis(a, env)))
             ),
             Expr::BasicCall { args, id } => {
