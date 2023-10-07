@@ -527,11 +527,6 @@ impl<'a, 'b> Env<'a, 'b> {
                 let p = self.local_variable_types_old.get(*v);
                 let p = self.map.clone_pointer(p, replace_map);
                 let i = self.c_type(PointerForCType::from(p)).i.0;
-                if let CTypeScheme::Diverge = self.c_type_definitions[i] {
-                    return Err(EndInstruction::Panic {
-                        msg: "unexpected".to_string(),
-                    });
-                }
                 let new_v = if let Some(v) = self.local_variable_replace_map.get(&(*v, root_t)) {
                     *v
                 } else {
@@ -550,6 +545,10 @@ impl<'a, 'b> Env<'a, 'b> {
                 );
                 if let Err(msg) = e {
                     Err(EndInstruction::Panic { msg })
+                } else if let CTypeScheme::Diverge = self.c_type_definitions[i] {
+                    Err(EndInstruction::Panic {
+                        msg: "unexpected".to_string(),
+                    })
                 } else {
                     Ok(())
                 }
