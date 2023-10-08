@@ -42,14 +42,8 @@ pub struct TypeForHashF;
 pub struct NormalTypeF;
 
 pub trait TypeFamily {
-    type LambdaTag: Eq
-        + Ord
-        + Clone
-        + std::hash::Hash
-        + std::fmt::Debug
-        + BrokenLinkCheck
-        + DisplayTypeWithEnv;
-    type LambdaCtx: Eq + Ord + Clone + std::hash::Hash + DebugCtx + BrokenLinkCheck;
+    type LambdaTag: Eq + Ord + Clone + std::hash::Hash + std::fmt::Debug + DisplayTypeWithEnv;
+    type LambdaCtx: Eq + Ord + Clone + std::hash::Hash + DebugCtx;
 }
 
 impl TypeFamily for TypeForHashF {
@@ -85,63 +79,14 @@ impl<T: TypeFamily> TypeOf<T> {
     pub fn len(&self) -> usize {
         self.ts.len()
     }
-
-    pub fn contains_broken_link_rec(&self, depth: u32) -> bool {
-        let depth = depth + 1;
-        self.ts
-            .iter()
-            .any(|TypeUnitOf { id: _, args }| args.iter().any(|a| a.contains_broken_link(depth)))
-    }
-
-    pub fn contains_broken_link(&self) -> bool {
-        self.contains_broken_link_rec(0)
-    }
-}
-
-pub trait BrokenLinkCheck {
-    fn contains_broken_link(&self, depth: u32) -> bool;
-}
-
-impl<T: TypeFamily> BrokenLinkCheck for TypeInnerOf<T> {
-    fn contains_broken_link(&self, depth: u32) -> bool {
-        match self {
-            TypeInnerOf::RecursionPoint { i, refed: _ } => i.contains_broken_link(depth),
-            TypeInnerOf::Type(t) => t.contains_broken_link_rec(depth),
-        }
-    }
-}
-
-impl BrokenLinkCheck for u32 {
-    fn contains_broken_link(&self, depth: u32) -> bool {
-        *self >= depth
-    }
-}
-
-impl BrokenLinkCheck for TypeUnique {
-    fn contains_broken_link(&self, _depth: u32) -> bool {
-        false
-    }
-}
-
-impl BrokenLinkCheck for () {
-    fn contains_broken_link(&self, _depth: u32) -> bool {
-        false
-    }
-}
-
-impl<T: BrokenLinkCheck> BrokenLinkCheck for Vec<T> {
-    fn contains_broken_link(&self, depth: u32) -> bool {
-        self.iter().any(|a| a.contains_broken_link(depth))
-    }
 }
 
 #[derive(Debug, Default)]
 pub struct TypeMemo {
-    type_memo: FxHashMap<TypePointer, TypeInner>,
-    type_memo_for_hash: FxHashMap<TypePointer, TypeInnerForHash>,
+    type_memo: FxHashMap<TypePointer, Type>,
+    type_memo_for_hash: FxHashMap<TypePointer, TypeForHash>,
     pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
     trace: FxHashMap<TypePointer, usize>,
-    used_trace: FxHashSet<TypePointer>,
     #[allow(clippy::type_complexity)]
     lambda_ids_pointer_memo:
         FxHashMap<TypePointer, BTreeMap<LambdaId<TypeUnique>, (u32, Vec<TypePointer>)>>,
@@ -149,33 +94,28 @@ pub struct TypeMemo {
 
 impl TypeMemo {
     pub fn get_type(&mut self, p: TypePointer, map: &mut PaddedTypeMap) -> Type {
-        debug_assert!(self.trace.is_empty());
-        debug_assert!(self.used_trace.is_empty());
-        let t = self.get_type_inner(p, map);
-        match t {
-            TypeInnerOf::RecursionPoint { .. } => panic!(),
-            TypeInnerOf::Type(t) => {
-                debug_assert!(!t.contains_broken_link());
-                t
-            }
+        let p = map.find(p);
+        if let Some(t) = self.type_memo.get(&p) {
+            t.clone()
+        } else {
+            let t = self.get_type_inner(p, map);
+            self.trace.clear();
+            let TypeInnerOf::Type(t) = t else { panic!() };
+            self.type_memo.insert(p, t.clone());
+            t
         }
     }
 
     pub fn get_type_for_hash(&mut self, p: TypePointer, map: &mut PaddedTypeMap) -> TypeForHash {
-        map.minimize(p);
-        let t = self.get_type_inner_for_hash(
-            p,
-            &mut Default::default(),
-            &mut Default::default(),
-            map,
-            0,
-        );
-        match t {
-            TypeInnerOf::RecursionPoint { .. } => panic!(),
-            TypeInnerOf::Type(t) => {
-                debug_assert!(!t.contains_broken_link());
-                t
-            }
+        let p = map.find(p);
+        if let Some(t) = self.type_memo_for_hash.get(&p) {
+            t.clone()
+        } else {
+            map.minimize(p);
+            let t = TypeMemo::get_type_inner_for_hash(p, &mut Default::default(), map);
+            let TypeInnerOf::Type(t) = t else { panic!() };
+            self.type_memo_for_hash.insert(p, t.clone());
+            t
         }
     }
 
@@ -200,7 +140,6 @@ impl TypeMemo {
             {
                 let id = original_id.map_type(|p| {
                     let t = self.get_type_for_hash(p, map);
-                    debug_assert!(!t.contains_broken_link());
                     self.type_id_generator.get_or_insert(t)
                 });
                 new_ids.entry(id).or_insert((i as u32, args));
@@ -212,18 +151,13 @@ impl TypeMemo {
 
     fn get_type_inner(&mut self, p: TypePointer, map: &mut PaddedTypeMap) -> TypeInner {
         let p = map.find(p);
-        if let Some(t) = self.type_memo.get(&p) {
-            return t.clone();
-        }
-        let depth = self.trace.len();
         if let Some(d) = self.trace.get(&p) {
-            self.used_trace.insert(p);
             return TypeInnerOf::RecursionPoint {
-                i: (depth - *d - 1) as u32,
+                i: (self.trace.len() - *d - 1) as u32,
                 refed: false,
             };
         }
-        self.trace.insert(p, depth);
+        self.trace.insert(p, self.trace.len());
         let mut ts = SmallVec::new();
         let terminal = map.dereference_without_find(p);
         let reference_point = terminal.box_point.clone();
@@ -272,42 +206,26 @@ impl TypeMemo {
                 args,
             });
         }
-        let t = TypeInnerOf::Type(TypeOf {
+        TypeInnerOf::Type(TypeOf {
             ts: Rc::new(ts),
             refed: false,
             diverging: false,
-        });
-        self.trace.remove(&p);
-        self.used_trace.remove(&p);
-        if self.used_trace.is_empty() {
-            let o = self.type_memo.insert(p, t.clone());
-            debug_assert!(o.is_none());
-        }
-        t
+        })
     }
 
     fn get_type_inner_for_hash(
-        &mut self,
         p: TypePointer,
         trace: &mut FxHashMap<TypePointer, u32>,
-        used_trace: &mut FxHashSet<TypePointer>,
         map: &PaddedTypeMap,
-        depth: u32,
     ) -> TypeInnerForHash {
         let p = map.find_imm(p);
-        if let Some(t) = self.type_memo_for_hash.get(&p) {
-            debug_assert!(!trace.contains_key(&p));
-            return t.clone();
-        }
         if let Some(d) = trace.get(&p) {
-            used_trace.insert(p);
             return TypeInnerOf::RecursionPoint {
-                i: depth - *d - 1,
+                i: trace.len() as u32 - *d - 1,
                 refed: false,
             };
         }
-        trace.insert(p, depth);
-        let depth = depth + 1;
+        trace.insert(p, trace.len() as u32);
         let mut ts = SmallVec::new();
         let terminal = map.dereference_without_find(p);
         let set_refed = |t: TypeInnerForHash, boxed: Option<bool>| {
@@ -330,7 +248,7 @@ impl TypeMemo {
         for (id, args) in &terminal.type_map {
             let args = args
                 .iter()
-                .map(|t| self.get_type_inner_for_hash(*t, trace, used_trace, map, depth));
+                .map(|t| TypeMemo::get_type_inner_for_hash(*t, trace, map));
             let args = if let Some(box_point) = box_point {
                 args.zip_eq(&box_point[&TypeTagForBoxPoint::Normal(*id)])
                     .map(|(t, boxed)| set_refed(t, *boxed))
@@ -347,7 +265,7 @@ impl TypeMemo {
         for (l, _) in &terminal.functions {
             let l = LambdaId {
                 id: l.id,
-                root_t: self.get_type_inner_for_hash(l.root_t, trace, used_trace, map, depth),
+                root_t: TypeMemo::get_type_inner_for_hash(l.root_t, trace, map),
             };
             ls.insert(l);
         }
@@ -357,18 +275,11 @@ impl TypeMemo {
                 args: SmallVec::new(),
             });
         }
-        trace.remove(&p);
-        let t = TypeInnerOf::Type(TypeOf {
+        TypeInnerOf::Type(TypeOf {
             ts: Rc::new(ts),
             refed: false,
             diverging: false,
-        });
-        if used_trace.is_empty() {
-            let o = self.type_memo_for_hash.insert(p, t.clone());
-            debug_assert!(o.is_none());
-        }
-        used_trace.remove(&p);
-        t
+        })
     }
 }
 
