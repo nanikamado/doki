@@ -58,6 +58,11 @@ list_map = l: f: match l with
         Cons h t => Cons (f h) (list_map t f),
     end
 
+list_append = as: bs: match as with
+        Nil => bs,
+        Cons h t => Cons h (list_append t bs),
+    end
+
 pop_str = Str l p:
     match l with
         0 => Nil,
