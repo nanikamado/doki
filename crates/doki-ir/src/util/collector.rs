@@ -5,7 +5,6 @@ use std::ops::Index;
 #[derive(Debug, Clone)]
 pub struct Collector<T: Eq + Hash> {
     map: FxHashMap<T, usize>,
-    map_rev: FxHashMap<usize, T>,
     len: usize,
 }
 
@@ -15,10 +14,9 @@ impl<T: Eq + Hash + Clone> Collector<T> {
     }
 
     pub fn get_or_insert(&mut self, t: T) -> usize {
-        *self.map.entry(t).or_insert_with_key(|t| {
+        *self.map.entry(t).or_insert_with(|| {
             let i = self.len;
             self.len += 1;
-            self.map_rev.insert(i, t.clone());
             i
         })
     }
@@ -32,8 +30,7 @@ impl<T: Eq + Hash + Clone> Collector<T> {
         if let Some(i) = self.map.get(&t) {
             *i
         } else {
-            self.map.insert(t.clone(), id);
-            self.map_rev.insert(id, t);
+            self.map.insert(t, id);
             id
         }
     }
@@ -42,16 +39,8 @@ impl<T: Eq + Hash + Clone> Collector<T> {
         self.map.contains_key(t)
     }
 
-    pub fn get_rev(&self, id: usize) -> Option<&T> {
-        self.map_rev.get(&id)
-    }
-
     pub fn as_raw(&self) -> &FxHashMap<T, usize> {
         &self.map
-    }
-
-    pub fn rev_map_as_raw(&self) -> &FxHashMap<usize, T> {
-        &self.map_rev
     }
 
     pub fn len(&self) -> usize {
@@ -63,7 +52,6 @@ impl<T: Eq + Hash> Default for Collector<T> {
     fn default() -> Self {
         Self {
             map: Default::default(),
-            map_rev: Default::default(),
             len: 0,
         }
     }
