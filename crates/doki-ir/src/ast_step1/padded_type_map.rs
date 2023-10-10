@@ -504,6 +504,15 @@ mod replace_map {
         pub fn is_empty(&self) -> bool {
             self.map.is_empty() && self.replaced.is_empty()
         }
+
+        pub fn len(&self) -> usize {
+            self.replaced.len()
+        }
+
+        pub fn clear(&mut self) {
+            self.map.clear();
+            self.replaced.clear();
+        }
     }
 }
 

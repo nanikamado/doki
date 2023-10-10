@@ -8,6 +8,7 @@ pub use self::padded_type_map::{
 use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariable};
 use crate::util::scc;
 use itertools::Itertools;
+use owo_colors::OwoColorize;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::{Debug, Display};
 use std::mem;
@@ -229,19 +230,29 @@ impl TypeInfEnv<'_> {
                                 let unreplicatables =
                                     self.unreplicatable_pointers.get(decl_id).unwrap();
                                 let v_cloned = self.type_map.clone_pointer(p, replace_map);
-                                self.type_map.union(t, v_cloned);
-                                *pp = t;
-                                let mut unfixed = unreplicatables
-                                    .unfixed
-                                    .iter()
-                                    .map(|p| self.type_map.clone_pointer(*p, replace_map))
-                                    .collect_vec();
-                                if !unfixed.is_empty() {
-                                    self.unfixed_unreplicatable_pointers_in_local_variables
-                                        .insert(*v, unfixed.clone());
+                                if replace_map.len() >= 100 {
+                                    log::info!(
+                                        "     {} skipping polymorphism because type is too big",
+                                        "Warning".yellow().bold()
+                                    );
+                                    replace_map.clear();
+                                    self.type_map.union(p, t);
+                                    *pp = p;
+                                } else {
+                                    self.type_map.union(t, v_cloned);
+                                    *pp = t;
+                                    let mut unfixed = unreplicatables
+                                        .unfixed
+                                        .iter()
+                                        .map(|p| self.type_map.clone_pointer(*p, replace_map))
+                                        .collect_vec();
+                                    if !unfixed.is_empty() {
+                                        self.unfixed_unreplicatable_pointers_in_local_variables
+                                            .insert(*v, unfixed.clone());
+                                    }
+                                    self.unfixed_unreplicatable_pointers_of_current_scc
+                                        .append(&mut unfixed);
                                 }
-                                self.unfixed_unreplicatable_pointers_of_current_scc
-                                    .append(&mut unfixed);
                             }
                         }
                         Expr::Ident(VariableId::Local(d)) => {
