@@ -236,6 +236,7 @@ struct Env<'a, 'b> {
     c_type_memo: FxHashMap<PointerForCType, CType>,
     c_type_memo_from_hash: Collector<CTypeForHash>,
     c_type_for_hash_memo: FxHashMap<TypePointer, CTypeForHash>,
+    c_type_for_hash_memo_with_tag: FxHashMap<(TypePointer, u32), CTypeForHash>,
     c_type_definitions: Vec<CTypeScheme<CType>>,
     normalizer_for_c_type: UnionFind<PointerForCType>,
     job_stack: Vec<Job>,
@@ -320,6 +321,7 @@ impl<'a, 'b> Env<'a, 'b> {
             c_type_memo: Default::default(),
             c_type_memo_from_hash,
             c_type_for_hash_memo: Default::default(),
+            c_type_for_hash_memo_with_tag: Default::default(),
             c_type_definitions,
             normalizer_for_c_type: Default::default(),
             job_stack: Vec::with_capacity(20),
@@ -1246,8 +1248,7 @@ impl<'a, 'b> Env<'a, 'b> {
             debug_assert!(!self.normalizer_for_c_type.contains(p));
             self.collect_box_points(p.p);
             self.map.minimize(p.p);
-            let c_type_for_hash = self.c_type_for_hash(p);
-            if let Some(t) = self.c_type_memo_from_hash.get(&c_type_for_hash) {
+            if let Some(t) = self.c_type_from_memo(p) {
                 return CType {
                     i: StructId(t),
                     boxed: false,
@@ -1292,7 +1293,7 @@ impl<'a, 'b> Env<'a, 'b> {
                         },
                     );
                 } else {
-                    let c_type = self.c_type_memo_from_hash.get_or_insert(for_hash.clone());
+                    let c_type = self.c_type_memo_from_hash.get_or_insert(for_hash);
                     self.c_type_memo.insert(
                         t,
                         CType {
@@ -1336,32 +1337,63 @@ impl<'a, 'b> Env<'a, 'b> {
             assert!(self.map.minimized_pointers.contains(&p))
         }
         match p.modifier {
-            PointerModifier::Normal => {
-                if let CTypeForHashInner::Type(t) = self.c_type_for_hash_inner(
-                    p.p,
-                    &mut Default::default(),
-                    &mut Default::default(),
-                    0,
-                ) {
-                    t
-                } else {
-                    panic!()
-                }
-            }
+            PointerModifier::Normal => self.c_type_for_hash_inner(p.p),
             PointerModifier::UnionMember(tag) => self.c_type_for_hash_inner_with_tag(p.p, tag),
             PointerModifier::Boxed => {
-                if let CTypeForHashInner::Type(t) = self.c_type_for_hash_inner(
-                    p.p,
-                    &mut Default::default(),
-                    &mut Default::default(),
-                    0,
-                ) {
-                    CTypeForHash(vec![CTypeForHashUnit::Ref(CTypeForHashInner::Type(t))])
-                } else {
-                    panic!()
-                }
+                let t = self.c_type_for_hash_inner(p.p);
+                CTypeForHash(vec![CTypeForHashUnit::Ref(CTypeForHashInner::Type(t))])
             }
         }
+    }
+
+    fn c_type_from_memo(&self, p: PointerForCType) -> Option<usize> {
+        #[cfg(debug_assertions)]
+        if self.map.minimize_types {
+            let p = self.map.find_imm(p.p);
+            assert!(self.map.minimized_pointers.contains(&p))
+        }
+        match p.modifier {
+            PointerModifier::Normal => self
+                .c_type_for_hash_memo
+                .get(&p.p)
+                .and_then(|t| self.c_type_memo_from_hash.get(t)),
+            PointerModifier::UnionMember(tag) => {
+                let p = self.map.find_imm(p.p);
+                let p = self
+                    .normalizer_for_c_type
+                    .find_imm(PointerForCType::from(p));
+                debug_assert_eq!(p.modifier, PointerModifier::Normal);
+                let p = p.p;
+                self.c_type_for_hash_memo_with_tag
+                    .get(&(p, tag))
+                    .and_then(|t| self.c_type_memo_from_hash.get(t))
+            }
+            PointerModifier::Boxed => self.c_type_for_hash_memo.get(&p.p).and_then(|t| {
+                let t = CTypeForHash(vec![CTypeForHashUnit::Ref(CTypeForHashInner::Type(
+                    t.clone(),
+                ))]);
+                self.c_type_memo_from_hash.get(&t)
+            }),
+        }
+    }
+
+    fn collect_args(
+        &mut self,
+        args: &[TypePointer],
+        boxing: &[Option<bool>],
+        trace: &mut FxHashMap<TypePointer, u32>,
+    ) -> Vec<CTypeForHashInner> {
+        args.iter()
+            .zip(boxing)
+            .map(|(p, boxed)| {
+                let t = self.c_type_for_hash_inner_aux(*p, trace);
+                if boxed.unwrap() {
+                    CTypeForHashInner::Type(CTypeForHash(vec![CTypeForHashUnit::Ref(t)]))
+                } else {
+                    t
+                }
+            })
+            .collect()
     }
 
     fn collect_hash_unit(
@@ -1370,27 +1402,8 @@ impl<'a, 'b> Env<'a, 'b> {
         boxing: &BTreeMap<TypeTagForBoxPoint, Vec<Option<bool>>>,
         ts: &mut Vec<CTypeForHashUnit>,
         trace: &mut FxHashMap<TypePointer, u32>,
-        used_trace: &mut FxHashSet<TypePointer>,
-        depth: u32,
     ) {
         let type_map = self.map.dereference_without_find(p).type_map.clone();
-        let collect_args = |slf: &mut Self,
-                            args: Vec<TypePointer>,
-                            boxing: &[Option<bool>],
-                            trace: &mut FxHashMap<TypePointer, u32>,
-                            used_trace: &mut FxHashSet<TypePointer>| {
-            args.iter()
-                .zip(boxing)
-                .map(|(p, boxed)| {
-                    let t = slf.c_type_for_hash_inner(*p, trace, used_trace, depth);
-                    if boxed.unwrap() {
-                        CTypeForHashInner::Type(CTypeForHash(vec![CTypeForHashUnit::Ref(t)]))
-                    } else {
-                        t
-                    }
-                })
-                .collect()
-        };
         for (type_id, args) in type_map {
             match type_id {
                 TypeId::Intrinsic(tag) => match tag {
@@ -1400,17 +1413,15 @@ impl<'a, 'b> Env<'a, 'b> {
                     IntrinsicTypeTag::Unit => ts.push(CTypeForHashUnit::Aggregate(Vec::new())),
                     IntrinsicTypeTag::Fn => {}
                     IntrinsicTypeTag::Mut => {
-                        let t = self.c_type_for_hash_inner(args[0], trace, used_trace, depth);
+                        let t = self.c_type_for_hash_inner_aux(args[0], trace);
                         ts.push(CTypeForHashUnit::Ref(t));
                     }
                 },
                 TypeId::UserDefined(_) => {
-                    let args = collect_args(
-                        self,
-                        args,
+                    let args = self.collect_args(
+                        &args,
                         &boxing[&TypeTagForBoxPoint::Normal(type_id)],
                         trace,
-                        used_trace,
                     );
                     ts.push(CTypeForHashUnit::Aggregate(args));
                 }
@@ -1418,23 +1429,19 @@ impl<'a, 'b> Env<'a, 'b> {
         }
         let ids = self.type_memo.get_lambda_ids_pointer(p, &mut self.map);
         for (index_in_type_map, args) in ids.values().cloned().collect_vec() {
-            let args = collect_args(
-                self,
-                args,
+            let args = self.collect_args(
+                &args,
                 &boxing[&TypeTagForBoxPoint::Lambda(index_in_type_map)],
                 trace,
-                used_trace,
             );
             ts.push(CTypeForHashUnit::Aggregate(args));
         }
     }
 
-    fn c_type_for_hash_inner(
+    fn c_type_for_hash_inner_aux(
         &mut self,
         p: TypePointer,
         trace: &mut FxHashMap<TypePointer, u32>,
-        used_trace: &mut FxHashSet<TypePointer>,
-        depth: u32,
     ) -> CTypeForHashInner {
         let p = self.map.find(p);
         let p = self.normalizer_for_c_type.find(PointerForCType::from(p));
@@ -1445,29 +1452,77 @@ impl<'a, 'b> Env<'a, 'b> {
         if reference_point == BoxPoint::Diverging {
             return CTypeForHashInner::Type(CTypeForHash(vec![CTypeForHashUnit::Diverge]));
         }
-        if let Some(t) = self.c_type_for_hash_memo.get(&p) {
-            debug_assert!(!trace.contains_key(&p));
-            return CTypeForHashInner::Type(t.clone());
-        }
         if let Some(d) = trace.get(&p) {
-            used_trace.insert(p);
-            return CTypeForHashInner::Index(depth - *d - 1);
+            return CTypeForHashInner::Index(trace.len() as u32 - *d - 1);
         }
-        trace.insert(p, depth);
-        let depth = depth + 1;
+        trace.insert(p, trace.len() as u32);
         let mut ts = Vec::new();
         let BoxPoint::Boxed(reference_point) = reference_point else {
             panic!()
         };
-        self.collect_hash_unit(p, &reference_point, &mut ts, trace, used_trace, depth);
+        self.collect_hash_unit(p, &reference_point, &mut ts, trace);
         let t = CTypeForHash(ts);
-        trace.remove(&p);
-        if used_trace.is_empty() {
-            let o = self.c_type_for_hash_memo.insert(p, t.clone());
-            debug_assert!(o.is_none());
-        }
-        used_trace.remove(&p);
         CTypeForHashInner::Type(t)
+    }
+
+    fn c_type_for_hash_inner(&mut self, p: TypePointer) -> CTypeForHash {
+        if let Some(t) = self.c_type_for_hash_memo.get(&p) {
+            t.clone()
+        } else {
+            let CTypeForHashInner::Type(t) =
+                self.c_type_for_hash_inner_aux(p, &mut Default::default())
+            else {
+                panic!()
+            };
+            self.c_type_for_hash_memo.insert(p, t.clone());
+            t
+        }
+    }
+
+    fn collect_hash_unit_with_tag(
+        &mut self,
+        p: TypePointer,
+        boxing: &BTreeMap<TypeTagForBoxPoint, Vec<Option<bool>>>,
+        trace: &mut FxHashMap<TypePointer, u32>,
+        tag: usize,
+    ) -> CTypeForHashUnit {
+        let type_map = self.map.dereference_without_find(p).type_map.clone();
+        if type_map.len()
+            > tag + type_map.contains_key(&TypeId::Intrinsic(IntrinsicTypeTag::Fn)) as usize
+        {
+            let (type_id, args) = type_map.iter().nth(tag).unwrap();
+            match type_id {
+                TypeId::Intrinsic(tag) => match tag {
+                    IntrinsicTypeTag::Ptr => CTypeForHashUnit::Ptr,
+                    IntrinsicTypeTag::I64 => CTypeForHashUnit::I64,
+                    IntrinsicTypeTag::U8 => CTypeForHashUnit::U8,
+                    IntrinsicTypeTag::Unit => CTypeForHashUnit::Aggregate(Vec::new()),
+                    IntrinsicTypeTag::Fn => panic!(),
+                    IntrinsicTypeTag::Mut => {
+                        let t = self.c_type_for_hash_inner_aux(args[0], trace);
+                        CTypeForHashUnit::Ref(t)
+                    }
+                },
+                TypeId::UserDefined(_) => {
+                    let args = self.collect_args(
+                        args,
+                        &boxing[&TypeTagForBoxPoint::Normal(*type_id)],
+                        trace,
+                    );
+                    CTypeForHashUnit::Aggregate(args)
+                }
+            }
+        } else {
+            let ids = self.type_memo.get_lambda_ids_pointer(p, &mut self.map);
+            let (index_in_type_map, args) =
+                ids.values().nth(tag + 1 - type_map.len()).unwrap().clone();
+            let args = self.collect_args(
+                &args,
+                &boxing[&TypeTagForBoxPoint::Lambda(index_in_type_map)],
+                trace,
+            );
+            CTypeForHashUnit::Aggregate(args)
+        }
     }
 
     fn c_type_for_hash_inner_with_tag(&mut self, p: TypePointer, tag: u32) -> CTypeForHash {
@@ -1475,22 +1530,22 @@ impl<'a, 'b> Env<'a, 'b> {
         let p = self.normalizer_for_c_type.find(PointerForCType::from(p));
         debug_assert_eq!(p.modifier, PointerModifier::Normal);
         let p = p.p;
-        let reference_point = &self.map.dereference_without_find(p).box_point;
-        let boxing = match reference_point {
-            BoxPoint::Diverging => return CTypeForHash(vec![CTypeForHashUnit::Diverge]),
-            BoxPoint::Boxed(boxing) => boxing.clone(),
-            BoxPoint::NotSure => panic!(),
-        };
-        let mut ts = Vec::new();
-        self.collect_hash_unit(
-            p,
-            &boxing,
-            &mut ts,
-            &mut Default::default(),
-            &mut Default::default(),
-            0,
-        );
-        CTypeForHash(vec![ts.into_iter().nth(tag as usize).unwrap()])
+        if let Some(t) = self.c_type_for_hash_memo_with_tag.get(&(p, tag)) {
+            t.clone()
+        } else {
+            let reference_point = &self.map.dereference_without_find(p).box_point;
+            let boxing = match reference_point {
+                BoxPoint::Diverging => return CTypeForHash(vec![CTypeForHashUnit::Diverge]),
+                BoxPoint::Boxed(boxing) => boxing.clone(),
+                BoxPoint::NotSure => panic!(),
+            };
+            let t =
+                self.collect_hash_unit_with_tag(p, &boxing, &mut Default::default(), tag as usize);
+            let t = CTypeForHash(vec![t]);
+            self.c_type_for_hash_memo_with_tag
+                .insert((p, tag), t.clone());
+            t
+        }
     }
 
     pub fn get_c_type_scheme_from_pointer(

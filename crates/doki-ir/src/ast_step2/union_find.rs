@@ -15,6 +15,14 @@ impl<T: Hash + Eq + Ord + Copy> UnionFind<T> {
         }
     }
 
+    pub fn find_imm(&self, v: T) -> T {
+        if let Some(n) = self.0.get(&v) {
+            self.find_imm(*n)
+        } else {
+            v
+        }
+    }
+
     pub fn union(&mut self, a: T, b: T) {
         let a = self.find(a);
         let b = self.find(b);
