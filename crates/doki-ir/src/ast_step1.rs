@@ -108,7 +108,8 @@ pub enum BasicFunction {
 
 struct TypeInfEnv<'a> {
     type_map: PaddedTypeMap,
-    unreplicatable_pointers: FxHashMap<GlobalVariable, UnreplicatablePointers>,
+    // Type pointers that can be replicated, but will be unreplicatable after fixed
+    unreplicatable_pointers: FxHashMap<GlobalVariable, Vec<TypePointer>>,
     local_variable_types: LocalVariableTypes,
     global_variables_before_type_inf: FxHashMap<GlobalVariable, VariableDecl<'a>>,
     global_variables: Vec<VariableDecl<'a>>,
@@ -120,12 +121,6 @@ struct TypeInfEnv<'a> {
     unfixed_unreplicatable_pointers_of_current_scc: Vec<TypePointer>,
     scc: FxHashMap<GlobalVariable, u32>,
     current_scc_id: u32,
-}
-
-#[derive(Debug)]
-struct UnreplicatablePointers {
-    // Type pointers that can be replicated, but will be unreplicatable after fixed
-    unfixed: Vec<TypePointer>,
 }
 
 impl TypeInfEnv<'_> {
@@ -142,12 +137,8 @@ impl TypeInfEnv<'_> {
             &mut self.unfixed_unreplicatable_pointers_of_current_scc,
             unfixed_unreplicatable_pointers_tmp,
         );
-        self.unreplicatable_pointers.insert(
-            decl_id,
-            UnreplicatablePointers {
-                unfixed: unfixed_unreplicatable_pointers.clone(),
-            },
-        );
+        self.unreplicatable_pointers
+            .insert(decl_id, unfixed_unreplicatable_pointers);
         self.global_variables.push(d);
     }
 
@@ -242,7 +233,6 @@ impl TypeInfEnv<'_> {
                                     self.type_map.union(t, v_cloned);
                                     *pp = t;
                                     let mut unfixed = unreplicatables
-                                        .unfixed
                                         .iter()
                                         .map(|p| self.type_map.clone_pointer(*p, replace_map))
                                         .collect_vec();
