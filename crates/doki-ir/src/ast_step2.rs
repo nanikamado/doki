@@ -171,13 +171,12 @@ impl<'a> Ast<'a> {
             let p = memo.map.new_pointer();
             let t = memo.get_type_for_hash(p);
             let type_id = memo.type_memo.type_id_generator.get_or_insert(t);
-            let (mut entry_block, _) = memo.function_body(
+            let (entry_block, _) = memo.function_body(
                 &ast.entry_block,
                 (type_id, ast.global_variable_for_entry_block),
                 &mut replace_map,
                 *ret,
             );
-            entry_block.pop();
             FunctionBody {
                 basic_blocks: entry_block,
             }
@@ -442,7 +441,7 @@ impl<'a, 'b> Env<'a, 'b> {
     fn block(
         &mut self,
         block: &ast_step1::Block,
-        catch_label: usize,
+        catch_label: Option<usize>,
         root_t: Root,
         replace_map: &mut ReplaceMap,
         basic_block_env: &mut BasicBlockEnv,
@@ -460,31 +459,25 @@ impl<'a, 'b> Env<'a, 'b> {
         replace_map: &mut ReplaceMap,
         ret: ast_step1::LocalVariable,
     ) -> (Vec<BasicBlock>, VariableId) {
-        let fallback = Some(BasicBlock {
-            instructions: Vec::new(),
-            end_instruction: EndInstruction::Panic {
-                msg: "uncaught exception detected".to_string(),
-            },
-        });
         let mut block_env = BasicBlockEnv {
-            basic_blocks: vec![None, fallback],
+            basic_blocks: vec![None],
             instructions: Vec::new(),
             current_basic_block: Some(0),
         };
-        let (end, ret) = if let Err(end) = self.block(block, 1, root_t, replace_map, &mut block_env)
-        {
-            let t = self.local_variable_types_old.get(ret);
-            let t = self.map.clone_pointer(t, replace_map);
-            let ret = self.new_variable(PointerForCType::from(t));
-            (end, VariableId::Local(ret))
-        } else {
-            let ret = self.get_defined_variable_id(
-                &ast_step1::VariableId::Local(ret),
-                root_t,
-                replace_map,
-            );
-            (EndInstruction::Ret(ret), ret)
-        };
+        let (end, ret) =
+            if let Err(end) = self.block(block, None, root_t, replace_map, &mut block_env) {
+                let t = self.local_variable_types_old.get(ret);
+                let t = self.map.clone_pointer(t, replace_map);
+                let ret = self.new_variable(PointerForCType::from(t));
+                (end, VariableId::Local(ret))
+            } else {
+                let ret = self.get_defined_variable_id(
+                    &ast_step1::VariableId::Local(ret),
+                    root_t,
+                    replace_map,
+                );
+                (EndInstruction::Ret(ret), ret)
+            };
         block_env.end_current_block(end);
         (
             block_env
@@ -519,7 +512,7 @@ impl<'a, 'b> Env<'a, 'b> {
     fn instruction(
         &mut self,
         instruction: &ast_step1::Instruction,
-        catch_label: usize,
+        catch_label: Option<usize>,
         root_t: Root,
         replace_map: &mut ReplaceMap,
         basic_block_env: &mut BasicBlockEnv,
@@ -536,15 +529,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     self.local_variable_replace_map.insert((*v, root_t), new_v);
                     new_v
                 };
-                let e = self.expr(
-                    e,
-                    p,
-                    new_v,
-                    root_t,
-                    replace_map,
-                    basic_block_env,
-                    catch_label,
-                );
+                let e = self.expr(e, p, new_v, root_t, replace_map, basic_block_env);
                 if let Err(msg) = e {
                     Err(EndInstruction::Panic { msg })
                 } else if let CTypeScheme::Diverge = self.c_type_definitions[i] {
@@ -556,6 +541,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 }
             }
             ast_step1::Instruction::Test(ast_step1::Tester::I64 { value }, l) => {
+                let catch_label = catch_label.unwrap();
                 let type_id = TypeId::Intrinsic(IntrinsicTypeTag::I64);
                 let p = self
                     .map
@@ -567,8 +553,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     type_id,
                     replace_map,
                     &mut basic_block_env.instructions,
-                    true,
-                    catch_label,
+                    Some(catch_label),
                 );
                 match a {
                     Ok(a) => {
@@ -583,6 +568,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 }
             }
             ast_step1::Instruction::Test(ast_step1::Tester::Constructor { id }, a) => {
+                let catch_label = catch_label.unwrap();
                 let p = self
                     .map
                     .clone_pointer(self.local_variable_types_old.get(*a), replace_map);
@@ -605,14 +591,15 @@ impl<'a, 'b> Env<'a, 'b> {
             ast_step1::Instruction::TryCatch(a, b) => {
                 let catch = basic_block_env.new_label();
                 let mut next = None;
-                let end_instruction =
-                    if let Err(end) = self.block(a, catch, root_t, replace_map, basic_block_env) {
-                        end
-                    } else {
-                        let l = basic_block_env.new_label();
-                        next = Some(l);
-                        EndInstruction::Goto { label: l }
-                    };
+                let end_instruction = if let Err(end) =
+                    self.block(a, Some(catch), root_t, replace_map, basic_block_env)
+                {
+                    end
+                } else {
+                    let l = basic_block_env.new_label();
+                    next = Some(l);
+                    EndInstruction::Goto { label: l }
+                };
                 basic_block_env.end_current_block(end_instruction);
                 basic_block_env.current_basic_block = Some(catch);
                 let end_instruction = if let Err(end) =
@@ -632,7 +619,9 @@ impl<'a, 'b> Env<'a, 'b> {
                     Err(end_instruction)
                 }
             }
-            ast_step1::Instruction::FailTest => Err(EndInstruction::Goto { label: catch_label }),
+            ast_step1::Instruction::FailTest => Err(EndInstruction::Goto {
+                label: catch_label.unwrap(),
+            }),
             ast_step1::Instruction::Panic { msg } => {
                 Err(EndInstruction::Panic { msg: msg.clone() })
             }
@@ -648,13 +637,12 @@ impl<'a, 'b> Env<'a, 'b> {
         type_id: TypeId,
         replace_map: &mut ReplaceMap,
         instructions: &mut Vec<Instruction>,
-        test_instead_of_panic: bool,
-        catch_label: usize,
+        catch_label: Option<usize>,
     ) -> Result<LocalVariable, String> {
         let a = self.get_defined_local_variable(a, root_t, replace_map);
         match self.get_tag_normal(p, type_id) {
             GetTagNormalResult::Tagged(tag) => {
-                if test_instead_of_panic {
+                if let Some(catch_label) = catch_label {
                     instructions.push(Instruction::Test {
                         tester: Tester::Tag { tag },
                         operand: a.into(),
@@ -665,7 +653,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     Expr::Downcast {
                         tag,
                         value: a.into(),
-                        check: !test_instead_of_panic,
+                        check: catch_label.is_none(),
                     },
                     PointerForCType {
                         p,
@@ -730,7 +718,6 @@ impl<'a, 'b> Env<'a, 'b> {
         root_t: Root,
         replace_map: &mut ReplaceMap,
         basic_block_env: &mut BasicBlockEnv,
-        catch_label: usize,
     ) -> Result<(), String> {
         use Expr::*;
         match e {
@@ -1011,8 +998,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     TypeId::UserDefined(*constructor),
                     replace_map,
                     &mut basic_block_env.instructions,
-                    false,
-                    catch_label,
+                    None,
                 )?;
                 let deref = match &self.map.dereference(p).box_point {
                     BoxPoint::NotSure => panic!(),
@@ -1052,8 +1038,7 @@ impl<'a, 'b> Env<'a, 'b> {
                             param_t,
                             replace_map,
                             &mut basic_block_env.instructions,
-                            false,
-                            catch_label,
+                            None,
                         )?
                     } else {
                         self.get_defined_local_variable(*a, root_t, replace_map)
