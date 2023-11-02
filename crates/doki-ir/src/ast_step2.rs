@@ -489,11 +489,74 @@ impl<'a, 'b> Env<'a, 'b> {
         )
     }
 
+    fn dummy_function_collect_block(
+        &mut self,
+        block: &ast_step1::Block,
+        root_t: Root,
+        replace_map: &mut ReplaceMap,
+    ) {
+        for b in &block.instructions {
+            match b {
+                ast_step1::Instruction::Assign(
+                    v,
+                    ast_step1::Expr::Lambda {
+                        lambda_id,
+                        parameter,
+                        body,
+                        ret,
+                        context,
+                    },
+                ) => {
+                    let p = self.local_variable_types_old.get(*v);
+                    let p = self.map.clone_pointer(p, replace_map);
+                    self.get_possible_functions(p);
+                    let (basic_blocks, ret) =
+                        self.dummy_function_body(body, root_t, replace_map, *ret);
+                    let parameter =
+                        self.local_variable_def_replace(*parameter, root_t, replace_map);
+                    let parameters = std::iter::once(parameter)
+                        .chain(
+                            context
+                                .iter()
+                                .map(|l| self.get_defined_local_variable(*l, root_t, replace_map)),
+                        )
+                        .collect_vec();
+                    let lambda_id = LambdaId {
+                        id: lambda_id.id,
+                        root_t: root_t.0,
+                    };
+                    let FunctionEntry::Placeholder(fx_lambda_id) =
+                        *self.functions.get(&lambda_id).unwrap()
+                    else {
+                        panic!()
+                    };
+                    self.functions.insert(
+                        lambda_id,
+                        FunctionEntry::Function(Function {
+                            id: fx_lambda_id,
+                            parameters,
+                            body: FunctionBody { basic_blocks },
+                            ret,
+                        }),
+                    );
+                }
+                ast_step1::Instruction::TryCatch(b1, b2) => {
+                    self.dummy_function_collect_block(b1, root_t, replace_map);
+                    self.dummy_function_collect_block(b2, root_t, replace_map);
+                }
+                _ => (),
+            }
+        }
+    }
+
     fn dummy_function_body(
         &mut self,
+        block: &ast_step1::Block,
+        root_t: Root,
         replace_map: &mut ReplaceMap,
         ret: ast_step1::LocalVariable,
     ) -> (Vec<BasicBlock>, VariableId) {
+        self.dummy_function_collect_block(block, root_t, replace_map);
         let t = self.local_variable_types_old.get(ret);
         let t = self.map.clone_pointer(t, replace_map);
         let ret = self.new_variable(PointerForCType::from(t));
@@ -733,7 +796,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 let (_, parameter_ct) = self.local_variable_collector.get_type(parameter);
                 let parameter_ct = &self.c_type_definitions[parameter_ct.i.0];
                 let (basic_blocks, ret) = if matches!(parameter_ct, CTypeScheme::Diverge) {
-                    self.dummy_function_body(replace_map, *ret)
+                    self.dummy_function_body(body, root_t, replace_map, *ret)
                 } else {
                     self.function_body(body, root_t, replace_map, *ret)
                 };

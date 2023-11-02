@@ -1,0 +1,9 @@
+data Cons 2
+data Nil 0
+
+main = _:
+    let acc = Nil
+    in match acc with
+        Nil => acc,
+        Cons _ _ => Cons (acc Nil),
+    end

@@ -283,3 +283,8 @@ fn global_order_negative() {
         .stdout("")
         .code(1);
 }
+
+#[test]
+fn dummy_fn_in_dummy_fn() {
+    positive_test_with_stdin("dummy_fn_in_dummy_fn.doki", "", "");
+}
