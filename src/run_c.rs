@@ -1,15 +1,13 @@
 use owo_colors::OwoColorize;
 use std::fmt::Display;
-use std::fs;
 use std::io::{ErrorKind, Write};
+use std::os::unix::process::CommandExt;
 use std::process::{self, ExitStatus, Stdio};
 
 pub fn run(f: impl Display, clang_options: &str) -> Result<ExitStatus, ()> {
-    let tmp = tempfile::Builder::new()
-        .prefix(".doki_")
-        .tempfile()
-        .unwrap();
-    let tmp_path = tmp.path().to_str().unwrap().to_string();
+    let mut tmp = std::env::temp_dir();
+    tmp.push("doki_a.out");
+    let tmp_path = tmp.to_str().unwrap();
     match process::Command::new("clang")
         .args(["-std=c17", "-x", "c", "-O2", "-o", &tmp_path, "-"])
         .args(clang_options.split_ascii_whitespace())
@@ -25,14 +23,8 @@ pub fn run(f: impl Display, clang_options: &str) -> Result<ExitStatus, ()> {
                 .unwrap();
             assert!(child.wait().unwrap().success());
             log::info!("     {} {tmp_path}", "Running".green().bold());
-            tmp.keep().unwrap();
-            let e = process::Command::new(&tmp_path)
-                .spawn()
-                .unwrap()
-                .wait()
-                .unwrap();
-            fs::remove_file(tmp_path).unwrap();
-            Ok(e)
+            process::Command::new(tmp_path).exec();
+            Err(())
         }
         Err(e) => {
             match e.kind() {
