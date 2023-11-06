@@ -87,7 +87,7 @@ fn string<'a>() -> impl Parser<'a, &'a str, String, extra::Err<Rich<'a, char>>> 
             .at_most(6)
             .slice()
             .validate(validator)
-            .delimited_by(just("u{{"), just("}}")),
+            .delimited_by(just("u{"), just("}")),
     ));
     let string = none_of(r#"\""#)
         .or(just('\\').ignore_then(escape.or(just('"'))))
