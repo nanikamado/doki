@@ -88,6 +88,7 @@ pub enum Expr {
     Call {
         f: LocalVariable,
         a: LocalVariable,
+        err_msg: String,
     },
     BasicCall {
         args: Vec<LocalVariable>,
@@ -250,7 +251,7 @@ impl TypeInfEnv<'_> {
                             let t2 = self.local_variable_types.get(*d);
                             self.type_map.union(t, t2);
                         }
-                        Expr::Call { f, a } => {
+                        Expr::Call { f, a, err_msg: _ } => {
                             if let Some(unfixed_unreplicatables) = self
                                 .unfixed_unreplicatable_pointers_in_local_variables
                                 .get(f)
@@ -461,14 +462,22 @@ impl<'a> Env<'a> {
         block.assign(ret, Expr::Ident(VariableId::Local(a)));
     }
 
-    pub fn call(
+    pub fn call<S: Display>(
         &mut self,
+        ret: LocalVariable,
         f: LocalVariable,
         a: LocalVariable,
-        ret: LocalVariable,
+        span: S,
         block: &mut Block,
     ) {
-        block.assign(ret, Expr::Call { f, a });
+        block.assign(
+            ret,
+            Expr::Call {
+                f,
+                a,
+                err_msg: span.to_string(),
+            },
+        );
     }
 
     pub fn intrinsic_call(
@@ -558,8 +567,12 @@ impl<'a> Env<'a> {
         ConstructorId(self.field_len.len() as u32 - 1)
     }
 
-    pub(crate) fn build(mut self, entry_point: GlobalVariable) -> Ast<'a> {
-        let mut entry_block = self.make_entry_block(entry_point);
+    pub(crate) fn build<S: Display>(
+        mut self,
+        entry_point: GlobalVariable,
+        span_of_main: S,
+    ) -> Ast<'a> {
+        let mut entry_block = self.make_entry_block(entry_point, span_of_main);
         let global_variable_for_entry_block = self.new_global_variable();
         let scc_v = scc(entry_point, &self.global_variables);
         let mut scc = FxHashMap::default();
@@ -607,14 +620,14 @@ impl<'a> Env<'a> {
         }
     }
 
-    fn make_entry_block(&mut self, entry_point: GlobalVariable) -> Block {
+    fn make_entry_block<S: Display>(&mut self, entry_point: GlobalVariable, span: S) -> Block {
         let mut entry_point_block = self.new_block();
         let f = self.new_local_variable();
         self.global_variable(f, entry_point, &mut entry_point_block);
         let unit = self.new_local_variable();
         self.intrinsic_construction(unit, IntrinsicConstructor::Unit, &mut entry_point_block);
         let l = self.new_local_variable();
-        self.call(f, unit, l, &mut entry_point_block);
+        self.call(l, f, unit, span, &mut entry_point_block);
         entry_point_block
     }
 }

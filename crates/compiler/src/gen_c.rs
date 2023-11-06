@@ -19,6 +19,7 @@ struct Env<'a> {
     global_variable_span_map: BTreeMap<Span<'a>, GlobalVariable>,
     str_constructor_id: Option<ConstructorId>,
     utf8_to_utf16_ln_col_map: FxHashMap<&'a str, Vec<(u32, u32)>>,
+    entry_point: Option<(GlobalVariable, Span<'a>)>,
 }
 
 fn build<'a>(
@@ -39,6 +40,7 @@ fn build<'a>(
         local_variable_span_map: Default::default(),
         global_variable_span_map: Default::default(),
         str_constructor_id: Default::default(),
+        entry_point: None,
     };
     for d in ast.data_decls.into_iter().chain(once(DataDecl {
         name: "Str",
@@ -98,6 +100,10 @@ fn build<'a>(
         let gid = env.build_env.new_global_variable();
         env.global_variable_map.insert(d.name, gid);
         env.global_variable_span_map.insert(d.ident_span, gid);
+        if d.name == "main" {
+            debug_assert!(env.entry_point.is_none());
+            env.entry_point = Some((gid, d.expr.1));
+        }
     }
     for d in ast.variable_decls {
         let ret = env.build_env.new_local_variable();
@@ -120,8 +126,10 @@ pub fn gen_c<'a>(
     minimize_types: bool,
 ) -> impl Display + 'a {
     let env = build(ast, src_files, minimize_types);
-    let entry_point = env.global_variable_map["main"];
-    env.build_env.gen_c(entry_point)
+    let (entry_point, span) = env.entry_point.unwrap();
+    let (ln, col) = env.utf8_to_utf16_ln_col_map[span.file_name][span.start];
+    env.build_env
+        .gen_c(entry_point, format!("{}:{ln}:{col}", span.file_name))
 }
 
 pub enum SpanMapEntry {
@@ -136,8 +144,11 @@ pub fn token_map<'a>(
     minimize_types: bool,
 ) -> AnalyzedSrc<'a> {
     let env = build(ast, src_files, minimize_types);
-    let entry_point = env.global_variable_map["main"];
-    let ast = env.build_env.build_ast_step2(entry_point);
+    let (entry_point, span) = env.entry_point.unwrap();
+    let (ln, col) = env.utf8_to_utf16_ln_col_map[span.file_name][span.start];
+    let ast = env
+        .build_env
+        .build_ast_step2(entry_point, format!("{}:{ln}:{col}", span.file_name));
     let global_variables: multimap::MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> = ast
         .variable_decls
         .iter()
@@ -226,7 +237,9 @@ impl<'a> Env<'a> {
                 let av = self.build_env.new_local_variable();
                 self.expr(*f, fv, block);
                 self.expr(*a, av, block);
-                self.build_env.call(fv, av, ret, block);
+                let (ln, col) = self.utf8_to_utf16_ln_col_map[span.file_name][span.start];
+                self.build_env
+                    .call(ret, fv, av, format!("{}:{ln}:{col}", span.file_name), block);
             }
             Expr::I64(s) => {
                 self.build_env.i64(ret, s.parse().unwrap(), block);

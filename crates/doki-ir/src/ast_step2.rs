@@ -910,7 +910,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 let l = self.get_defined_variable_id(l, root_t, replace_map);
                 basic_block_env.assign(v, Ident(l));
             }
-            ast_step1::Expr::Call { f, a } => {
+            ast_step1::Expr::Call { f, a, err_msg } => {
                 let f_t = self.local_variable_types_old.get(*f);
                 let f_t_p = self.map.clone_pointer(f_t, replace_map);
                 let (possible_functions, tag_len) = self.get_possible_functions(f_t_p);
@@ -922,7 +922,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     panic!()
                 };
                 if possible_functions.is_empty() {
-                    return Err("not a function".to_string());
+                    return Err(format!("not a function\n{err_msg}"));
                 }
                 if possible_functions.len() == 1 && tag_len == 1 {
                     let possible_function = possible_functions[0].clone();
@@ -965,7 +965,7 @@ impl<'a, 'b> Env<'a, 'b> {
                         basic_block_env.current_basic_block = Some(next);
                     }
                     basic_block_env.end_current_block(EndInstruction::Panic {
-                        msg: "not a function".to_string(),
+                        msg: format!("not a function\n{err_msg}"),
                     });
                     basic_block_env.current_basic_block = Some(skip);
                 }
