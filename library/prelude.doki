@@ -63,6 +63,11 @@ list_append = as: bs: match as with
         Cons h t => Cons h (list_append t bs),
     end
 
+list_flatten = ls: match ls with
+        Nil => Nil,
+        Cons l ls => list_append l (list_flatten ls),
+    end
+
 pop_str = Str l p:
     match l with
         0 => Nil,
@@ -206,6 +211,11 @@ char_list_to_num = char_list_to_num_aux 0
 
 data Err 1
 data Ok 1
+
+ok_map = a: f: match a with
+        Ok a => Ok (f a),
+        _ => a,
+    end
 
 read_num = a:
     let c = intrinsic_getchar 0
