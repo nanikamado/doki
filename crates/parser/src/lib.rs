@@ -35,7 +35,7 @@ pub enum Expr<'a> {
     },
     Call(Box<ExprWithSpan<'a>>, Box<ExprWithSpan<'a>>),
     I64(&'a str),
-    U8(&'a str),
+    U8(u8),
     Str(String),
     Match {
         operand: Box<ExprWithSpan<'a>>,
@@ -67,65 +67,6 @@ enum Decl<'a> {
     Data(DataDecl<'a>),
     Variable(VariableDecl<'a>),
     Imports(String),
-}
-
-fn string<'a>() -> impl Parser<'a, &'a str, String, extra::Err<Rich<'a, char>>> + Copy {
-    let validator = |digits, span, emitter: &mut chumsky::input::Emitter<_>| {
-        char::from_u32(u32::from_str_radix(digits, 16).unwrap()).unwrap_or_else(|| {
-            emitter.emit(Rich::custom(span, "invalid unicode character"));
-            '\u{FFFD}'
-        })
-    };
-    let escape = choice((
-        just('\\'),
-        just('n').to('\n'),
-        just('r').to('\r'),
-        just('t').to('\t'),
-        just('0').to('\0'),
-        just('x').ignore_then(text::digits(16).exactly(2).slice().validate(validator)),
-        text::digits(16)
-            .at_most(6)
-            .slice()
-            .validate(validator)
-            .delimited_by(just("u{"), just("}")),
-    ));
-    let string = none_of(r#"\""#)
-        .or(just('\\').ignore_then(escape.or(just('"'))))
-        .repeated()
-        .collect()
-        .delimited_by(just('"'), just('"'));
-    let string_with_hash = custom(move |inp| {
-        let mut s = String::new();
-        match inp.parse(
-            just('#')
-                .repeated()
-                .at_least(1)
-                .count()
-                .then_ignore(just('"')),
-        ) {
-            Ok(h) => loop {
-                let marker = inp.save();
-                if inp
-                    .parse(just('"').then(just('#').repeated().exactly(h)))
-                    .is_ok()
-                {
-                    break Ok(s);
-                } else {
-                    inp.rewind(marker);
-                    match inp.parse(escape.or(any())) {
-                        Ok(a) => {
-                            s.push(a);
-                        }
-                        Err(e) => {
-                            break Err(e);
-                        }
-                    }
-                }
-            },
-            Err(e) => Err(e),
-        }
-    });
-    string.or(string_with_hash)
 }
 
 fn raw_string<'a>() -> impl Parser<'a, &'a str, &'a str, extra::Err<Rich<'a, char>>> + Copy {
@@ -171,7 +112,40 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
         .then(any().filter(|c: &char| c.is_ident_continue()).repeated())
         .slice()
         .filter(|s| !["match", "with", "end", "let", "in", "data", "import"].contains(s));
-    let string = choice((string(), raw_string().map(|s| s.to_string())));
+    let (string, char_) = {
+        let validator = |digits, span, emitter: &mut chumsky::input::Emitter<_>| {
+            char::from_u32(u32::from_str_radix(digits, 16).unwrap()).unwrap_or_else(|| {
+                emitter.emit(Rich::custom(span, "invalid unicode character"));
+                '\u{FFFD}'
+            })
+        };
+        let escape = choice((
+            just('\\'),
+            just('n').to('\n'),
+            just('r').to('\r'),
+            just('t').to('\t'),
+            just('0').to('\0'),
+            just('"'),
+            just('\''),
+            just('x').ignore_then(text::digits(16).exactly(2).slice().validate(validator)),
+            text::digits(16)
+                .at_most(6)
+                .slice()
+                .validate(validator)
+                .delimited_by(just("u{"), just("}")),
+        ));
+        let string = none_of(r#"\""#)
+            .or(just('\\').ignore_then(escape))
+            .repeated()
+            .collect()
+            .delimited_by(just('"'), just('"'));
+        let char_ = none_of(r#"\""#)
+            .or(just('\\').ignore_then(escape))
+            .delimited_by(just('\''), just('\''))
+            .map(|c| U8(c as u8));
+        (string, char_)
+    };
+    let string = choice((string, raw_string().map(|s| s.to_string())));
     use Expr::*;
     let pattern = recursive(|pattern| {
         let p = choice((
@@ -253,7 +227,10 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
                 .map(|(e, _)| e),
             match_expr,
             let_expr,
-            int(10).then_ignore(just("u8")).map(U8),
+            int(10)
+                .then_ignore(just("u8"))
+                .map(|s| U8(str::parse(s).unwrap())),
+            char_,
             just('-').or_not().then(text::int(10)).map_slice(I64),
             string.map(Str),
             ident

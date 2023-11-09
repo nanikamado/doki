@@ -245,7 +245,7 @@ impl<'a> Env<'a> {
                 self.build_env.i64(ret, s.parse().unwrap(), block);
             }
             Expr::U8(s) => {
-                self.build_env.u8(ret, s.parse().unwrap(), block);
+                self.build_env.u8(ret, s, block);
             }
             Expr::Str(s) => {
                 let l = self.build_env.new_local_variable();
