@@ -14,6 +14,8 @@ impl IntrinsicVariable {
             Lt => "intrinsic_lt",
             Eq => "intrinsic_eq",
             EqU8 => "intrinsic_eq_u8",
+            BitAndU8 => "intrinsic_bitwise_and_u8",
+            RightShift => "intrinsic_right_shift",
             Write => "intrinsic_write",
             Mut => "intrinsic_mut",
             SetMut => "intrinsic_set",
