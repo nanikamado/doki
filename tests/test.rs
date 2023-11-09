@@ -104,7 +104,7 @@ fn fn_union() {
 #[test]
 fn fail_not_a_function() {
     negative_test("not_a_function.doki")
-        .stderr("error: not a function\n")
+        .stderr("error: not a function\ntests/negative/not_a_function.doki:1:11\n")
         .stdout("")
         .code(1);
 }
