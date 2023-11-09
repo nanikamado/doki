@@ -5,12 +5,13 @@ use std::process::{Command, Stdio};
 const OPTIONS_FOR_CLANG: &str =
     "-C=-pedantic-errors -Wno-gnu-empty-struct -Wno-gnu-empty-initializer \
 -fsanitize=undefined,address -fno-sanitize-recover -ftrivial-auto-var-init=pattern";
+const OPTIONS: &[&str] = &["-q", "run", "--unique-tmp", OPTIONS_FOR_CLANG];
 const ENVS: [(&str, &str); 1] = [("ASAN_OPTIONS", "detect_leaks=0")];
 
 fn test_example(file_name: &str, stdout: &str) {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
-        .args(["-q", "run", OPTIONS_FOR_CLANG])
+        .args(OPTIONS)
         .envs(ENVS)
         .arg(["examples/", file_name].concat())
         .assert()
@@ -22,7 +23,7 @@ fn test_example(file_name: &str, stdout: &str) {
 fn positive_test_with_stdin(file_name: &str, stdin: &str, stdout: &str) {
     let mut c = Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
-        .args(["-q", "run", OPTIONS_FOR_CLANG])
+        .args(OPTIONS)
         .envs(ENVS)
         .arg(["tests/positive/", file_name].concat())
         .stdin(Stdio::piped())
@@ -39,7 +40,7 @@ fn positive_test_with_stdin(file_name: &str, stdin: &str, stdout: &str) {
 fn positive_test(file_name: &str, stdout: &str) {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
-        .args(["-q", "run", OPTIONS_FOR_CLANG])
+        .args(OPTIONS)
         .envs(ENVS)
         .arg(["tests/positive/", file_name].concat())
         .assert()
@@ -51,7 +52,7 @@ fn positive_test(file_name: &str, stdout: &str) {
 fn negative_test(file_name: &str) -> assert_cmd::assert::Assert {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
-        .args(["-q", "run", OPTIONS_FOR_CLANG])
+        .args(OPTIONS)
         .envs(ENVS)
         .arg(["tests/negative/", file_name].concat())
         .assert()

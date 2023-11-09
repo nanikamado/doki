@@ -4,10 +4,7 @@ use std::io::{ErrorKind, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{self, ExitStatus, Stdio};
 
-pub fn run(f: impl Display, clang_options: &str) -> Result<ExitStatus, ()> {
-    let mut tmp = std::env::temp_dir();
-    tmp.push("doki_a.out");
-    let tmp_path = tmp.to_str().unwrap();
+fn run_clang(f: impl Display, clang_options: &str, tmp_path: &str) -> Result<(), ()> {
     match process::Command::new("clang")
         .args(["-std=c17", "-x", "c", "-O2", "-o", &tmp_path, "-"])
         .args(clang_options.split_ascii_whitespace())
@@ -23,8 +20,7 @@ pub fn run(f: impl Display, clang_options: &str) -> Result<ExitStatus, ()> {
                 .unwrap();
             assert!(child.wait().unwrap().success());
             log::info!("     {} {tmp_path}", "Running".green().bold());
-            process::Command::new(tmp_path).exec();
-            Err(())
+            Ok(())
         }
         Err(e) => {
             match e.kind() {
@@ -37,4 +33,30 @@ pub fn run(f: impl Display, clang_options: &str) -> Result<ExitStatus, ()> {
             Err(())
         }
     }
+}
+
+pub fn run(f: impl Display, clang_options: &str) -> Result<ExitStatus, ()> {
+    let mut tmp = std::env::temp_dir();
+    tmp.push("doki_a.out");
+    let tmp_path = tmp.to_str().unwrap();
+    run_clang(f, clang_options, tmp_path)?;
+    process::Command::new(tmp_path).exec();
+    Err(())
+}
+
+pub fn run_with_unique_tmp(f: impl Display, clang_options: &str) -> Result<ExitStatus, ()> {
+    let tmp = tempfile::Builder::new()
+        .prefix(".doki_")
+        .tempfile()
+        .unwrap();
+    let tmp_path = tmp.path().to_str().unwrap().to_string();
+    run_clang(f, clang_options, &tmp_path)?;
+    tmp.keep().unwrap();
+    let e = process::Command::new(&tmp_path)
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
+    std::fs::remove_file(tmp_path).unwrap();
+    Ok(e)
 }

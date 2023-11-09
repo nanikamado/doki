@@ -35,6 +35,8 @@ enum Commands {
         file: String,
         #[arg(long, short('C'))]
         clang_options: Option<String>,
+        #[arg(long)]
+        unique_tmp: bool,
     },
     /// Output generated c code
     #[command(alias("c"))]
@@ -88,13 +90,19 @@ fn main() -> ExitCode {
         Commands::Run {
             file,
             clang_options,
+            unique_tmp,
         } => {
             let r = compile(&file, args.no_type_minimization, &mut src_files, &mut arena);
             match r {
                 Ok(c) => {
-                    if let Ok(exit_status) =
+                    if let Ok(exit_status) = if unique_tmp {
+                        run_c::run_with_unique_tmp(
+                            c.to_string(),
+                            clang_options.as_deref().unwrap_or(""),
+                        )
+                    } else {
                         run_c::run(c.to_string(), clang_options.as_deref().unwrap_or(""))
-                    {
+                    } {
                         ExitCode::from(exit_status.code().unwrap() as u8)
                     } else {
                         ExitCode::FAILURE
