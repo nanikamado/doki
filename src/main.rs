@@ -37,10 +37,16 @@ enum Commands {
         clang_options: Option<String>,
         #[arg(long)]
         unique_tmp: bool,
+        #[arg(long)]
+        backtrace: bool,
     },
     /// Output generated c code
     #[command(alias("c"))]
-    EmitC { file: String },
+    EmitC {
+        file: String,
+        #[arg(long)]
+        backtrace: bool,
+    },
     /// Start the language server
     LanguageServer,
 }
@@ -48,11 +54,12 @@ enum Commands {
 fn compile<'a>(
     file_name: &'a str,
     no_type_minimization: bool,
+    backtrace: bool,
     src_files: &mut FxHashMap<&'a str, &'a str>,
     arena: &'a mut Arena<String>,
 ) -> Result<impl Display + 'a, ()> {
     match compiler::parse(file_name, src_files, arena) {
-        Ok(ast) => Ok(gen_c(ast, src_files, !no_type_minimization)),
+        Ok(ast) => Ok(gen_c(ast, src_files, !no_type_minimization, backtrace)),
         Err((file_name, e)) => {
             e.write(stderr(), file_name, src_files[file_name]).unwrap();
             Err(())
@@ -91,8 +98,15 @@ fn main() -> ExitCode {
             file,
             clang_options,
             unique_tmp,
+            backtrace,
         } => {
-            let r = compile(&file, args.no_type_minimization, &mut src_files, &mut arena);
+            let r = compile(
+                &file,
+                args.no_type_minimization,
+                backtrace,
+                &mut src_files,
+                &mut arena,
+            );
             match r {
                 Ok(c) => {
                     if let Ok(exit_status) = if unique_tmp {
@@ -111,8 +125,14 @@ fn main() -> ExitCode {
                 Err(()) => ExitCode::FAILURE,
             }
         }
-        Commands::EmitC { file } => {
-            let r = compile(&file, args.no_type_minimization, &mut src_files, &mut arena);
+        Commands::EmitC { file, backtrace } => {
+            let r = compile(
+                &file,
+                args.no_type_minimization,
+                backtrace,
+                &mut src_files,
+                &mut arena,
+            );
             match r {
                 Ok(c) => {
                     print!("{}", c);

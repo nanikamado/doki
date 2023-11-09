@@ -9,8 +9,9 @@ use crate::util::collector::Collector;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::Display;
-use stripmargin::StripMargin;
 use unic_ucd_category::GeneralCategory;
+
+const BACKTRACE_STACK_LIMIT: i32 = 500;
 
 pub struct Codegen<'a>(pub Ast<'a>);
 
@@ -39,6 +40,7 @@ impl Display for Codegen<'_> {
             c_type_definitions: &ast.c_type_definitions,
             refed_types,
             global_variable_initialization: false,
+            backtrace: ast.backtrace,
         };
         let structs = sorted.iter().format_with("", |(i, t), f| {
             let i = CType {
@@ -68,12 +70,21 @@ impl Display for Codegen<'_> {
         });
         write!(
             f,
-            "
-            #include <stdio.h>
+            "#include <stdio.h>
             #include <stdlib.h>
             #include <inttypes.h>
-            struct diverge{{}};
-            {}{}{}",
+            struct diverge{{}};"
+        )?;
+        if env.backtrace {
+            write!(
+                f,
+                "static char* TRACE_STACK[{BACKTRACE_STACK_LIMIT}];\
+                static int TRACE_STACK_TOP;",
+            )?;
+        }
+        write!(
+            f,
+            "{}{}{}",
             structs,
             refed_types.iter().format_with("", |(t, n), f| {
                 f(&format_args!(
@@ -118,16 +129,35 @@ impl Display for Codegen<'_> {
             f,
             "static {0} intrinsic_unit(void){{
                 return ({0}){{}};
-            }}
-            {1}{2}{3}",
+            }}",
             Dis(&unit_t, env),
-            r#"
-            |__attribute__ ((__noreturn__)) static int panic(char* msg){
-            |    fprintf(stderr, "error: %s\n", msg);
-            |    exit(1);
-            |}
-            |"#
-            .strip_margin(),
+        )?;
+        if env.backtrace {
+            write!(
+                f,
+                "__attribute__ ((__noreturn__)) static int panic(char* msg){{\
+                fprintf(stderr, \"error: %s\\nstack backtrace:\\n\", msg);\
+                while(--TRACE_STACK_TOP>=0)\
+                fprintf(stderr, \"%5d: %s\\n\", TRACE_STACK_TOP, TRACE_STACK[TRACE_STACK_TOP]);\
+                exit(1);}}\
+                static void trace_stack_push(char* span) {{\
+                    if(TRACE_STACK_TOP=={BACKTRACE_STACK_LIMIT})panic(\"stack overflow\");\
+                    TRACE_STACK[TRACE_STACK_TOP++]=span;\
+                }}\
+                "
+            )
+        } else {
+            write!(
+                f,
+                "__attribute__ ((__noreturn__)) static int panic(char* msg){{\
+                fprintf(stderr, \"error: %s\\n\", msg);\
+                exit(1);}}\
+                "
+            )
+        }?;
+        write!(
+            f,
+            "{}{}",
             ast.used_intrinsic_variables
                 .as_raw()
                 .iter()
@@ -372,6 +402,7 @@ struct Env<'a> {
     c_type_definitions: &'a [CTypeScheme<CType>],
     refed_types: &'a FxHashMap<StructId, usize>,
     global_variable_initialization: bool,
+    backtrace: bool,
 }
 
 impl Env<'_> {
@@ -481,13 +512,22 @@ impl DisplayWithEnv for Instruction {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Instruction::Assign(d, e) => {
+                if env.backtrace {
+                    if let Expr::Call { span, .. } = e {
+                        write!(f, r#"trace_stack_push("{}");"#, StringEscape(span))?;
+                    }
+                }
                 let t = &env.local_variable_types.get_type(*d).1;
                 write!(
                     f,
                     "{}={};",
                     Dis(&VariableId::Local(*d), env),
                     Dis(&(e, t), env)
-                )
+                )?;
+                if env.backtrace && matches!(e, Expr::Call { .. }) {
+                    write!(f, "TRACE_STACK_TOP--;")?;
+                }
+                Ok(())
             }
             Instruction::Test {
                 tester: Tester::Tag { tag },
@@ -528,6 +568,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 args,
                 f,
                 tail_call: _,
+                span: _,
             } => write!(
                 fmt,
                 "{}{f}({})",

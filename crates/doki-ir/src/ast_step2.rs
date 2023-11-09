@@ -38,6 +38,7 @@ pub struct Ast<'a> {
     pub local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
     pub used_intrinsic_variables: Collector<(IntrinsicVariable, Vec<CType>, CType)>,
     pub c_type_definitions: Vec<CTypeScheme<CType>>,
+    pub backtrace: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -107,6 +108,7 @@ pub enum Expr {
         args: Vec<VariableId>,
         f: FxLambdaId,
         tail_call: RefCell<bool>,
+        span: String,
     },
     BasicCall {
         args: Vec<VariableId>,
@@ -208,6 +210,7 @@ impl<'a> Ast<'a> {
             local_variable_replace_map: memo.local_variable_replace_map,
             used_intrinsic_variables: memo.used_intrinsic_variables,
             c_type_definitions: memo.c_type_definitions,
+            backtrace: ast.backtrace,
         }
     }
 }
@@ -736,6 +739,7 @@ impl<'a, 'b> Env<'a, 'b> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn fn_call(
         &mut self,
         v: LocalVariable,
@@ -743,6 +747,7 @@ impl<'a, 'b> Env<'a, 'b> {
         a: VariableId,
         ctx: VariableId,
         ctx_box_point: &[Option<bool>],
+        span: &str,
         basic_block_env: &mut BasicBlockEnv,
     ) {
         use Expr::*;
@@ -767,6 +772,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 args,
                 f: f.lambda_id,
                 tail_call: RefCell::new(false),
+                span: span.to_string(),
             },
         )
     }
@@ -928,7 +934,15 @@ impl<'a, 'b> Env<'a, 'b> {
                     let possible_function = possible_functions[0].clone();
                     let tag = TypeTagForBoxPoint::Lambda(possible_function.index_in_type_map);
                     let ctx_box_point = box_point_of_f[&tag].clone();
-                    self.fn_call(v, possible_function, a, f, &ctx_box_point, basic_block_env);
+                    self.fn_call(
+                        v,
+                        possible_function,
+                        a,
+                        f,
+                        &ctx_box_point,
+                        err_msg,
+                        basic_block_env,
+                    );
                 } else {
                     let box_point_of_f = box_point_of_f.clone();
                     let skip = basic_block_env.new_label();
@@ -959,6 +973,7 @@ impl<'a, 'b> Env<'a, 'b> {
                             a,
                             VariableId::Local(new_f),
                             &box_point_of_f[&tag],
+                            err_msg,
                             basic_block_env,
                         );
                         basic_block_env.end_current_block(EndInstruction::Goto { label: skip });

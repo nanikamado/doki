@@ -21,6 +21,7 @@ pub struct Ast<'a> {
     pub local_variable_types: LocalVariableTypes,
     pub type_map: PaddedTypeMap,
     pub constructor_names: ConstructorNames,
+    pub backtrace: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -385,6 +386,7 @@ pub struct Env<'a> {
     global_variables: FxHashMap<GlobalVariable, VariableDecl<'a>>,
     field_len: Vec<usize>,
     constructor_names: ConstructorNames,
+    backtrace: bool,
 }
 
 impl<'a> Env<'a> {
@@ -397,6 +399,7 @@ impl<'a> Env<'a> {
             global_variables: Default::default(),
             field_len: Default::default(),
             constructor_names: Default::default(),
+            backtrace: false,
         }
     }
 
@@ -617,6 +620,7 @@ impl<'a> Env<'a> {
             local_variable_types: local_variable_types_old,
             type_map,
             constructor_names: self.constructor_names,
+            backtrace: self.backtrace,
         }
     }
 
@@ -629,6 +633,10 @@ impl<'a> Env<'a> {
         let l = self.new_local_variable();
         self.call(l, f, unit, span, &mut entry_point_block);
         entry_point_block
+    }
+
+    pub fn backtrace_true(&mut self) {
+        self.backtrace = true
     }
 }
 

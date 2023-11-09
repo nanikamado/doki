@@ -108,7 +108,15 @@ fn eliminate_from_basic_block<'a>(
     inlined_fns: &mut FxHashMap<FxLambdaId, InlinedFn<'a>>,
 ) {
     match bb.instructions.last() {
-        Some(Instruction::Assign(_, Expr::Call { f, tail_call, args })) if *tail_call.borrow() => {
+        Some(Instruction::Assign(
+            _,
+            Expr::Call {
+                f,
+                tail_call,
+                args,
+                span: _,
+            },
+        )) if *tail_call.borrow() => {
             let f = *f;
             let args = args.clone();
             if let Some(&f) = inlined_fns.get(&f) {
