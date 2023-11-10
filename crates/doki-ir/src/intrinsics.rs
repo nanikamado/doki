@@ -15,7 +15,7 @@ pub enum IntrinsicVariable {
     Eq,
     EqU8,
     BitAndU8,
-    RightShift,
+    RightShiftU8,
     Write,
     Mut,
     SetMut,
@@ -45,7 +45,7 @@ impl IntrinsicVariable {
             Write | SetMut | StoreU8 => Some(IntrinsicTypeTag::Unit),
             Mut => Some(IntrinsicTypeTag::Mut),
             Malloc | AddPtr => Some(IntrinsicTypeTag::Ptr),
-            LoadU8 | I64ToU8 | BitAndU8 | RightShift => Some(IntrinsicTypeTag::U8),
+            LoadU8 | I64ToU8 | BitAndU8 | RightShiftU8 => Some(IntrinsicTypeTag::U8),
             GetMut => None,
         }
     }
@@ -101,7 +101,7 @@ impl IntrinsicVariable {
         match self {
             Minus | Plus | Percent | Multi | Div | Lt | Eq => vec![I64, I64],
             EqU8 | BitAndU8 => vec![U8, U8],
-            RightShift => vec![U8, I64],
+            RightShiftU8 => vec![U8, I64],
             Write => vec![PTR, I64],
             Malloc | I64ToU8 => vec![I64],
             U8ToI64 => vec![U8],
