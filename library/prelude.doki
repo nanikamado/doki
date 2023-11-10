@@ -63,10 +63,12 @@ list_append = as: bs: match as with
         Cons h t => Cons h (list_append t bs),
     end
 
-list_flatten = ls: match ls with
-        Nil => Nil,
-        Cons l ls => list_append l (list_flatten ls),
+list_flatten_aux = acc: ls: match ls with
+        Nil => acc,
+        Cons l ls => list_flatten_aux (list_append l acc) ls,
     end
+
+list_flatten = ls: list_flatten_aux Nil (reverse ls)
 
 pop_str = Str l p:
     match l with
