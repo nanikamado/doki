@@ -253,7 +253,11 @@ impl Display for PrimitiveDefPrint<'_> {
             Lt => write!(f, "return _0 < _1;"),
             Eq => write!(f, "return _0 == _1;"),
             EqU8 => write!(f, "return _0 == _1;"),
+            BitOr => write!(f, "return _0 | _1;"),
+            BitAnd => write!(f, "return _0 & _1;"),
             BitAndU8 => write!(f, "return _0 & _1;"),
+            BitOrU8 => write!(f, "return _0 | _1;"),
+            RightShift => write!(f, "return _0 >> _1;"),
             RightShiftU8 => write!(f, "return _0 >> _1;"),
             Write => write!(f, r#"fwrite(_0,1,_1,stdout);return intrinsic_unit();"#),
             Mut => {

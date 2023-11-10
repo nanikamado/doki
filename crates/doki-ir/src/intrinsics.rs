@@ -14,7 +14,11 @@ pub enum IntrinsicVariable {
     Lt,
     Eq,
     EqU8,
+    BitAnd,
+    BitOr,
     BitAndU8,
+    BitOrU8,
+    RightShift,
     RightShiftU8,
     Write,
     Mut,
@@ -39,13 +43,12 @@ impl IntrinsicVariable {
     pub fn runtime_return_type(self) -> Option<IntrinsicTypeTag> {
         use IntrinsicVariable::*;
         match self {
-            Minus | Plus | Percent | Multi | Div | Lt | Eq | EqU8 | GetChar | U8ToI64 => {
-                Some(IntrinsicTypeTag::I64)
-            }
+            Minus | Plus | Percent | Multi | Div | Lt | Eq | EqU8 | GetChar | U8ToI64 | BitAnd
+            | BitOr | RightShift => Some(IntrinsicTypeTag::I64),
             Write | SetMut | StoreU8 => Some(IntrinsicTypeTag::Unit),
             Mut => Some(IntrinsicTypeTag::Mut),
             Malloc | AddPtr => Some(IntrinsicTypeTag::Ptr),
-            LoadU8 | I64ToU8 | BitAndU8 | RightShiftU8 => Some(IntrinsicTypeTag::U8),
+            LoadU8 | I64ToU8 | BitAndU8 | BitOrU8 | RightShiftU8 => Some(IntrinsicTypeTag::U8),
             GetMut => None,
         }
     }
@@ -99,8 +102,10 @@ impl IntrinsicVariable {
         const PTR: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::Ptr));
         const MUT: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::Mut));
         match self {
-            Minus | Plus | Percent | Multi | Div | Lt | Eq => vec![I64, I64],
-            EqU8 | BitAndU8 => vec![U8, U8],
+            Minus | Plus | Percent | Multi | Div | Lt | Eq | BitAnd | BitOr | RightShift => {
+                vec![I64, I64]
+            }
+            EqU8 | BitAndU8 | BitOrU8 => vec![U8, U8],
             RightShiftU8 => vec![U8, I64],
             Write => vec![PTR, I64],
             Malloc | I64ToU8 => vec![I64],
