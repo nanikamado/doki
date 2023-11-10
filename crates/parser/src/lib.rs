@@ -139,7 +139,7 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
             .repeated()
             .collect()
             .delimited_by(just('"'), just('"'));
-        let char_ = none_of(r#"\""#)
+        let char_ = none_of(r"\'")
             .or(just('\\').ignore_then(escape))
             .delimited_by(just('\''), just('\''))
             .map(|c| U8(c as u8));
