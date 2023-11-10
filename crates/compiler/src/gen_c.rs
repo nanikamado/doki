@@ -247,7 +247,7 @@ impl<'a> Env<'a> {
                     .call(ret, fv, av, format!("{}:{ln}:{col}", span.file_name), block);
             }
             Expr::I64(s) => {
-                self.build_env.i64(ret, s.parse().unwrap(), block);
+                self.build_env.i64(ret, s, block);
             }
             Expr::U8(s) => {
                 self.build_env.u8(ret, s, block);

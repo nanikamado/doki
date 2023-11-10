@@ -34,7 +34,7 @@ pub enum Expr<'a> {
         expr: Box<ExprWithSpan<'a>>,
     },
     Call(Box<ExprWithSpan<'a>>, Box<ExprWithSpan<'a>>),
-    I64(&'a str),
+    I64(i64),
     U8(u8),
     Str(String),
     Match {
@@ -221,17 +221,34 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
             .then_ignore(keyword("in").padded_by(whitespace))
             .then(expr.clone())
             .map(|((v, e1), e2)| Let(v, Box::new(e1), Box::new(e2)));
+        let paren = expr
+            .padded_by(whitespace)
+            .delimited_by(just('('), just(')'))
+            .map(|(e, _)| e);
+        let u8_decimal = int(10)
+            .then_ignore(just("u8"))
+            .map(|s| U8(str::parse(s).unwrap()));
+        let decimal = just('-')
+            .or_not()
+            .then(text::int(10))
+            .map_slice(|a| I64(str::parse(a).unwrap()));
+        let u8_binary = text::digits(2)
+            .slice()
+            .delimited_by(just("0b"), just("u8"))
+            .map(|a| U8(u8::from_str_radix(a, 2).unwrap()));
+        let binary = just("0b")
+            .ignore_then(text::digits(2))
+            .slice()
+            .map(|a| I64(i64::from_str_radix(a, 2).unwrap()));
         let e = choice((
-            expr.padded_by(whitespace)
-                .delimited_by(just('('), just(')'))
-                .map(|(e, _)| e),
+            paren,
             match_expr,
             let_expr,
-            int(10)
-                .then_ignore(just("u8"))
-                .map(|s| U8(str::parse(s).unwrap())),
+            u8_decimal,
+            u8_binary,
+            binary,
             char_,
-            just('-').or_not().then(text::int(10)).map_slice(I64),
+            decimal,
             string.map(Str),
             ident
                 .then_ignore(
