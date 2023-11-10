@@ -237,9 +237,15 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
             .delimited_by(just("0b"), just("u8"))
             .map(|a| U8(u8::from_str_radix(a, 2).unwrap()));
         let binary = just("0b")
-            .ignore_then(text::digits(2))
-            .slice()
+            .ignore_then(text::digits(2).slice())
             .map(|a| I64(i64::from_str_radix(a, 2).unwrap()));
+        let u8_hex = text::digits(16)
+            .slice()
+            .delimited_by(just("0x"), just("u8"))
+            .map(|a| U8(u8::from_str_radix(a, 16).unwrap()));
+        let hex = just("0x")
+            .ignore_then(text::digits(16).slice())
+            .map(|a| I64(i64::from_str_radix(a, 16).expect(a)));
         let e = choice((
             paren,
             match_expr,
@@ -247,6 +253,8 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
             u8_decimal,
             u8_binary,
             binary,
+            u8_hex,
+            hex,
             char_,
             decimal,
             string.map(Str),
