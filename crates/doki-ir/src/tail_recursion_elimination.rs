@@ -20,7 +20,7 @@ pub fn run(ast: &mut Ast) {
             {
                 let tc = loop {
                     match e {
-                        EndInstruction::Ret(VariableId::Local(ret)) => break ret == v,
+                        EndInstruction::Ret(ret) => break ret == v,
                         EndInstruction::Goto { label } => {
                             let bb = &f.body.basic_blocks[*label];
                             if bb.instructions.is_empty() {
@@ -123,7 +123,7 @@ fn eliminate_from_basic_block<'a>(
                 bb.instructions.pop();
                 for (p, a) in f.parameters.iter().zip_eq(args) {
                     bb.instructions
-                        .push(Instruction::Assign(*p, Expr::Ident(a)));
+                        .push(Instruction::Assign(*p, Expr::Ident(VariableId::Local(a))));
                 }
                 bb.end_instruction = EndInstruction::Goto { label: f.label };
             } else if cycle.contains(&f) {
@@ -131,7 +131,7 @@ fn eliminate_from_basic_block<'a>(
                 let called_fn = &functions[&f];
                 for (p, a) in called_fn.parameters.iter().zip_eq(args) {
                     bb.instructions
-                        .push(Instruction::Assign(*p, Expr::Ident(a)));
+                        .push(Instruction::Assign(*p, Expr::Ident(VariableId::Local(a))));
                 }
                 bb.end_instruction = EndInstruction::Goto { label: *free_label };
                 inlining_queue.push_back((f, *free_label));

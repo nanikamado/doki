@@ -122,7 +122,7 @@ impl Display for Codegen<'_> {
                 .format_with("", |d, f| f(&format_args!(
                     "static {0} {1};static {0} init_{1}(void);",
                     Dis(&d.c_t, env),
-                    Dis(&VariableId::Global(d.decl_id), env),
+                    Dis(&d.decl_id, env),
                 ))),
         )?;
         write!(
@@ -189,7 +189,7 @@ impl Display for Codegen<'_> {
                         return {1};\
                     }}",
                     Dis(&d.c_t, env),
-                    Dis(&VariableId::Global(d.decl_id), env),
+                    Dis(&d.decl_id, env),
                     Dis(
                         &FunctionBodyWithCtx {
                             f: &d.value,
@@ -204,7 +204,7 @@ impl Display for Codegen<'_> {
         let EndInstruction::Ret(l) = ast.entry_block.basic_blocks[0].end_instruction else {
             panic!()
         };
-        let l_t = env.get_type(l);
+        let l_t = env.local_variable_types.get_type(l).1;
         write!(
             f,
             "static {} inner_main(void){}",
@@ -228,7 +228,7 @@ impl Display for Codegen<'_> {
                 .rev()
                 .format_with("", |d, f| f(&format_args!(
                     "init_{0}();",
-                    Dis(&VariableId::Global(d.decl_id), env),
+                    Dis(&d.decl_id, env),
                 ))),
         )
     }
@@ -356,14 +356,14 @@ fn write_fns(
                 f(&format_args!(
                     "{} {}/*{}*/",
                     Dis(ct, env),
-                    Dis(&VariableId::Local(*l), env),
+                    Dis(l, env),
                     ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
                 ))
             });
             write!(
                 f,
                 "static {} {}{}({})",
-                Dis(&env.get_type(function.ret), env),
+                Dis(&env.local_variable_types.get_type(function.ret).1, env),
                 if global_variable_initialization {
                     "init_"
                 } else {
@@ -409,15 +409,6 @@ struct Env<'a> {
     backtrace: bool,
 }
 
-impl Env<'_> {
-    fn get_type(&self, v: VariableId) -> CType {
-        match v {
-            VariableId::Local(v) => self.local_variable_types.get_type(v).1,
-            VariableId::Global(v) => self.global_variable_types[&v],
-        }
-    }
-}
-
 fn collect_local_variables_in_block(b: &FunctionBody, vs: &mut FxHashSet<LocalVariable>) {
     for bb in &b.basic_blocks {
         for b in &bb.instructions {
@@ -426,7 +417,7 @@ fn collect_local_variables_in_block(b: &FunctionBody, vs: &mut FxHashSet<LocalVa
                 collect_local_variables_in_expr(e, vs);
             }
         }
-        if let EndInstruction::Ret(VariableId::Local(l)) = bb.end_instruction {
+        if let EndInstruction::Ret(l) = bb.end_instruction {
             vs.insert(l);
         }
     }
@@ -434,13 +425,13 @@ fn collect_local_variables_in_block(b: &FunctionBody, vs: &mut FxHashSet<LocalVa
 
 fn collect_local_variables_in_expr(e: &Expr, vs: &mut FxHashSet<LocalVariable>) {
     match e {
-        Expr::I64(_) | Expr::U8(_) | Expr::Str(_) => (),
+        Expr::I64(_) | Expr::U8(_) | Expr::Str(_) | Expr::Ident(VariableId::Global(_)) => (),
         Expr::Call { args, .. } | Expr::BasicCall { args, .. } => {
             for a in args {
                 collect_local_variables_in_variable(*a, vs);
             }
         }
-        Expr::Ident(a)
+        Expr::Ident(VariableId::Local(a))
         | Expr::Ref(a)
         | Expr::Deref(a)
         | Expr::Downcast { value: a, .. }
@@ -448,10 +439,8 @@ fn collect_local_variables_in_expr(e: &Expr, vs: &mut FxHashSet<LocalVariable>) 
     }
 }
 
-fn collect_local_variables_in_variable(v: VariableId, vs: &mut FxHashSet<LocalVariable>) {
-    if let VariableId::Local(v) = v {
-        vs.insert(v);
-    }
+fn collect_local_variables_in_variable(v: LocalVariable, vs: &mut FxHashSet<LocalVariable>) {
+    vs.insert(v);
 }
 
 struct Dis<'a, T>(&'a T, Env<'a>);
@@ -487,7 +476,7 @@ impl DisplayWithEnv for FunctionBodyWithCtx<'_> {
                     "{} /*{}*/ {};",
                     Dis(ct, env),
                     ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
-                    Dis(&VariableId::Local(*v), env),
+                    Dis(v, env),
                 ))
             }),
         )?;
@@ -522,12 +511,7 @@ impl DisplayWithEnv for Instruction {
                     }
                 }
                 let t = &env.local_variable_types.get_type(*d).1;
-                write!(
-                    f,
-                    "{}={};",
-                    Dis(&VariableId::Local(*d), env),
-                    Dis(&(e, t), env)
-                )?;
+                write!(f, "{}={};", Dis(d, env), Dis(&(e, t), env))?;
                 if env.backtrace && matches!(e, Expr::Call { .. }) {
                     write!(f, "TRACE_STACK_TOP--;")?;
                 }
@@ -564,10 +548,11 @@ impl DisplayWithEnv for (&Expr, &CType) {
             Expr::I64(a) => write!(fmt, "{a}"),
             Expr::U8(a) => write!(fmt, "{a}"),
             Expr::Str(a) => write!(fmt, "\"{}\"", StringEscape(a)),
-            Expr::Ident(i) => {
-                debug_assert_eq!(**t, env.get_type(*i));
+            Expr::Ident(VariableId::Global(i)) => {
+                debug_assert_eq!(**t, env.global_variable_types[i]);
                 i.fmt_with_env(env, fmt)
             }
+            Expr::Ident(VariableId::Local(i)) => i.fmt_with_env(env, fmt),
             Expr::Call {
                 args,
                 f,
@@ -644,20 +629,23 @@ impl DisplayWithEnv for (&Expr, &CType) {
     }
 }
 
-impl DisplayWithEnv for VariableId {
+impl DisplayWithEnv for GlobalVariableId {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VariableId::Global(d) => {
-                if env.global_variable_initialization {
-                    write!(f, "init_g_{d}_{}()", convert_name(&env.variable_names[d]))
-                } else {
-                    write!(f, "g_{d}_{}", convert_name(&env.variable_names[d]))
-                }
-            }
-            VariableId::Local(d) => {
-                write!(f, "l_{d}")
-            }
+        if env.global_variable_initialization {
+            write!(
+                f,
+                "init_g_{self}_{}()",
+                convert_name(&env.variable_names[self])
+            )
+        } else {
+            write!(f, "g_{self}_{}", convert_name(&env.variable_names[self]))
         }
+    }
+}
+
+impl DisplayWithEnv for LocalVariable {
+    fn fmt_with_env(&self, _env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "l_{self}")
     }
 }
 

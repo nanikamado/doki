@@ -289,3 +289,11 @@ fn global_order_negative() {
 fn dummy_fn_in_dummy_fn() {
     positive_test_with_stdin("dummy_fn_in_dummy_fn.doki", "", "");
 }
+
+#[test]
+fn dead_function() {
+    negative_test("dead_function.doki")
+        .stderr("error: not a function\ntests/negative/dead_function.doki:3:5\n")
+        .stdout("")
+        .code(1);
+}
