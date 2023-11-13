@@ -71,9 +71,10 @@ impl Display for Codegen<'_> {
         write!(
             f,
             "#include <stdio.h>
-            #include <stdlib.h>
-            #include <inttypes.h>
-            struct diverge{{}};"
+#include <stdlib.h>
+#include <inttypes.h>
+#include <errno.h>
+struct diverge{{}};"
         )?;
         if env.backtrace {
             write!(
@@ -131,6 +132,16 @@ impl Display for Codegen<'_> {
                 return ({0}){{}};
             }}",
             Dis(&unit_t, env),
+        )?;
+        write!(
+            f,
+            r#"
+int read_file(void* buff, int buff_len, void* fp, void* status) {{
+    size_t n = fread(buff, sizeof(unsigned char), buff_len, fp);
+    if(ferror(fp))
+        *(int64_t*)status = errno;
+    return n;
+}}"#
         )?;
         if env.backtrace {
             write!(
@@ -273,6 +284,9 @@ impl Display for PrimitiveDefPrint<'_> {
             AddPtr => write!(f, "return (uint8_t*)_0+_1;"),
             U8ToI64 => write!(f, "return _0;"),
             I64ToU8 => write!(f, r#"if(_0<0||0xFF<=_0)panic("overflow");return _0;"#),
+            ReadFile => write!(f, "return read_file(_0,_1,_2,_3);"),
+            Stdout => write!(f, "return stdout;"),
+            Stdin => write!(f, "return stdin;"),
         }
     }
 }

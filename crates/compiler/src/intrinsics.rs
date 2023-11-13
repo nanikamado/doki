@@ -31,6 +31,9 @@ impl IntrinsicVariable {
             AddPtr => "intrinsic_add_ptr",
             I64ToU8 => "intrinsic_i64_to_u8",
             U8ToI64 => "intrinsic_u8_to_i64",
+            ReadFile => "intrinsic_read_file",
+            Stdout => "intrinsic_stdout",
+            Stdin => "intrinsic_stdin",
         }
     }
 }
