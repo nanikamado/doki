@@ -111,17 +111,17 @@ i64_to_string = a:
     in let _ = i64_to_string_aux (intrinsic_add_ptr s str_l) a l
     in Str str_l s
 
-memcpy = dist: src: len: match len with
+ptr_copy = dist: src: len: match len with
         0 => Unit,
         _ => let _ = intrinsic_store_u8 dist (intrinsic_load_u8 src)
-            in memcpy (intrinsic_add_ptr dist 1) (intrinsic_add_ptr src 1) (minus len 1),
+            in ptr_copy (intrinsic_add_ptr dist 1) (intrinsic_add_ptr src 1) (minus len 1),
     end
 
 append_str = Str l1 p1: Str l2 p2:
     let l = plus l1 l2
     in let p = intrinsic_malloc l
-    in let _ = memcpy p p1 l1
-    in let _ = memcpy (intrinsic_add_ptr p l1) p2 l2
+    in let _ = ptr_copy p p1 l1
+    in let _ = ptr_copy (intrinsic_add_ptr p l1) p2 l2
     in Str l p
 
 data None 0
@@ -133,11 +133,54 @@ getchar = _: let s = intrinsic_getchar 0
         _ => Some (intrinsic_i64_to_u8 s),
     end
 
-read_all_aux = s:
-    match getchar Unit with
-        None => s,
-        Some c => read_all_aux (Cons c s),
+data Array 3
+
+array_new = _: Array 0 0 (malloc 0)
+
+store_u8 = p: i: a: intrinsic_store_u8 (intrinsic_add_ptr p i) a
+
+array_add_capacity = Array len cap p: d:
+    let new_cap = max (mul cap 2) (plus len d)
+    in let new_p = malloc new_cap
+    in let _ = ptr_copy new_p p len
+    in Array len new_cap new_p
+
+array_push = Array len cap p: a:
+    let Cons cap p =
+        match le (plus len 1) cap with
+            True => Cons cap p,
+            False => let Array len cap p = array_add_capacity (Array len cap p) 1
+                in Cons cap p,
+        end
+    in let _ = store_u8 p len a
+    in Array (plus len 1) cap p
+
+array_append = Array len cap p: Str len2 p2:
+    let Cons cap p =
+        match le (plus len len2) cap with
+            True => Cons cap p,
+            False => let Array len cap p = array_add_capacity (Array len cap p) len2
+                in Cons cap p,
+        end
+    in let _ = ptr_copy (intrinsic_add_ptr p len) p2 len2
+    in Array (plus len len2) cap p
+
+array_to_str = Array len cap p: Str len p
+
+read_file = Array len cap p: fp:
+    let n = intrinsic_read_file (intrinsic_add_ptr p len) (minus cap len) fp (intrinsic_mut 0)
+    in Array (plus len n) cap p
+
+read_stdin = buff: read_file buff intrinsic_stdin
+
+read_all_aux = buff: let buff = read_stdin buff
+    in let Array len cap p = buff
+    in match eq len cap with
+        False => buff,
+        True => read_all_aux (array_add_capacity (Array len cap p) cap),
     end
+
+read_all = _: read_all_aux (array_add_capacity (array_new Unit) 1)
 
 reverse_aux = a: b:
     match a with
@@ -146,8 +189,6 @@ reverse_aux = a: b:
     end
 
 reverse = l: reverse_aux l Nil
-
-read_all = _: reverse (read_all_aux Nil)
 
 len_aux = acc: l: match l with
         Nil => acc,
@@ -184,12 +225,6 @@ pop_input = i:
         _ => i,
     end
 
-memcpy = dist: src: len: match len with
-        0 => Unit,
-        _ => let _ = intrinsic_store_u8 dist (intrinsic_load_u8 src)
-            in memcpy (intrinsic_add_ptr dist 1) (intrinsic_add_ptr src 1) (minus len 1),
-    end
-
 string_eq = a: b: match Cons (pop_str a) (pop_str b) with
         Cons Nil Nil => True,
         Cons (Cons ah at) (Cons bh bt) => match eq_u8 ah bh with
@@ -216,7 +251,7 @@ data Ok 1
 
 ok_map = a: f: match a with
         Ok a => Ok (f a),
-        _ => a,
+        Err a => Err a,
     end
 
 read_num = a:

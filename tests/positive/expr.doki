@@ -10,7 +10,7 @@ just = s: i:
     match pop_str s with
         Nil => Ok (Cons Nil i),
         Cons c s =>
-            match i with
+            match pop_str i with
                 Nil => Err Unit,
                 Cons i_c i =>
                     match eq_u8 c i_c with
@@ -28,7 +28,7 @@ str_contains = s: c: match pop_str s with
             end,
     end
 
-one_of = s: i: match i with
+one_of = s: i: match pop_str i with
         Nil => Err Unit,
         Cons c i => match str_contains s c with
                 True => Ok (Cons c i),
@@ -48,7 +48,7 @@ alt = p1: p2: i:
         Ok a => Ok a,
     end
 
-any = i: match i with
+any = i: match pop_str i with
         Nil => Err Unit,
         Cons c i => Ok (Cons c i),
     end
@@ -230,7 +230,7 @@ global_env = let a = string_to_char_list "a"
     in Cons l3 (Cons l1 (Cons l2 Nil))
 
 main = _:
-    let s = read_all Unit
+    let s = array_to_str (read_all Unit)
     in match expr s with
         Err Unit => println "err",
         Ok (Cons e _) => match eval e global_env with
