@@ -1,2 +1,2 @@
-main = _: let Str l p = "Hello, world.\n"
-    in intrinsic_write p l
+main = _: let Str d l p = "Hello, world.\n"
+    in intrinsic_write p d l

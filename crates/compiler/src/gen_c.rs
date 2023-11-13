@@ -48,7 +48,7 @@ fn build<'a>(
     }
     for d in ast.data_decls.into_iter().chain(once(DataDecl {
         name: "Str",
-        field_len: 2,
+        field_len: 3,
     })) {
         let constructor_id = env
             .build_env
@@ -253,13 +253,15 @@ impl<'a> Env<'a> {
                 self.build_env.u8(ret, s, block);
             }
             Expr::Str(s) => {
+                let offset = self.build_env.new_local_variable();
+                self.build_env.i64(offset, 0, block);
                 let l = self.build_env.new_local_variable();
                 self.build_env.i64(l, s.len() as i64, block);
                 let p = self.build_env.new_local_variable();
                 self.build_env.string(p, s, block);
                 self.build_env.construction(
                     ret,
-                    vec![l, p],
+                    vec![offset, l, p],
                     self.str_constructor_id.unwrap(),
                     block,
                 )

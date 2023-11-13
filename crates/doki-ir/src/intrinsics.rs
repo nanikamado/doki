@@ -28,7 +28,6 @@ pub enum IntrinsicVariable {
     Malloc,
     LoadU8,
     StoreU8,
-    AddPtr,
     U8ToI64,
     I64ToU8,
     ReadFile,
@@ -50,7 +49,7 @@ impl IntrinsicVariable {
             | BitOr | RightShift | ReadFile => Some(IntrinsicTypeTag::I64),
             Write | SetMut | StoreU8 => Some(IntrinsicTypeTag::Unit),
             Mut => Some(IntrinsicTypeTag::Mut),
-            Malloc | AddPtr | Stdout | Stdin => Some(IntrinsicTypeTag::Ptr),
+            Malloc | Stdout | Stdin => Some(IntrinsicTypeTag::Ptr),
             LoadU8 | I64ToU8 | BitAndU8 | BitOrU8 | RightShiftU8 => Some(IntrinsicTypeTag::U8),
             GetMut => None,
         }
@@ -110,16 +109,15 @@ impl IntrinsicVariable {
             }
             EqU8 | BitAndU8 | BitOrU8 => vec![U8, U8],
             RightShiftU8 => vec![U8, I64],
-            Write => vec![PTR, I64],
+            Write => vec![PTR, I64, I64],
             Malloc | I64ToU8 | GetChar => vec![I64],
             U8ToI64 => vec![U8],
             Mut => vec![None],
             SetMut => vec![MUT, None],
             GetMut => vec![MUT],
-            LoadU8 => vec![PTR],
-            StoreU8 => vec![PTR, U8],
-            AddPtr => vec![PTR, I64],
-            ReadFile => vec![PTR, I64, PTR, MUT],
+            LoadU8 => vec![PTR, I64],
+            StoreU8 => vec![PTR, I64, U8],
+            ReadFile => vec![PTR, I64, I64, PTR, MUT],
             Stdout | Stdin => Vec::new(),
         }
     }

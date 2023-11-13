@@ -1,4 +1,4 @@
-print = Str l p: intrinsic_write p l
+print = Str d l p: intrinsic_write p d l
 
 println = a: let _ = print a
     in print "\n"
@@ -70,11 +70,11 @@ list_flatten_aux = acc: ls: match ls with
 
 list_flatten = ls: list_flatten_aux Nil (reverse ls)
 
-pop_str = Str l p:
+pop_str = Str d l p:
     match l with
         0 => Nil,
-        _ => let c = intrinsic_load_u8 p
-            in let s = Str (minus l 1) (intrinsic_add_ptr p 1)
+        _ => let c = intrinsic_load_u8 p d
+            in let s = Str (plus d 1) (minus l 1) p
             in Cons c s,
     end
 
@@ -83,13 +83,13 @@ log10 = a: match a with
         _ => plus (log10 (div a 10)) 1,
     end
 
-i64_to_string_aux = s: a: l:
+i64_to_string_aux = s: d: a: l:
     match l with
         0 => Unit,
         _ =>
-            let s = intrinsic_add_ptr s -1
-            in let _ = intrinsic_store_u8 s (intrinsic_i64_to_u8 (plus 48 (rem a 10)))
-            in i64_to_string_aux s (div a 10) (minus l 1),
+            let d = minus d 1
+            in let _ = intrinsic_store_u8 s d (intrinsic_i64_to_u8 (plus 48 (rem a 10)))
+            in i64_to_string_aux s d (div a 10) (minus l 1),
     end
 
 max = a: b: match lt a b with
@@ -105,24 +105,24 @@ i64_to_string = a:
     in let a = match negative with
             False => a,
             True =>
-                let _ = intrinsic_store_u8 s 45u8
+                let _ = intrinsic_store_u8 s 0 45u8
                 in minus 0 a,
         end
-    in let _ = i64_to_string_aux (intrinsic_add_ptr s str_l) a l
-    in Str str_l s
+    in let _ = i64_to_string_aux s str_l a l
+    in Str 0 str_l s
 
-ptr_copy = dist: src: len: match len with
+ptr_copy = dist: dist_d: src: src_d: len: match len with
         0 => Unit,
-        _ => let _ = intrinsic_store_u8 dist (intrinsic_load_u8 src)
-            in ptr_copy (intrinsic_add_ptr dist 1) (intrinsic_add_ptr src 1) (minus len 1),
+        _ => let _ = intrinsic_store_u8 dist dist_d (intrinsic_load_u8 src src_d)
+            in ptr_copy dist (plus dist_d 1) src (plus src_d 1) (minus len 1),
     end
 
-append_str = Str l1 p1: Str l2 p2:
+append_str = Str d1 l1 p1: Str d2 l2 p2:
     let l = plus l1 l2
     in let p = intrinsic_malloc l
-    in let _ = ptr_copy p p1 l1
-    in let _ = ptr_copy (intrinsic_add_ptr p l1) p2 l2
-    in Str l p
+    in let _ = ptr_copy p 0 p1 d2 l1
+    in let _ = ptr_copy p l1 p2 d2 l2
+    in Str 0 l p
 
 data None 0
 data Some 1
@@ -137,12 +137,12 @@ data Array 3
 
 array_new = _: Array 0 0 (malloc 0)
 
-store_u8 = p: i: a: intrinsic_store_u8 (intrinsic_add_ptr p i) a
+store_u8 = intrinsic_store_u8
 
 array_add_capacity = Array len cap p: d:
     let new_cap = max (mul cap 2) (plus len d)
     in let new_p = malloc new_cap
-    in let _ = ptr_copy new_p p len
+    in let _ = ptr_copy new_p 0 p 0 len
     in Array len new_cap new_p
 
 array_push = Array len cap p: a:
@@ -155,20 +155,20 @@ array_push = Array len cap p: a:
     in let _ = store_u8 p len a
     in Array (plus len 1) cap p
 
-array_append = Array len cap p: Str len2 p2:
+array_append = Array len cap p: Str d2 len2 p2:
     let Cons cap p =
         match le (plus len len2) cap with
             True => Cons cap p,
             False => let Array len cap p = array_add_capacity (Array len cap p) len2
                 in Cons cap p,
         end
-    in let _ = ptr_copy (intrinsic_add_ptr p len) p2 len2
+    in let _ = ptr_copy p len p2 d2 len2
     in Array (plus len len2) cap p
 
-array_to_str = Array len cap p: Str len p
+array_to_str = Array len cap p: Str 0 len p
 
 read_file = Array len cap p: fp:
-    let n = intrinsic_read_file (intrinsic_add_ptr p len) (minus cap len) fp (intrinsic_mut 0)
+    let n = intrinsic_read_file p len (minus cap len) fp (intrinsic_mut 0)
     in Array (plus len n) cap p
 
 read_stdin = buff: read_file buff intrinsic_stdin
@@ -197,19 +197,19 @@ len_aux = acc: l: match l with
 
 len = len_aux 0
 
-char_list_to_string_aux = m: l:
+char_list_to_string_aux = m: d: l:
     match l with
         Nil => Unit,
         Cons h l =>
-            let _ = intrinsic_store_u8 m h
-            in char_list_to_string_aux (intrinsic_add_ptr m 1) l,
+            let _ = intrinsic_store_u8 m d h
+            in char_list_to_string_aux m (plus d 1) l,
     end
 
 char_list_to_string = a:
     let l = len a
     in let s = malloc l
-    in let _ = char_list_to_string_aux s a
-    in Str l s
+    in let _ = char_list_to_string_aux s 0 a
+    in Str 0 l s
 
 string_to_char_list = s: match pop_str s with
         Nil => Nil,
@@ -261,16 +261,16 @@ read_num = a:
             True => read_num (plus (mul 10 a) (minus c 48)),
         end
 
-str_eq_aux = n: s1: s2: match n with
+str_eq_aux = n: s1: d1: s2: d2: match n with
         0 => True,
-        _ => match eq_u8 (intrinsic_load_u8 s1) (intrinsic_load_u8 s2) with
-                True => str_eq_aux (minus n 1) (intrinsic_add_ptr s1 1) (intrinsic_add_ptr s2 1),
+        _ => match eq_u8 (intrinsic_load_u8 s1 d1) (intrinsic_load_u8 s2 d2) with
+                True => str_eq_aux (minus n 1) s1 (plus d1 1) s2 (plus d2 1),
                 False => False,
             end,
     end
 
-str_eq = Str n1 s1: Str n2 s2: match eq n1 n2 with
-        True => str_eq_aux n1 s1 s2,
+str_eq = Str d1 n1 s1: Str d2 n2 s2: match eq n1 n2 with
+        True => str_eq_aux n1 s1 d1 s2 d2,
         False => False,
     end
 
@@ -284,19 +284,21 @@ u8_cmp = a: b: match Cons (lt_u8 a b) (lt_u8 b a) with
         _ => Eq,
     end
 
-str_cmp_aux = n1: s1: n2: s2: match Cons n1 n2 with
+str_cmp_aux = n1: s1: d1: n2: s2: d2: match Cons n1 n2 with
         Cons 0 0 => Eq,
         Cons 0 _ => Lt,
         Cons _ 0 => Gt,
-        Cons _ _ => match u8_cmp (intrinsic_load_u8 s1) (intrinsic_load_u8 s2) with
+        Cons _ _ => match u8_cmp (intrinsic_load_u8 s1 d1) (intrinsic_load_u8 s2 d2) with
                 Eq => str_cmp_aux
                     (minus n1 1)
-                    (intrinsic_add_ptr s1 1)
+                    s1
+                    (plus d1 1)
                     (minus n2 1)
-                    (intrinsic_add_ptr s2 1),
+                    s2
+                    (plus d2 1),
                 c => c,
             end,
     end
 
-str_cmp = Str n1 s1: Str n2 s2: str_cmp_aux n1 s1 n2 s2
+str_cmp = Str d1 n1 s1: Str d2 n2 s2: str_cmp_aux n1 s1 d1 n2 s2 d2
 

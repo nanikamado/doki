@@ -28,7 +28,6 @@ impl IntrinsicVariable {
             Malloc => "intrinsic_malloc",
             LoadU8 => "intrinsic_load_u8",
             StoreU8 => "intrinsic_store_u8",
-            AddPtr => "intrinsic_add_ptr",
             I64ToU8 => "intrinsic_i64_to_u8",
             U8ToI64 => "intrinsic_u8_to_i64",
             ReadFile => "intrinsic_read_file",

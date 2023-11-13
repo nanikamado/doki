@@ -136,8 +136,8 @@ struct diverge{{}};"
         write!(
             f,
             r#"
-int read_file(void* buff, int buff_len, void* fp, void* status) {{
-    size_t n = fread(buff, sizeof(unsigned char), buff_len, fp);
+int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {{
+    size_t n = fread(buff+offset, 1, buff_len, fp);
     if(ferror(fp))
         *(int64_t*)status = errno;
     return n;
@@ -277,7 +277,10 @@ impl Display for PrimitiveDefPrint<'_> {
             BitOrU8 => write!(f, "return _0 | _1;"),
             RightShift => write!(f, "return _0 >> _1;"),
             RightShiftU8 => write!(f, "return _0 >> _1;"),
-            Write => write!(f, r#"fwrite(_0,1,_1,stdout);return intrinsic_unit();"#),
+            Write => write!(
+                f,
+                r#"fwrite((uint8_t*)_0+_1,1,_2,stdout);return intrinsic_unit();"#
+            ),
             Mut => {
                 let n = self.mutted_types[&self.arg_ts[0]];
                 write!(f, "return mut_{n}(_0);")
@@ -286,12 +289,11 @@ impl Display for PrimitiveDefPrint<'_> {
             GetMut => write!(f, "return *_0;"),
             GetChar => write!(f, "return getchar();"),
             Malloc => write!(f, "return malloc(_0);"),
-            LoadU8 => write!(f, "return *(uint8_t*)_0;"),
-            StoreU8 => write!(f, "*(uint8_t*)_0 = _1;return intrinsic_unit();"),
-            AddPtr => write!(f, "return (uint8_t*)_0+_1;"),
+            LoadU8 => write!(f, "return ((uint8_t*)_0)[_1];"),
+            StoreU8 => write!(f, "((uint8_t*)_0)[_1] = _2;return intrinsic_unit();"),
             U8ToI64 => write!(f, "return _0;"),
             I64ToU8 => write!(f, r#"if(_0<0||0xFF<=_0)panic("overflow");return _0;"#),
-            ReadFile => write!(f, "return read_file(_0,_1,_2,_3);"),
+            ReadFile => write!(f, "return read_file(_0,_1,_2,_3,_4);"),
             Stdout => write!(f, "return stdout;"),
             Stdin => write!(f, "return stdin;"),
         }
