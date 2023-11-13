@@ -166,26 +166,33 @@ int read_file(void* buff, int buff_len, void* fp, void* status) {{
                 "
             )
         }?;
-        write!(
-            f,
-            "{}{}",
-            ast.used_intrinsic_variables
-                .as_raw()
-                .iter()
-                .map(|((v, arg_ts, ret_t), id)| format!(
-                    "static {} intrinsic_{v}_{id}({}){{{}}}",
-                    Dis(ret_t, env),
+        for ((v, arg_ts, ret_t), id) in ast.used_intrinsic_variables.as_raw() {
+            write!(f, "static {} intrinsic_{v}_{id}", Dis(ret_t, env))?;
+            if arg_ts.is_empty() {
+                write!(f, "(void)")
+            } else {
+                write!(
+                    f,
+                    "({})",
                     arg_ts
                         .iter()
                         .enumerate()
-                        .format_with(",", |(i, t), f| f(&format_args!("{} _{i}", Dis(t, env)))),
-                    PrimitiveDefPrint {
-                        i: *v,
-                        arg_ts,
-                        mutted_types,
-                    }
-                ))
-                .format(""),
+                        .format_with(",", |(i, t), f| f(&format_args!("{} _{i}", Dis(t, env))))
+                )
+            }?;
+            write!(
+                f,
+                "{{{}}}",
+                PrimitiveDefPrint {
+                    i: *v,
+                    arg_ts,
+                    mutted_types,
+                }
+            )?;
+        }
+        write!(
+            f,
+            "{}",
             ast.variable_decls
                 .iter()
                 .format_with("", |d, f| f(&format_args!(
@@ -365,27 +372,31 @@ fn write_fns(
             write_body: bool,
             global_variable_initialization: bool,
         ) -> std::fmt::Result {
-            let ps = function.parameters.iter().format_with(",", |l, f| {
-                let (t, ct) = env.local_variable_types.get_type(*l);
-                f(&format_args!(
-                    "{} {}/*{}*/",
-                    Dis(ct, env),
-                    Dis(l, env),
-                    ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
-                ))
-            });
             write!(
                 f,
-                "static {} {}{}({})",
+                "static {} {}{}",
                 Dis(&env.local_variable_types.get_type(function.ret).1, env),
                 if global_variable_initialization {
                     "init_"
                 } else {
                     ""
                 },
-                function.id,
-                ps
+                function.id
             )?;
+            if function.parameters.is_empty() {
+                write!(f, "(void)")?;
+            } else {
+                let ps = function.parameters.iter().format_with(",", |l, f| {
+                    let (t, ct) = env.local_variable_types.get_type(*l);
+                    f(&format_args!(
+                        "{} {}/*{}*/",
+                        Dis(ct, env),
+                        Dis(l, env),
+                        ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
+                    ))
+                });
+                write!(f, "({ps})")?;
+            }
             if write_body {
                 write!(
                     f,
