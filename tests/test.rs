@@ -297,3 +297,13 @@ fn dead_function() {
         .stdout("")
         .code(1);
 }
+
+#[test]
+fn toml() {
+    positive_test_with_stdin(
+        "toml/toml.doki",
+        std::str::from_utf8(include_bytes!("positive/toml/test.toml")).unwrap(),
+        "{\"value\": [{\"a\": [\"\\u00ABa\\u00BB\", 10], \
+        \"actor\": {\"id\": \"\u{00ff} \u{d7ff} \u{e000} \u{ffff} \u{10000} \u{10ffff}\"}}]}\n",
+    );
+}

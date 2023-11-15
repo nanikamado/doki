@@ -1,0 +1,5 @@
+[[value]]
+a = ["«a»", 10]
+
+[value.actor]
+id = "\u00ff \ud7ff \ue000 \uffff \U00010000 \U0010ffff"

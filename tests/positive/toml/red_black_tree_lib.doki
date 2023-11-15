@@ -1,0 +1,70 @@
+import "../../../library/prelude.doki"
+
+data E 0
+data T 5
+data R 0
+data B 0
+
+tree_insert = cmp: key: value: t: match tree_insert_rec cmp key value t with
+        T _c key value a b => T B key value a b,
+    end
+
+tree_insert_rec = cmp: k: v: t: match t with
+        E => T R k v E E,
+        T color key value a b => match cmp k key with
+                Lt => balance (T color key value (tree_insert_rec cmp k v a) b),
+                Gt => balance (T color key value a (tree_insert_rec cmp k v b)),
+                Eq => T B key value a b,
+            end,
+    end
+
+balance = t: match t with
+        T B wk wv (T R uk uv (T R vk vv t1 t2) t3) t4
+        | T B wk wv (T R vk vv t1 (T R uk uv t2 t3)) t4
+        | T B vk vv t1 (T R wk wv (T R uk uv t2 t3) t4)
+        | T B vk vv t1 (T R uk uv t2 (T R wk wv t3 t4)) =>
+            T R uk uv (T B vk vv t1 t2) (T B wk wv t3 t4),
+        t => t,
+    end
+
+contains_key = cmp: x: t: match t with
+        E => False,
+        T _ k v l r => match cmp x k with
+                Lt => contains_key x l,
+                Gt => contains_key x r,
+                Eq => True,
+            end,
+    end
+
+tree_get = cmp: x: t: match t with
+        E => None,
+        T _ k v l r => match cmp x k with
+                Lt => tree_get cmp x l,
+                Gt => tree_get cmp x r,
+                Eq => Some v,
+            end,
+    end
+
+tree_modify = cmp: x: t: f: match t with
+        E => T B x (f None) E E,
+        T c k v l r => match cmp x k with
+                Lt => T c k v (tree_modify cmp x l f) r,
+                Gt => T c k v l (tree_modify cmp x r f),
+                Eq => T c k (f (Some v)) l r,
+            end,
+    end
+
+tree_to_list = acc: t: match t with
+        E => acc,
+        T _ k v l r => let acc = tree_to_list acc r
+            in let acc = Cons (Cons k v) acc
+            in tree_to_list acc l,
+    end
+
+tree_to_string = key_to_string: value_to_string: t:
+    let l = list_map (tree_to_list Nil t) (Cons k v:
+        let k = key_to_string k
+        in let v = value_to_string v
+        in PrintAnd (PrintAnd k ": ") v)
+    in let s = join l ", "
+    in PrintAnd (PrintAnd "{" s) "}"

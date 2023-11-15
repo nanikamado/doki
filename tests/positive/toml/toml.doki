@@ -1,0 +1,486 @@
+import "../../../library/prelude.doki"
+
+fold = acc: l: f: match l with
+        Nil => acc,
+        Cons a l => fold (f acc a) l f,
+    end
+
+join = l: sep: match l with
+        Nil => "",
+        Cons h Nil => h,
+        Cons h t => PrintAnd h (PrintAnd sep (join t sep)),
+    end
+
+char_list_to_num_hex_aux = acc: s:
+    match s with
+        Nil => acc,
+        Cons c s =>
+    match and (le_u8 48u8 c) (le_u8 c 57u8) with
+        True =>
+            char_list_to_num_hex_aux
+                (plus (mul 16 acc) (minus (intrinsic_u8_to_i64 c) 48))
+                s,
+        False =>
+    match and (le_u8 65u8 c) (le_u8 c 70u8) with
+        True =>
+            char_list_to_num_hex_aux
+                (plus (mul 16 acc) (minus (intrinsic_u8_to_i64 c) 55))
+                s,
+        False =>
+    match and (le_u8 97u8 c) (le_u8 c 102u8) with
+        True =>
+            char_list_to_num_hex_aux
+                (plus (mul 16 acc) (minus (intrinsic_u8_to_i64 c) 87))
+                s,
+        False => acc,
+    end,
+    end,
+    end,
+    end
+
+char_list_to_num_hex = char_list_to_num_hex_aux 0
+
+unwrap_or = a: alt: match a with
+        None => alt,
+        Some a => a,
+    end
+
+ok_flat_map = a: f: match a with
+        Ok a => f a,
+        _ => a,
+    end
+
+right_shift_u8 = intrinsic_right_shift_u8
+right_shift = intrinsic_right_shift
+bitwise_and = intrinsic_bitwise_and
+bitwise_or = intrinsic_bitwise_or
+bitwise_or_u8 = intrinsic_bitwise_or_u8
+i64_to_u8 = intrinsic_i64_to_u8
+
+// =================== Basic Parser Combinator ===================
+
+parser_map = a: f: i:
+    match a i with
+        Ok (Cons a i) => Ok (Cons (f a) i),
+        Err e => Err e,
+    end
+
+just_aux = s: i:
+    match pop_str s with
+        Nil => Ok (Cons Unit i),
+        Cons c s =>
+            match pop_str i with
+                Nil => Err Unit,
+                Cons i_c i =>
+                    match eq_u8 c i_c with
+                        False => Err Unit,
+                        True => just_aux s i,
+                    end,
+            end,
+    end
+
+parser_slice = parser: Str d len p: ok_map
+    (parser (Str d len p))
+    (Cons _ (Str d2 len2 p2):
+        Cons (Str d (minus len len2) p) (Str d2 len2 p2))
+
+just = s: parser_slice (just_aux s)
+
+str_contains = s: c: match pop_str s with
+        Nil => False,
+        Cons s_c s => match eq_u8 s_c c with
+                False => str_contains s c,
+                True => True,
+            end,
+    end
+
+one_of = s: i: match pop_str i with
+        Nil => Err Unit,
+        Cons c i => match str_contains s c with
+                True => Ok (Cons Unit i),
+                False => Err Unit,
+            end,
+    end
+
+none_of = s: i: match pop_str i with
+        Nil => Err Unit,
+        Cons c i => match str_contains s c with
+                False => Ok (Cons Unit i),
+                True => Err Unit,
+            end,
+    end
+
+then = p1: p2: i:
+    match p1 i with
+        Err e => Err e,
+        Ok (Cons s1 i) => parser_map p2 (Cons s1) i
+    end
+
+alt = p1: p2: i:
+    match p1 i with
+        Err e => p2 i,
+        Ok a => Ok a,
+    end
+
+any = i: match pop_str i with
+        Nil => Err Unit,
+        Cons c i => Ok (Cons c i),
+    end
+
+is_digit = c: and (le_u8 48u8 c) (le_u8 c 57u8)
+is_digit_hex = c:
+    or (and (le_u8 48u8 c) (le_u8 c 57u8))
+    (or (and (le_u8 65u8 c) (le_u8 c 70u8))
+    (and (le_u8 97u8 c) (le_u8 c 102u8)))
+
+filter = p: f: i: match p i with
+        Err e => Err e,
+        Ok (Cons a i) => match f a with
+                True => Ok (Cons a i),
+                False => Err Unit,
+            end,
+    end
+
+digit = filter any is_digit
+digit_hex = filter any is_digit_hex
+
+num = repeated_at_least_one digit
+
+repeated_aux = acc: p: i: match p i with
+        Err _ => Cons acc i,
+        Ok (Cons a i) => repeated_aux (Cons a acc) p i,
+    end
+
+repeated = p: i: let Cons l i = repeated_aux Nil p i
+    in Ok (Cons (reverse l) i)
+
+repeated_at_least_one = p: i: then p (repeated p) i
+
+repeated_with_count = p: n: i: match n with
+        0 => Ok (Cons Nil i),
+        _ => ok_flat_map
+                (p i)
+                (Cons a i:
+                    ok_map
+                        (repeated_with_count p (minus n 1) i)
+                        (Cons l i: Cons (Cons a l) i)),
+    end
+
+then_ignore = a: b: parser_map (then a b) (Cons a _: a)
+ignore_then = a: b: parser_map (then a b) (Cons _ a: a)
+
+whitespace = repeated (one_of " \n\t")
+
+padded = p: ignore_then whitespace (then_ignore p whitespace)
+
+delimited_by = start: p: _end: ignore_then start (then_ignore p _end)
+
+separated_by = p: separator: alt (then p (repeated (ignore_then separator p))) (i: Ok (Cons Nil i))
+
+// =================== Parser ===================
+
+data Num 1
+data String 1
+data Define 2
+data BaseKey 1
+data ListAppend 1
+
+unicode_code_point_to_tail_len = c:
+    match le c 0x7F with
+        True => 0,
+        False =>
+    match le c 0x7FF with
+        True => 1,
+        False =>
+    match le c 0xFFFF with
+        True => 2,
+        False => 3,
+    end,
+    end,
+    end
+
+i64_to_utf8_list = c:
+    let tail_bytes = c: s:
+        bitwise_or_u8 (i64_to_u8 (bitwise_and (right_shift c s) 0b111111)) 0b10000000u8
+    in let head_byte = c: s: mask: i64_to_u8 (bitwise_or (right_shift c s) mask)
+    in match unicode_code_point_to_tail_len c with
+        0 => Cons (i64_to_u8 c) Nil,
+        1 => Cons (head_byte c 6 0b11000000)
+            (Cons (tail_bytes c 0) Nil),
+        2 => Cons (head_byte c 12 0b11100000)
+            (Cons (tail_bytes c 6)
+            (Cons (tail_bytes c 0) Nil)),
+        3 => Cons (head_byte c 18 0b11110000)
+            (Cons (tail_bytes c 12)
+            (Cons (tail_bytes c 6)
+            (Cons (tail_bytes c 0) Nil))),
+    end
+
+concat_strings = ss: let a = fold (array_new Unit) ss array_append
+    in array_to_str a
+
+string = s:
+    let unicode_escape_4 =
+        ignore_then
+            (just "u")
+            (parser_map
+                (repeated_with_count digit_hex 4)
+                (a: i64_to_utf8_list
+                    (char_list_to_num_hex a)))
+    in let unicode_escape_8 =
+        ignore_then
+            (just "U")
+            (parser_map
+                (repeated_with_count digit_hex 8)
+                (a: i64_to_utf8_list
+                    (char_list_to_num_hex a)))
+    in let escape = alt (just "\\")
+        (alt (just "\"")
+        (alt (parser_map (just "b") (_: "\x08"))
+        (alt (parser_map (just "t") (_: "\t"))
+        (alt (parser_map (just "n") (_: "\n"))
+        (alt (parser_map (just "f") (_: "\x0c"))
+        (parser_map (just "r") (_: "\r")))))))
+    in let escape = alt
+        escape
+        (parser_map (alt unicode_escape_4 unicode_escape_8) char_list_to_string)
+    in let basic_string = parser_slice (none_of r#"\""#)
+    in let basic_string = alt basic_string (ignore_then (just "\\") escape)
+    in let basic_string = parser_map (repeated basic_string) concat_strings
+    in let basic_string = delimited_by (just "\"") basic_string (just "\"")
+    in let literal_string = delimited_by (just "'") (parser_slice (repeated (none_of r#"'"#))) (just "'")
+    in alt basic_string literal_string s
+
+key = s: let is_ident_head = c: let c1 = and (le_u8 65u8 c) (le_u8 c 90u8)
+        in let c2 = and (le_u8 97u8 c) (le_u8 c 122u8)
+        in or (or c1 c2) (eq_u8 95u8 c)
+    in let is_ident_continue = c: or (or (is_ident_head c) (is_digit c)) (eq_u8 c 39u8)
+    in let is_bare_key_char = c: or (is_ident_continue c) (eq_u8 45u8 c)
+    in let bare_key = parser_slice (repeated_at_least_one (filter any is_bare_key_char))
+    in let dot = filter any (c: eq_u8 c 46u8)
+    in separated_by (padded (alt string bare_key)) dot s
+
+value = s:
+    let string = parser_map string (a: String a)
+    in let num = parser_map num (s: Num (char_list_to_num s))
+    in let list = delimited_by (just "[") (separated_by (padded value) (just ",")) (just "]")
+    in let list = parser_map list reverse
+    in let obj_inner = separated_by (then (then_ignore key (padded (just "="))) (padded value)) (just ",")
+    in let obj = delimited_by (just "{") obj_inner (just "}")
+    in let obj = parser_map obj (kvs: fold E kvs (acc: Cons k v: replace_value acc k v))
+    in let b_true = parser_map (just "true") (_: True)
+    in let b_false = parser_map (just "false") (_: False)
+    in alt num (alt string (alt list (alt obj (alt b_true b_false)))) s
+
+parser = s: let equation = parser_map (then (then_ignore key (padded (just "="))) value) (Cons k v: Define k v)
+    in let base_key = parser_map (delimited_by (just "[") key (just "]")) BaseKey
+    in let list_append = parser_map (delimited_by (just "[[") key (just "]]")) ListAppend
+    in let comment = then (just "#") (repeated (none_of "\n"))
+    in let pad = repeated (alt comment (one_of " \n\t"))
+    in let equations = ignore_then pad (repeated (then_ignore (alt equation (alt base_key list_append)) pad))
+    in equations s
+
+// =================== Construction ===================
+
+import "red_black_tree_lib.doki"
+
+modify = tree_modify str_cmp
+insert = tree_insert str_cmp
+
+add_value_aux = key_h: key_t: obj: f:
+    modify key_h obj (v: match v with
+        Some a => add_value a key_t f,
+        None => fold (f None) (reverse key_t) (acc: k: insert k acc E),
+    end)
+
+add_value = obj: key: f: match key with
+        Cons key_h key_t => match obj with
+                Cons obj t => Cons (add_value_aux key_h key_t obj f) t,
+                obj => add_value_aux key_h key_t obj f,
+            end,
+        Nil => f (Some obj),
+    end
+
+replace_value = obj: key: value: add_value obj key (old: value)
+
+replace_values = obj: ds:
+    fold obj ds (acc: Define key value: replace_value acc key value)
+
+append_value = obj: key: value: add_value obj key (old: Cons value (unwrap_or old Nil))
+
+collect_list_mode_acc = obj: base_key: tmp_obj: list_mode: match list_mode with
+        False => add_value obj base_key (old: replace_values (unwrap_or old E) tmp_obj),
+        True => append_value obj base_key (replace_values E tmp_obj),
+    end
+
+toml_to_obj_aux = Cons obj (Cons base_key (Cons tmp_obj list_mode)): line: match line with
+        Define key value => let tmp_obj = Cons line tmp_obj
+                in Cons obj (Cons base_key (Cons tmp_obj list_mode)),
+        BaseKey next_base_key => let obj = collect_list_mode_acc obj base_key tmp_obj list_mode
+                in Cons obj (Cons next_base_key (Cons Nil False)),
+        ListAppend next_base_key => let obj = collect_list_mode_acc obj base_key tmp_obj list_mode
+                in Cons obj (Cons next_base_key (Cons Nil True)),
+    end
+
+toml_to_obj = toml:
+    let Cons obj (Cons base_key (Cons tmp_obj list_mode)) = fold (Cons E (Cons Nil (Cons Nil False))) toml toml_to_obj_aux
+    in collect_list_mode_acc obj base_key tmp_obj list_mode
+
+// =================== Object to String ===================
+
+tree_iter_aux = t: continue: match t with
+        E => continue Unit,
+        T _ k v l r => tree_iter_aux l (_:
+            Some (Cons (Cons k v) (_: tree_iter_aux r continue))
+        )
+    end
+
+tree_iter = t: tree_iter_aux t (_: None)
+
+print_tree_aux = print_key: print_value: t:
+    match t Unit with
+        None => append_to_print_buff "}",
+        Some (Cons (Cons k v) t) =>
+            let _ = append_to_print_buff ", "
+            in let _ = print_key k
+            in let _ = append_to_print_buff ": "
+            in let _ = print_value v
+            in print_tree_aux print_key print_value t,
+    end
+
+print_tree = print_key: print_value: t:
+    match tree_iter t with
+        None => append_to_print_buff "{}",
+        Some (Cons (Cons k v) t) =>
+            let _ = append_to_print_buff "{"
+            in let _ = print_key k
+            in let _ = append_to_print_buff ": "
+            in let _ = print_value v
+            in print_tree_aux print_key print_value t,
+    end
+
+print_list_aux = l: f: match l with
+        Nil => append_to_print_buff "]",
+        Cons h t => let _ = append_to_print_buff ", "
+            in let _ = f h
+            in print_list_aux t f,
+    end
+
+print_list = l: f: match l with
+        Nil => append_to_print_buff "[]",
+        Cons h t => let _ = append_to_print_buff "["
+            in let _ = f h
+            in print_list_aux t f,
+    end
+
+data PrintList 1
+
+obj_to_string = obj: match obj with
+        Num n => i64_to_string n,
+        String s => PrintStringEscaped s,
+        E | T _ _ _ _ _ => PrintTree obj,
+        Nil | Cons _ _ => PrintList (reverse obj),
+        True => "true",
+        False => "false",
+    end
+
+plus_u8 = a: b: intrinsic_i64_to_u8 (plus (intrinsic_u8_to_i64 a) (intrinsic_u8_to_i64 b))
+
+u8_to_hex_char = n: match le_u8 n 9u8 with
+        True => plus_u8 n '0',
+        False => plus_u8 n 55u8,
+    end
+
+to_escaped = c:
+    let f = c: push_to_print_buff c
+    in let _ = f '\\'
+    in let _ = f 'u'
+    in let _ = f '0'
+    in let _ = f '0'
+    in let _ = f (u8_to_hex_char (right_shift_u8 c 4))
+    in let _ = f (u8_to_hex_char (intrinsic_bitwise_and_u8 15u8 c))
+    in Unit
+
+bitwise_and_u8 = intrinsic_bitwise_and_u8
+
+buff_capacity = 1024
+print_buff = malloc buff_capacity
+print_buff_len = intrinsic_mut 0
+
+append_to_print_buff = Str s_d s_len s_p:
+    let buff_len = intrinsic_get print_buff_len
+    in match le (plus buff_len s_len) buff_capacity with
+        True => let _ = intrinsic_set print_buff_len (plus buff_len s_len)
+            in ptr_copy print_buff buff_len s_p s_d s_len,
+        False => let _ = flush_buff Unit
+            in let _ = intrinsic_set print_buff_len s_len
+            in ptr_copy print_buff 0 s_p s_d s_len,
+    end
+
+push_to_print_buff = c:
+    let buff_len = intrinsic_get print_buff_len
+    in match le (plus buff_len 1) buff_capacity with
+        True => let _ = intrinsic_set print_buff_len (plus buff_len 1)
+            in store_u8 print_buff buff_len c,
+        False => let _ = flush_buff Unit
+            in let _ = intrinsic_set print_buff_len 1
+            in store_u8 print_buff 0 c,
+    end
+
+flush_buff = _:
+    let _ = print (Str 0 (intrinsic_get print_buff_len) print_buff)
+    in intrinsic_set print_buff_len 0
+
+print_string_escaped = len: pointer: d:
+    match len with
+        0 => Unit,
+        _ => let c = intrinsic_load_u8 pointer d
+            in let n =
+                match or (eq_u8 c '"')
+                    (or (eq_u8 c '\\')
+                    (or (le_u8 c 31u8)
+                    (eq_u8 c 0x7Fu8))) with
+                    True => let _ = to_escaped c
+                        in 1,
+                    False =>
+                match eq_u8 c 0b11000010u8 with
+                    True => let c2 = intrinsic_load_u8 pointer (plus d 1)
+                        in let _ = to_escaped c2
+                        in 2,
+                    False =>
+                        let _ = push_to_print_buff c
+                        in 1,
+                end,
+                end
+            in print_string_escaped (minus len n) pointer (plus d n),
+    end
+
+data PrintAnd 2
+data PrintStringEscaped 1
+data PrintTree 1
+
+print_fmt = a: match a with
+        PrintAnd a b => let _ = print_fmt a
+            in print_fmt b,
+        PrintStringEscaped (Str d len pointer) =>
+            let _ = append_to_print_buff "\""
+            in let _ = print_string_escaped len pointer d
+            in append_to_print_buff "\"",
+        PrintTree t => print_tree (k: print_fmt (PrintStringEscaped k)) (v: print_fmt (obj_to_string v)) t,
+        PrintList l => print_list l (v: print_fmt (obj_to_string v)),
+        s => append_to_print_buff s,
+    end
+
+print_fmt_ln = a: let _ = print_fmt a
+    in append_to_print_buff "\n"
+
+// =================== Main ===================
+
+main = _:
+    let s = array_to_str (read_all Unit)
+    in match parser s with
+        Err Unit => println "err",
+        Ok (Cons e _) => let t = toml_to_obj e
+            in let _ = print_fmt_ln (obj_to_string t)
+            in flush_buff Unit,
+    end
