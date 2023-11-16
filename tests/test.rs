@@ -2,28 +2,58 @@ use assert_cmd::prelude::{CommandCargoExt, OutputAssertExt};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-const OPTIONS_FOR_CLANG: &str =
+const OPTIONS: &[&str] = &[
+    "-q",
+    "run",
+    "--unique-tmp",
     "-C=-pedantic-errors -Wno-gnu-empty-struct -Wno-gnu-empty-initializer \
--fsanitize=undefined,address -fno-sanitize-recover -ftrivial-auto-var-init=pattern";
-const OPTIONS: &[&str] = &["-q", "run", "--unique-tmp", OPTIONS_FOR_CLANG];
+    -fsanitize=undefined,address -fno-sanitize-recover -ftrivial-auto-var-init=pattern",
+];
+
+const OPTIONS_WITH_BOEHM: &[&str] = &[
+    "-q",
+    "run",
+    "--boehm",
+    "--unique-tmp",
+    // it seems like Boehm GC does not work well with `-fsanitize=address`
+    "-C=-pedantic-errors -Wno-gnu-empty-struct -Wno-gnu-empty-initializer \
+    -fsanitize=undefined -fno-sanitize-recover -ftrivial-auto-var-init=pattern",
+];
+
 const ENVS: [(&str, &str); 1] = [("ASAN_OPTIONS", "detect_leaks=0")];
 
 fn test_example(file_name: &str, stdout: &str) {
-    Command::cargo_bin(env!("CARGO_PKG_NAME"))
-        .unwrap()
-        .args(OPTIONS)
-        .envs(ENVS)
-        .arg(["examples/", file_name].concat())
-        .assert()
-        .stdout(stdout.to_string())
-        .stderr("")
-        .success();
+    let run = |boehm| {
+        let mut c = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
+        if boehm {
+            c.args(OPTIONS_WITH_BOEHM);
+        } else {
+            c.args(OPTIONS);
+        }
+        c.envs(ENVS)
+            .arg(["examples/", file_name].concat())
+            .assert()
+            .stdout(stdout.to_string())
+            .stderr("")
+            .success();
+    };
+    run(false);
+    run(true);
 }
 
-fn positive_test_with_stdin(file_name: &str, stdin: &str, stdout: &str) {
-    let mut c = Command::cargo_bin(env!("CARGO_PKG_NAME"))
-        .unwrap()
-        .args(OPTIONS)
+fn positive_test_with_stdin_with_gc_option(
+    file_name: &str,
+    stdin: &str,
+    stdout: &str,
+    boehm: bool,
+) {
+    let mut c = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
+    if boehm {
+        c.args(OPTIONS_WITH_BOEHM);
+    } else {
+        c.args(OPTIONS);
+    }
+    let mut c = c
         .envs(ENVS)
         .arg(["tests/positive/", file_name].concat())
         .stdin(Stdio::piped())
@@ -37,16 +67,13 @@ fn positive_test_with_stdin(file_name: &str, stdin: &str, stdout: &str) {
     assert!(output.stderr.is_empty());
 }
 
+fn positive_test_with_stdin(file_name: &str, stdin: &str, stdout: &str) {
+    positive_test_with_stdin_with_gc_option(file_name, stdin, stdout, false);
+    positive_test_with_stdin_with_gc_option(file_name, stdin, stdout, true);
+}
+
 fn positive_test(file_name: &str, stdout: &str) {
-    Command::cargo_bin(env!("CARGO_PKG_NAME"))
-        .unwrap()
-        .args(OPTIONS)
-        .envs(ENVS)
-        .arg(["tests/positive/", file_name].concat())
-        .assert()
-        .stdout(stdout.to_string())
-        .stderr("")
-        .success();
+    positive_test_with_stdin(file_name, "", stdout)
 }
 
 fn negative_test(file_name: &str) -> assert_cmd::assert::Assert {
@@ -160,8 +187,19 @@ fn fixed_point_prime() {
 
 #[test]
 fn fixed_point_lambda_prime() {
-    positive_test_with_stdin("fixed_point_lambda_prime.doki", "2147483647\n", "True\n");
-    positive_test_with_stdin("fixed_point_lambda_prime.doki", "68718821377\n", "False\n");
+    positive_test_with_stdin("fixed_point_lambda_prime.doki", "100003\n", "True\n");
+    positive_test_with_stdin_with_gc_option(
+        "fixed_point_lambda_prime.doki",
+        "2147483647\n",
+        "True\n",
+        false,
+    );
+    positive_test_with_stdin_with_gc_option(
+        "fixed_point_lambda_prime.doki",
+        "68718821377\n",
+        "False\n",
+        false,
+    );
 }
 
 #[test]

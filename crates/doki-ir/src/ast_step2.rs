@@ -39,6 +39,7 @@ pub struct Ast<'a> {
     pub used_intrinsic_variables: Collector<(IntrinsicVariable, Vec<CType>, CType)>,
     pub c_type_definitions: Vec<CTypeScheme<CType>>,
     pub backtrace: bool,
+    pub boehm: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -230,6 +231,7 @@ impl<'a> Ast<'a> {
             used_intrinsic_variables: memo.used_intrinsic_variables,
             c_type_definitions: memo.c_type_definitions,
             backtrace: ast.backtrace,
+            boehm: ast.boehm,
         }
     }
 }

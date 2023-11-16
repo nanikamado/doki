@@ -39,6 +39,8 @@ enum Commands {
         unique_tmp: bool,
         #[arg(long)]
         backtrace: bool,
+        #[arg(long)]
+        boehm: bool,
     },
     /// Output generated c code
     #[command(alias("c"))]
@@ -46,6 +48,8 @@ enum Commands {
         file: String,
         #[arg(long)]
         backtrace: bool,
+        #[arg(long)]
+        boehm: bool,
     },
     /// Start the language server
     LanguageServer,
@@ -55,11 +59,18 @@ fn compile<'a>(
     file_name: &'a str,
     no_type_minimization: bool,
     backtrace: bool,
+    boehm: bool,
     src_files: &mut FxHashMap<&'a str, &'a str>,
     arena: &'a mut Arena<String>,
 ) -> Result<impl Display + 'a, ()> {
     match compiler::parse(file_name, src_files, arena) {
-        Ok(ast) => Ok(gen_c(ast, src_files, !no_type_minimization, backtrace)),
+        Ok(ast) => Ok(gen_c(
+            ast,
+            src_files,
+            !no_type_minimization,
+            backtrace,
+            boehm,
+        )),
         Err((file_name, e)) => {
             e.write(stderr(), file_name, src_files[file_name]).unwrap();
             Err(())
@@ -99,11 +110,13 @@ fn main() -> ExitCode {
             clang_options,
             unique_tmp,
             backtrace,
+            boehm,
         } => {
             let r = compile(
                 &file,
                 args.no_type_minimization,
                 backtrace,
+                boehm,
                 &mut src_files,
                 &mut arena,
             );
@@ -113,9 +126,10 @@ fn main() -> ExitCode {
                         run_c::run_with_unique_tmp(
                             c.to_string(),
                             clang_options.as_deref().unwrap_or(""),
+                            boehm,
                         )
                     } else {
-                        run_c::run(c.to_string(), clang_options.as_deref().unwrap_or(""))
+                        run_c::run(c.to_string(), clang_options.as_deref().unwrap_or(""), boehm)
                     } {
                         ExitCode::from(exit_status.code().unwrap() as u8)
                     } else {
@@ -125,11 +139,16 @@ fn main() -> ExitCode {
                 Err(()) => ExitCode::FAILURE,
             }
         }
-        Commands::EmitC { file, backtrace } => {
+        Commands::EmitC {
+            file,
+            backtrace,
+            boehm,
+        } => {
             let r = compile(
                 &file,
                 args.no_type_minimization,
                 backtrace,
+                boehm,
                 &mut src_files,
                 &mut arena,
             );

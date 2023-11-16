@@ -27,6 +27,7 @@ fn build<'a>(
     src_files: &FxHashMap<&'a str, &'a str>,
     minimize_types: bool,
     backtrace: bool,
+    boehm: bool,
 ) -> Env<'a> {
     let utf8_to_utf16_ln_col_map = src_files
         .iter()
@@ -45,6 +46,9 @@ fn build<'a>(
     };
     if backtrace {
         env.build_env.backtrace_true();
+    }
+    if boehm {
+        env.build_env.boehm_true();
     }
     for d in ast.data_decls.into_iter().chain(once(DataDecl {
         name: "Str",
@@ -129,8 +133,9 @@ pub fn gen_c<'a>(
     src_files: &mut FxHashMap<&'a str, &'a str>,
     minimize_types: bool,
     backtrace: bool,
+    boehm: bool,
 ) -> impl Display + 'a {
-    let env = build(ast, src_files, minimize_types, backtrace);
+    let env = build(ast, src_files, minimize_types, backtrace, boehm);
     let (entry_point, span) = env.entry_point.unwrap();
     let (ln, col) = env.utf8_to_utf16_ln_col_map[span.file_name][span.start];
     env.build_env
@@ -148,7 +153,7 @@ pub fn token_map<'a>(
     src_files: &FxHashMap<&'a str, &'a str>,
     minimize_types: bool,
 ) -> AnalyzedSrc<'a> {
-    let env = build(ast, src_files, minimize_types, false);
+    let env = build(ast, src_files, minimize_types, false, false);
     let (entry_point, span) = env.entry_point.unwrap();
     let (ln, col) = env.utf8_to_utf16_ln_col_map[span.file_name][span.start];
     let ast = env

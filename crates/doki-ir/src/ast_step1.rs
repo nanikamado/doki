@@ -22,6 +22,7 @@ pub struct Ast<'a> {
     pub type_map: PaddedTypeMap,
     pub constructor_names: ConstructorNames,
     pub backtrace: bool,
+    pub boehm: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -387,6 +388,7 @@ pub struct Env<'a> {
     field_len: Vec<usize>,
     constructor_names: ConstructorNames,
     backtrace: bool,
+    boehm: bool,
 }
 
 impl<'a> Env<'a> {
@@ -400,6 +402,7 @@ impl<'a> Env<'a> {
             field_len: Default::default(),
             constructor_names: Default::default(),
             backtrace: false,
+            boehm: false,
         }
     }
 
@@ -621,6 +624,7 @@ impl<'a> Env<'a> {
             type_map,
             constructor_names: self.constructor_names,
             backtrace: self.backtrace,
+            boehm: self.boehm,
         }
     }
 
@@ -637,6 +641,10 @@ impl<'a> Env<'a> {
 
     pub fn backtrace_true(&mut self) {
         self.backtrace = true
+    }
+
+    pub fn boehm_true(&mut self) {
+        self.boehm = true
     }
 }
 

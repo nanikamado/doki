@@ -41,6 +41,7 @@ impl Display for Codegen<'_> {
             refed_types,
             global_variable_initialization: false,
             backtrace: ast.backtrace,
+            boehm: ast.boehm,
         };
         let structs = sorted.iter().format_with("", |(i, t), f| {
             let i = CType {
@@ -76,6 +77,15 @@ impl Display for Codegen<'_> {
 #include <errno.h>
 struct diverge{{}};"
         )?;
+        if env.boehm {
+            write!(
+                f,
+                "\n\
+            #include <gc.h>\n\
+            #define malloc GC_malloc\n\
+            "
+            )?;
+        }
         if env.backtrace {
             write!(
                 f,
@@ -434,6 +444,7 @@ struct Env<'a> {
     refed_types: &'a FxHashMap<StructId, usize>,
     global_variable_initialization: bool,
     backtrace: bool,
+    boehm: bool,
 }
 
 fn collect_local_variables_in_block(b: &FunctionBody, vs: &mut FxHashSet<LocalVariable>) {
