@@ -80,7 +80,7 @@ struct diverge{{}};"
             write!(
                 f,
                 "static char* TRACE_STACK[{BACKTRACE_STACK_LIMIT}];\
-                static int TRACE_STACK_TOP;",
+                static int trace_stack_top;",
             )?;
         }
         write!(
@@ -148,12 +148,12 @@ int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {
                 f,
                 "__attribute__ ((__noreturn__)) static int panic(char* msg){{\
                 fprintf(stderr, \"error: %s\\nstack backtrace:\\n\", msg);\
-                while(--TRACE_STACK_TOP>=0)\
-                fprintf(stderr, \"%5d: %s\\n\", TRACE_STACK_TOP, TRACE_STACK[TRACE_STACK_TOP]);\
+                while(--trace_stack_top>=0)\
+                fprintf(stderr, \"%5d: %s\\n\", trace_stack_top, TRACE_STACK[trace_stack_top]);\
                 exit(1);}}\
                 static void trace_stack_push(char* span) {{\
-                    if(TRACE_STACK_TOP=={BACKTRACE_STACK_LIMIT})panic(\"stack overflow\");\
-                    TRACE_STACK[TRACE_STACK_TOP++]=span;\
+                    if(trace_stack_top=={BACKTRACE_STACK_LIMIT})panic(\"stack overflow\");\
+                    TRACE_STACK[trace_stack_top++]=span;\
                 }}\
                 "
             )
@@ -540,7 +540,7 @@ impl DisplayWithEnv for Instruction {
                 let t = &env.local_variable_types.get_type(*d).1;
                 write!(f, "{}={};", Dis(d, env), Dis(&(e, t), env))?;
                 if env.backtrace && matches!(e, Expr::Call { .. }) {
-                    write!(f, "TRACE_STACK_TOP--;")?;
+                    write!(f, "trace_stack_top--;")?;
                 }
                 Ok(())
             }
