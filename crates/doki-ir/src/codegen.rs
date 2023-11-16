@@ -27,11 +27,9 @@ impl Display for Codegen<'_> {
             i: StructId(0),
             boxed: false,
         };
-        let mut mutted_types = Collector::default();
         let mut refed_types = Collector::default();
-        let sorted = sort_aggregates(&ast.c_type_definitions, &mut mutted_types, &mut refed_types);
+        let sorted = sort_aggregates(&ast.c_type_definitions, &mut refed_types);
         let refed_types = refed_types.as_raw();
-        let mutted_types = mutted_types.as_raw();
         let env = Env {
             variable_names: &ast.variable_names,
             local_variable_types: &ast.variable_types,
@@ -95,7 +93,7 @@ struct diverge{{}};"
         }
         write!(
             f,
-            "{}{}{}",
+            "{}{}",
             structs,
             refed_types.iter().format_with("", |(t, n), f| {
                 f(&format_args!(
@@ -112,17 +110,7 @@ struct diverge{{}};"
                         env
                     ),
                 ))
-            }),
-            mutted_types
-                .iter()
-                .format_with("", |(t, n), f| f(&format_args!(
-                    "static {0}* mut_{n}({0} a) {{
-                    {0}* tmp = malloc(sizeof({0}));
-                    *tmp = a;
-                    return tmp;
-                    }}",
-                    Dis(t, env),
-                )))
+            })
         )?;
         write_fns(f, &ast.functions, env, false)?;
         write!(
@@ -190,15 +178,7 @@ int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {
                         .format_with(",", |(i, t), f| f(&format_args!("{} _{i}", Dis(t, env))))
                 )
             }?;
-            write!(
-                f,
-                "{{{}}}",
-                PrimitiveDefPrint {
-                    i: *v,
-                    arg_ts,
-                    mutted_types,
-                }
-            )?;
+            write!(f, "{{{}}}", Dis(&PrimitiveDefPrint { i: *v, arg_ts }, env))?;
         }
         write!(
             f,
@@ -265,11 +245,10 @@ int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {
 struct PrimitiveDefPrint<'a> {
     i: IntrinsicVariable,
     arg_ts: &'a [CType],
-    mutted_types: &'a FxHashMap<CType, usize>,
 }
 
-impl Display for PrimitiveDefPrint<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl DisplayWithEnv for PrimitiveDefPrint<'_> {
+    fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use IntrinsicVariable::*;
         let v = self.i;
         match v {
@@ -292,8 +271,15 @@ impl Display for PrimitiveDefPrint<'_> {
                 r#"fwrite((uint8_t*)_0+_1,1,_2,stdout);return intrinsic_unit();"#
             ),
             Mut => {
-                let n = self.mutted_types[&self.arg_ts[0]];
-                write!(f, "return mut_{n}(_0);")
+                let t = self.arg_ts[0];
+                write!(
+                    f,
+                    "\
+                    {0}* tmp = malloc(sizeof({0}));\
+                    *tmp = _0;\
+                    return tmp;",
+                    Dis(&t, env),
+                )
             }
             SetMut => write!(f, "*_0 = _1;return intrinsic_unit();"),
             GetMut => write!(f, "return *_0;"),
@@ -312,7 +298,6 @@ impl Display for PrimitiveDefPrint<'_> {
 
 fn sort_aggregates<'a>(
     c_type_definitions: &'a [CTypeScheme<CType>],
-    mutted_types: &mut Collector<CType>,
     refed_types: &mut Collector<StructId>,
 ) -> Vec<(StructId, &'a CTypeScheme<CType>)> {
     let mut done = FxHashSet::default();
@@ -326,7 +311,6 @@ fn sort_aggregates<'a>(
             c_type_definitions,
             &mut done,
             &mut sorted,
-            mutted_types,
             refed_types,
         );
     }
@@ -338,7 +322,6 @@ fn sort_aggregates_rec<'a>(
     h: &'a [CTypeScheme<CType>],
     done: &mut FxHashSet<StructId>,
     sorted: &mut Vec<(StructId, &'a CTypeScheme<CType>)>,
-    mutted_types: &mut Collector<CType>,
     refed_types: &mut Collector<StructId>,
 ) {
     if i.boxed {
@@ -359,12 +342,9 @@ fn sort_aggregates_rec<'a>(
     match a {
         Aggregate(is) | Union(is) => {
             for i in is {
-                sort_aggregates_rec(*i, h, done, sorted, mutted_types, refed_types);
+                sort_aggregates_rec(*i, h, done, sorted, refed_types);
             }
             sorted.push((i.i, a));
-        }
-        Mut(t) => {
-            mutted_types.get_or_insert(*t);
         }
         _ => (),
     }
