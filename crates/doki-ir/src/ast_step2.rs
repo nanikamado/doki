@@ -30,6 +30,7 @@ use std::fmt::{Debug, Display};
 pub struct Ast<'a> {
     pub variable_decls: Vec<VariableDecl<'a>>,
     pub entry_block: FunctionBody,
+    pub entry_block_ret_t: CType,
     pub variable_names: FxHashMap<GlobalVariableId, String>,
     pub functions: Vec<Function>,
     pub variable_types: LocalVariableCollector<(Option<Type>, CType)>,
@@ -164,7 +165,7 @@ impl<'a> Ast<'a> {
             ast.type_map,
             ast.constructor_names,
         );
-        let entry_block = {
+        let (entry_block, entry_block_ret_t) = {
             let mut replace_map = Default::default();
             let ast_step1::Instruction::Assign(ret, _) =
                 ast.entry_block.instructions.last().unwrap()
@@ -174,15 +175,14 @@ impl<'a> Ast<'a> {
             let p = memo.map.new_pointer();
             let t = memo.get_type_for_hash(p);
             let type_id = memo.type_memo.type_id_generator.get_or_insert(t);
-            let (entry_block, _) = memo.function_body(
+            let (basic_blocks, ret) = memo.function_body(
                 &ast.entry_block,
                 (type_id, ast.global_variable_for_entry_block),
                 &mut replace_map,
                 *ret,
             );
-            FunctionBody {
-                basic_blocks: entry_block,
-            }
+            let (_, c_type) = memo.local_variable_collector.get_type(ret);
+            (FunctionBody { basic_blocks }, *c_type)
         };
         debug_assert_eq!(memo.job_stack.len(), 1);
         while let Some(j) = memo.job_stack.pop() {
@@ -222,6 +222,7 @@ impl<'a> Ast<'a> {
         Self {
             variable_decls: memo.monomorphized_variables,
             entry_block,
+            entry_block_ret_t,
             functions,
             variable_names,
             variable_types: memo.local_variable_collector,

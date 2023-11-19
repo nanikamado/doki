@@ -208,15 +208,10 @@ int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {
                 ))),
         )?;
         write_fns(f, &ast.functions, env, true)?;
-        debug_assert_eq!(ast.entry_block.basic_blocks.len(), 1);
-        let EndInstruction::Ret(l) = ast.entry_block.basic_blocks[0].end_instruction else {
-            panic!()
-        };
-        let l_t = env.local_variable_types.get_type(l).1;
         write!(
             f,
             "static {} inner_main(void){}",
-            Dis(&l_t, env),
+            Dis(&ast.entry_block_ret_t, env),
             Dis(
                 &FunctionBodyWithCtx {
                     f: &ast.entry_block,
