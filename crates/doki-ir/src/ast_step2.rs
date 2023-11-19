@@ -1764,10 +1764,9 @@ impl<'a, 'b> Env<'a, 'b> {
             } = divergent_stopper.unwrap()
             {
                 let terminal = self.map.dereference_without_find_mut(p);
-                let BoxPoint::Boxed(pss) = &mut terminal.box_point else {
-                    panic!()
+                if let BoxPoint::Boxed(pss) = &mut terminal.box_point {
+                    pss.get_mut(&union_index).unwrap()[field as usize] = Some(true);
                 };
-                pss.get_mut(&union_index).unwrap()[field as usize] = Some(true);
             }
             if let Some((p, i, j)) = parent_of_p {
                 let t = self.map.dereference_without_find_mut(p);
