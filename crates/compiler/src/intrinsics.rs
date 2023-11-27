@@ -33,6 +33,16 @@ impl IntrinsicVariable {
             ReadFile => "intrinsic_read_file",
             Stdout => "intrinsic_stdout",
             Stdin => "intrinsic_stdin",
+            PlusF64 => "intrinsic_plus_f64",
+            MinusF64 => "intrinsic_minus_f64",
+            MultiF64 => "intrinsic_mul_f64",
+            DivF64 => "intrinsic_div_f64",
+            LeF64 => "intrinsic_le_f64",
+            LtF64 => "intrinsic_lt_f64",
+            EqF64 => "intrinsic_eq_f64",
+            WriteF64 => "intrinsic_write_f64",
+            F64StrLen => "intrinsic_f64_str_len",
+            SqrtF64 => "intrinsic_sqrt_f64",
         }
     }
 }

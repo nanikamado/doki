@@ -35,6 +35,7 @@ pub enum Expr<'a> {
     },
     Call(Box<ExprWithSpan<'a>>, Box<ExprWithSpan<'a>>),
     I64(i64),
+    F64(f64),
     U8(u8),
     Str(String),
     Match {
@@ -232,6 +233,19 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
             .or_not()
             .then(text::int(10))
             .map_slice(|a| I64(str::parse(a).unwrap()));
+        let f64_lit = just('-')
+            .or_not()
+            .then(text::int(10))
+            .then(just('.'))
+            .then(text::digits(10))
+            .then(
+                just('E')
+                    .or(just('e'))
+                    .then(just('+').or(just('-')))
+                    .then(text::digits(10))
+                    .or_not(),
+            )
+            .map_slice(|a| F64(str::parse(a).unwrap()));
         let u8_binary = text::digits(2)
             .slice()
             .delimited_by(just("0b"), just("u8"))
@@ -250,6 +264,7 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
             paren,
             match_expr,
             let_expr,
+            f64_lit,
             u8_decimal,
             u8_binary,
             binary,

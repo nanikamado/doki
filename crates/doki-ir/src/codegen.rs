@@ -73,6 +73,7 @@ impl Display for Codegen<'_> {
 #include <stdlib.h>
 #include <inttypes.h>
 #include <errno.h>
+#include <math.h>
 struct diverge{{}};"
         )?;
         if env.boehm {
@@ -247,20 +248,17 @@ impl DisplayWithEnv for PrimitiveDefPrint<'_> {
         use IntrinsicVariable::*;
         let v = self.i;
         match v {
-            Minus => write!(f, "return _0 - _1;"),
-            Plus => write!(f, "return _0 + _1;"),
+            Minus | MinusF64 => write!(f, "return _0 - _1;"),
+            Plus | PlusF64 => write!(f, "return _0 + _1;"),
             Percent => write!(f, "return _0 % _1;"),
-            Multi => write!(f, "return _0 * _1;"),
-            Div => write!(f, "return _0 / _1;"),
-            Lt => write!(f, "return _0 < _1;"),
-            Eq => write!(f, "return _0 == _1;"),
-            EqU8 => write!(f, "return _0 == _1;"),
-            BitOr => write!(f, "return _0 | _1;"),
-            BitAnd => write!(f, "return _0 & _1;"),
-            BitAndU8 => write!(f, "return _0 & _1;"),
-            BitOrU8 => write!(f, "return _0 | _1;"),
-            RightShift => write!(f, "return _0 >> _1;"),
-            RightShiftU8 => write!(f, "return _0 >> _1;"),
+            Multi | MultiF64 => write!(f, "return _0 * _1;"),
+            Div | DivF64 => write!(f, "return _0 / _1;"),
+            Lt | LtF64 => write!(f, "return _0 < _1;"),
+            LeF64 => write!(f, "return _0 <= _1;"),
+            Eq | EqF64 | EqU8 => write!(f, "return _0 == _1;"),
+            BitOr | BitOrU8 => write!(f, "return _0 | _1;"),
+            BitAnd | BitAndU8 => write!(f, "return _0 & _1;"),
+            RightShift | RightShiftU8 => write!(f, "return _0 >> _1;"),
             Write => write!(
                 f,
                 r#"fwrite((uint8_t*)_0+_1,1,_2,stdout);return intrinsic_unit();"#
@@ -287,6 +285,9 @@ impl DisplayWithEnv for PrimitiveDefPrint<'_> {
             ReadFile => write!(f, "return read_file(_0,_1,_2,_3,_4);"),
             Stdout => write!(f, "return stdout;"),
             Stdin => write!(f, "return stdin;"),
+            WriteF64 => write!(f, "snprintf(_0,_1,\"%f\",_2);return intrinsic_unit();"),
+            F64StrLen => write!(f, "return snprintf(NULL,0,\"%f\",_0);"),
+            SqrtF64 => write!(f, "return sqrt(_0);"),
         }
     }
 }
@@ -438,7 +439,11 @@ fn collect_local_variables_in_block(b: &FunctionBody, vs: &mut FxHashSet<LocalVa
 
 fn collect_local_variables_in_expr(e: &Expr, vs: &mut FxHashSet<LocalVariable>) {
     match e {
-        Expr::I64(_) | Expr::U8(_) | Expr::Str(_) | Expr::Ident(VariableId::Global(_)) => (),
+        Expr::I64(_)
+        | Expr::F64(_)
+        | Expr::U8(_)
+        | Expr::Str(_)
+        | Expr::Ident(VariableId::Global(_)) => (),
         Expr::Call { args, .. } | Expr::BasicCall { args, .. } => {
             for a in args {
                 collect_local_variables_in_variable(*a, vs);
@@ -560,6 +565,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
         match e {
             Expr::I64(a) => write!(fmt, "{a}"),
             Expr::U8(a) => write!(fmt, "{a}"),
+            Expr::F64(a) => write!(fmt, "{a}"),
             Expr::Str(a) => write!(fmt, "\"{}\"", StringEscape(a)),
             Expr::Ident(VariableId::Global(i)) => {
                 debug_assert_eq!(**t, env.global_variable_types[i]);
@@ -696,6 +702,7 @@ impl DisplayWithEnv for CType {
         match env.c_type_definitions[self.i.0] {
             CTypeScheme::I64 => write!(f, "int64_t"),
             CTypeScheme::U8 => write!(f, "uint8_t"),
+            CTypeScheme::F64 => write!(f, "double"),
             CTypeScheme::Ptr => write!(f, "void*"),
             CTypeScheme::Aggregate(_) => write!(f, "struct t{}", self.i.0),
             CTypeScheme::Union(_) => write!(f, "struct t{}", self.i.0),

@@ -46,7 +46,7 @@ pub struct LambdaId<T> {
     pub root_t: T,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct VariableDecl<'a> {
     pub value: Block,
     pub ret: LocalVariable,
@@ -54,7 +54,7 @@ pub struct VariableDecl<'a> {
     pub name: &'a str,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct Block {
     pub instructions: Vec<Instruction>,
 }
@@ -65,7 +65,7 @@ pub enum Tester {
     I64 { value: i64 },
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Instruction {
     Assign(LocalVariable, Expr),
     Test(Tester, LocalVariable),
@@ -74,7 +74,7 @@ pub enum Instruction {
     TryCatch(Block, Block),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Lambda {
         lambda_id: LambdaId<TypePointer>,
@@ -84,6 +84,7 @@ pub enum Expr {
         context: Vec<LocalVariable>,
     },
     I64(i64),
+    F64(f64),
     U8(u8),
     Str(String),
     Ident(VariableId),
@@ -196,6 +197,13 @@ impl TypeInfEnv<'_> {
                             self.type_map.insert_normal(
                                 t,
                                 TypeId::Intrinsic(IntrinsicTypeTag::I64),
+                                Vec::new(),
+                            );
+                        }
+                        Expr::F64(_) => {
+                            self.type_map.insert_normal(
+                                t,
+                                TypeId::Intrinsic(IntrinsicTypeTag::F64),
                                 Vec::new(),
                             );
                         }
@@ -462,6 +470,10 @@ impl<'a> Env<'a> {
 
     pub fn u8(&mut self, ret: LocalVariable, a: u8, block: &mut Block) {
         block.assign(ret, Expr::U8(a));
+    }
+
+    pub fn f64(&mut self, ret: LocalVariable, a: f64, block: &mut Block) {
+        block.assign(ret, Expr::F64(a));
     }
 
     pub fn local_variable(&mut self, ret: LocalVariable, a: LocalVariable, block: &mut Block) {

@@ -8,6 +8,7 @@ use rustc_hash::FxHashMap;
 pub enum CTypeScheme<T> {
     I64,
     U8,
+    F64,
     Ptr,
     Aggregate(Vec<T>),
     Union(Vec<T>),
@@ -85,6 +86,7 @@ impl<T> CTypeScheme<T> {
         match self {
             CTypeScheme::I64 => CTypeScheme::I64,
             CTypeScheme::U8 => CTypeScheme::U8,
+            CTypeScheme::F64 => CTypeScheme::F64,
             CTypeScheme::Ptr => CTypeScheme::Ptr,
             CTypeScheme::Aggregate(rs) => CTypeScheme::Aggregate(rs.iter().map(&mut f).collect()),
             CTypeScheme::Union(ts) => CTypeScheme::Union(ts.iter().map(&mut f).collect()),

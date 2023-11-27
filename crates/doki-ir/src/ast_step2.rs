@@ -55,7 +55,7 @@ pub struct CType {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct GlobalVariableId(usize);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct VariableDecl<'a> {
     pub name: &'a str,
     pub value: FunctionBody,
@@ -66,12 +66,12 @@ pub struct VariableDecl<'a> {
     pub t_for_hash: TypeForHash,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct FunctionBody {
     pub basic_blocks: Vec<BasicBlock>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct BasicBlock {
     pub instructions: Vec<Instruction>,
     pub end_instruction: EndInstruction,
@@ -83,7 +83,7 @@ pub enum Tester {
     I64 { value: i64 },
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Instruction {
     Assign(LocalVariable, Expr),
     Test {
@@ -100,9 +100,10 @@ pub enum EndInstruction {
     Panic { msg: String },
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     I64(i64),
+    F64(f64),
     U8(u8),
     Str(String),
     Ident(VariableId),
@@ -851,6 +852,15 @@ impl<'a, 'b> Env<'a, 'b> {
                 );
                 basic_block_env.assign(v, e)
             }
+            ast_step1::Expr::F64(s) => {
+                let e = self.add_tags_to_expr(
+                    F64(*s),
+                    p,
+                    TypeId::Intrinsic(IntrinsicTypeTag::U8),
+                    &mut basic_block_env.instructions,
+                );
+                basic_block_env.assign(v, e)
+            }
             ast_step1::Expr::Str(s) => {
                 let e = self.add_tags_to_expr(
                     Str(s.clone()),
@@ -1419,6 +1429,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 TypeId::Intrinsic(tag) => match tag {
                     IntrinsicTypeTag::Ptr => ts.push(CTypeForHashUnit::Ptr),
                     IntrinsicTypeTag::I64 => ts.push(CTypeForHashUnit::I64),
+                    IntrinsicTypeTag::F64 => ts.push(CTypeForHashUnit::F64),
                     IntrinsicTypeTag::U8 => ts.push(CTypeForHashUnit::U8),
                     IntrinsicTypeTag::Unit => ts.push(CTypeForHashUnit::Aggregate(Vec::new())),
                     IntrinsicTypeTag::Fn => {}
@@ -1505,6 +1516,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 TypeId::Intrinsic(tag) => match tag {
                     IntrinsicTypeTag::Ptr => CTypeForHashUnit::Ptr,
                     IntrinsicTypeTag::I64 => CTypeForHashUnit::I64,
+                    IntrinsicTypeTag::F64 => CTypeForHashUnit::F64,
                     IntrinsicTypeTag::U8 => CTypeForHashUnit::U8,
                     IntrinsicTypeTag::Unit => CTypeForHashUnit::Aggregate(Vec::new()),
                     IntrinsicTypeTag::Fn => panic!(),
@@ -1577,6 +1589,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 TypeId::Intrinsic(tag) => match tag {
                     IntrinsicTypeTag::Ptr => ts.push(CTypeScheme::Ptr),
                     IntrinsicTypeTag::I64 => ts.push(CTypeScheme::I64),
+                    IntrinsicTypeTag::F64 => ts.push(CTypeScheme::F64),
                     IntrinsicTypeTag::U8 => ts.push(CTypeScheme::U8),
                     IntrinsicTypeTag::Unit => ts.push(CTypeScheme::Aggregate(Vec::new())),
                     IntrinsicTypeTag::Fn => (),
@@ -1869,6 +1882,7 @@ struct CTypeForHash(Vec<CTypeForHashUnit>);
 enum CTypeForHashUnit {
     I64,
     U8,
+    F64,
     Ptr,
     Aggregate(Vec<CTypeForHashInner>),
     Ref(CTypeForHashInner),

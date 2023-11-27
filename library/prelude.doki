@@ -13,17 +13,38 @@ lt = a: b: match intrinsic_lt a b with
         _ => True,
     end
 le = a: b: lt a (plus b 1)
-lt_u8 = a: b: lt (intrinsic_u8_to_i64 a) (intrinsic_u8_to_i64 b)
-le_u8 = a: b: le (intrinsic_u8_to_i64 a) (intrinsic_u8_to_i64 b)
 eq = a: b: match intrinsic_eq a b with
         1 => True,
         0 => False,
     end
+
+lt_u8 = a: b: lt (intrinsic_u8_to_i64 a) (intrinsic_u8_to_i64 b)
+le_u8 = a: b: le (intrinsic_u8_to_i64 a) (intrinsic_u8_to_i64 b)
 eq_u8 = a: b:
     match intrinsic_eq_u8 a b with
         0 => False,
         _ => True,
     end
+
+div_f64 = intrinsic_div_f64
+plus_f64 = intrinsic_plus_f64
+mul_f64 = intrinsic_mul_f64
+minus_f64 = intrinsic_minus_f64
+lt_f64 = a: b: match intrinsic_lt_f64 a b with
+        0 => False,
+        _ => True,
+    end
+le_f64 = a: b: match intrinsic_le_f64 a b with
+        0 => False,
+        _ => True,
+    end
+eq_f64 = a: b: match intrinsic_eq_f64 a b with
+        1 => True,
+        0 => False,
+    end
+sqrt_f64 = intrinsic_sqrt_f64
+
+
 malloc = intrinsic_malloc
 
 data Unit 0

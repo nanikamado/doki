@@ -254,6 +254,9 @@ impl<'a> Env<'a> {
             Expr::I64(s) => {
                 self.build_env.i64(ret, s, block);
             }
+            Expr::F64(s) => {
+                self.build_env.f64(ret, s, block);
+            }
             Expr::U8(s) => {
                 self.build_env.u8(ret, s, block);
             }
