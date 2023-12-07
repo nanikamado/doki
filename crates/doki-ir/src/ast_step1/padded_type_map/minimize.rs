@@ -59,6 +59,7 @@ pub struct TerminalRef<'a> {
     pub type_map: BTreeMap<TypeId, Vec<TypePointer>>,
     pub functions: Vec<(LambdaId<TypePointer>, Vec<TypePointer>)>,
     pub reference_point: &'a BoxPoint,
+    pub fixed: bool,
 }
 
 impl Dfa for PaddedTypeMap {
@@ -103,6 +104,7 @@ impl Dfa for PaddedTypeMap {
             type_map,
             functions,
             reference_point: &t.box_point,
+            fixed: t.fixed,
         }
     }
 }

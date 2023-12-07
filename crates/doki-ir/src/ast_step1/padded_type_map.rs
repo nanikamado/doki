@@ -130,6 +130,7 @@ impl PaddedTypeMap {
                 panic!()
             };
             debug_assert_eq!(a_t.box_point, b_t.box_point);
+            debug_assert_eq!(a_t.fixed, b_t.fixed);
             let functions = a_t.functions.clone();
             for (a, b) in a_t
                 .type_map
@@ -268,7 +269,8 @@ impl PaddedTypeMap {
 
     pub fn clone_pointer(&mut self, p: TypePointer, replace_map: &mut ReplaceMap) -> TypePointer {
         let p = self.find(p);
-        if self.dereference_without_find(p).fixed {
+        let t = self.dereference_without_find(p).clone();
+        if t.fixed {
             return p;
         }
         if let Some(p) = replace_map.get(p, self) {
@@ -276,8 +278,6 @@ impl PaddedTypeMap {
         }
         let new_p = self.new_pointer();
         replace_map.insert(p, new_p);
-        let t = self.dereference_without_find(p).clone();
-        debug_assert_eq!(t.box_point, BoxPoint::NotSure);
         let type_map = t
             .type_map
             .into_iter()

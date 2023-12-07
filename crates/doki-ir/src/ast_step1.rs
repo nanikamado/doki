@@ -34,12 +34,6 @@ pub struct GlobalVariable(u32);
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct ConstructorId(u32);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum VariableId {
-    Local(LocalVariable),
-    Global(GlobalVariable, ReplaceMap, TypePointer),
-}
-
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct LambdaId<T> {
     pub id: u32,
@@ -87,7 +81,8 @@ pub enum Expr {
     F64(f64),
     U8(u8),
     Str(String),
-    Ident(VariableId),
+    LocalIdent(LocalVariable),
+    GlobalIdent(GlobalVariable, ReplaceMap, TypePointer),
     Call {
         f: LocalVariable,
         a: LocalVariable,
@@ -221,7 +216,7 @@ impl TypeInfEnv<'_> {
                                 Vec::new(),
                             );
                         }
-                        Expr::Ident(VariableId::Global(decl_id, replace_map, pp)) => {
+                        Expr::GlobalIdent(decl_id, replace_map, pp) => {
                             debug_assert!(replace_map.is_empty());
                             let p = self.global_variable_types[decl_id];
                             if self.scc[decl_id] == self.current_scc_id {
@@ -256,7 +251,7 @@ impl TypeInfEnv<'_> {
                                 }
                             }
                         }
-                        Expr::Ident(VariableId::Local(d)) => {
+                        Expr::LocalIdent(d) => {
                             self.used_local_variables.insert(*d);
                             let t2 = self.local_variable_types.get(*d);
                             self.type_map.union(t, t2);
@@ -452,11 +447,7 @@ impl<'a> Env<'a> {
     pub fn global_variable(&mut self, ret: LocalVariable, v: GlobalVariable, block: &mut Block) {
         block.assign(
             ret,
-            Expr::Ident(VariableId::Global(
-                v,
-                Default::default(),
-                PaddedTypeMap::null_pointer(),
-            )),
+            Expr::GlobalIdent(v, Default::default(), PaddedTypeMap::null_pointer()),
         );
     }
 
@@ -477,7 +468,7 @@ impl<'a> Env<'a> {
     }
 
     pub fn local_variable(&mut self, ret: LocalVariable, a: LocalVariable, block: &mut Block) {
-        block.assign(ret, Expr::Ident(VariableId::Local(a)));
+        block.assign(ret, Expr::LocalIdent(a));
     }
 
     pub fn call<S: Display>(
@@ -684,7 +675,7 @@ impl Block {
             match i {
                 Instruction::Assign(_, e) => match e {
                     Expr::Lambda { body, .. } => body.collect_global_variables(vs),
-                    Expr::Ident(VariableId::Global(v, _, _)) => {
+                    Expr::GlobalIdent(v, _, _) => {
                         vs.insert(*v);
                     }
                     _ => (),
@@ -739,13 +730,13 @@ impl<T: Debug> Display for LambdaId<T> {
     }
 }
 
-impl From<LocalVariable> for VariableId {
-    fn from(value: LocalVariable) -> Self {
-        VariableId::Local(value)
+impl Display for LocalVariable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
-impl Display for LocalVariable {
+impl Display for GlobalVariable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }

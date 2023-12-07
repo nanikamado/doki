@@ -1,0 +1,34 @@
+import "../../library/prelude.doki"
+
+data SomeA 1
+data SomeB 1
+data SomeC 1
+
+mut = intrinsic_mut
+set = intrinsic_set
+get = intrinsic_get
+
+a = SomeA (mut "0")
+
+f = a:
+    match a with
+        SomeA m => set m "1",
+        SomeB _ => Unit,
+    end
+
+g = a:
+    match a with
+        SomeA m => set m "2",
+        SomeC _ => Unit,
+    end
+
+unwrap_a = SomeA a: a
+
+main = _:
+    let a1 = a
+    in let _ = f a1
+    in let a2 = a
+    in let _ = g a2
+    in let _ = println (get (unwrap_a a1))
+    in let _ = println (get (unwrap_a a2))
+    in Unit

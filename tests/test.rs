@@ -345,3 +345,8 @@ fn toml() {
         \"actor\": {\"id\": \"\u{00ff} \u{d7ff} \u{e000} \u{ffff} \u{10000} \u{10ffff}\"}}]}\n",
     );
 }
+
+#[test]
+fn global_mut() {
+    positive_test("global_mut.doki", "2\n2\n");
+}

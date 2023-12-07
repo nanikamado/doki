@@ -1,8 +1,8 @@
-use crate::ast_step1::{ConstructorId, ConstructorNames};
+use crate::ast_step1::{self, ConstructorId, ConstructorNames};
 use crate::ast_step2::c_type::CTypeScheme;
 use crate::ast_step2::{
-    self, Ast, CType, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId, Instruction,
-    LocalVariable, LocalVariableCollector, StructId, Tester, Type, VariableId,
+    self, Ast, CType, ConvertOpRef, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId,
+    Instruction, LocalVariable, LocalVariableCollector, StructId, Tester, Type, VariableId,
 };
 use crate::intrinsics::IntrinsicVariable;
 use crate::util::collector::Collector;
@@ -114,17 +114,17 @@ struct diverge{{}};"
             })
         )?;
         write_fns(f, &ast.functions, env, false)?;
-        write!(
-            f,
-            "{}",
-            ast.variable_decls
-                .iter()
-                .format_with("", |d, f| f(&format_args!(
-                    "static {0} {1};static {0} init_{1}(void);",
+        for d in &ast.variable_decls {
+            write!(f, "static {0} {1};", Dis(&d.c_t, env), Dis(&d.decl_id, env),)?;
+            if d.is_original {
+                write!(
+                    f,
+                    "static {0} init_{1}(void);",
                     Dis(&d.c_t, env),
                     Dis(&d.decl_id, env),
-                ))),
-        )?;
+                )?;
+            }
+        }
         write!(
             f,
             "static {0} intrinsic_unit(void){{
@@ -181,12 +181,9 @@ int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {
             }?;
             write!(f, "{{{}}}", Dis(&PrimitiveDefPrint { i: *v, arg_ts }, env))?;
         }
-        write!(
-            f,
-            "{}",
-            ast.variable_decls
-                .iter()
-                .format_with("", |d, f| f(&format_args!(
+        for d in &ast.variable_decls {
+            if d.is_original {
+                write!(f,
                     "static {0} init_{1}_inner(void){2}\
                     static char init_status_{1}=0;\
                     static {0} init_{1}(void){{\
@@ -206,8 +203,9 @@ int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {
                         },
                         Env { global_variable_initialization: true, ..env }
                     )
-                ))),
-        )?;
+                )?;
+            }
+        }
         write_fns(f, &ast.functions, env, true)?;
         write!(
             f,
@@ -221,19 +219,132 @@ int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {
                 env
             )
         )?;
+        fn struct_converter(
+            f: &mut std::fmt::Formatter<'_>,
+            param: impl Display,
+            ops: &[(u32, ConvertOpRef)],
+            env: Env,
+        ) -> std::fmt::Result {
+            if ops.iter().all(|(c, r)| *c == 0 && !r.is_add_ref()) {
+                write!(f, "{param}")
+            } else {
+                write!(
+                    f,
+                    "{{{}}}",
+                    ops.iter().enumerate().format_with(",", |(i, (c, r)), f| {
+                        if *c == 0 {
+                            match r {
+                                ConvertOpRef::None => f(&format_args!("{param}._{i}")),
+                                ConvertOpRef::Ref(t) => f(&format_args!(
+                                    "ref_{}(*{param}._{i})",
+                                    env.refed_types[&t.i]
+                                )),
+                                ConvertOpRef::AddRef(t) => match env.refed_types.get(&t.i) {
+                                    Some(t) => f(&format_args!("ref_{}({param}._{i})", t)),
+                                    _ => f(&format_args!("/*u={t:?}*/ref_none",)),
+                                },
+                            }
+                        } else {
+                            match r {
+                                ConvertOpRef::None => {
+                                    f(&format_args!("converter_{}({param}._{i})", c))
+                                }
+                                ConvertOpRef::Ref(t) => f(&format_args!(
+                                    "ref_{}(converter_{}(*{param}._{i}))",
+                                    env.refed_types[&t.i], c
+                                )),
+                                ConvertOpRef::AddRef(t) => match env.refed_types.get(&t.i) {
+                                    Some(t) => {
+                                        f(&format_args!("ref_{}(converter_{}({param}._{i}))", t, c))
+                                    }
+                                    _ => f(&format_args!("/*t={t:?}*/ref_none",)),
+                                },
+                            }
+                        }
+                    })
+                )
+            }
+        }
+        for c in ast.type_converter.values() {
+            write!(
+                f,
+                "{} converter_{}({});",
+                Dis(&c.c_type_to, env),
+                c.id,
+                Dis(&c.c_type_from, env),
+            )?;
+        }
+        for c in ast.type_converter.values() {
+            write!(
+                f,
+                "{} converter_{}({} _0){{",
+                Dis(&c.c_type_to, env),
+                c.id,
+                Dis(&c.c_type_from, env),
+            )?;
+            match &c.op {
+                ast_step2::ConvertOp::Unknown => panic!(),
+                ast_step2::ConvertOp::Id => write!(f, "return _0;"),
+                ast_step2::ConvertOp::Unexpected => write!(f, r#"panic("unexpected");"#),
+                ast_step2::ConvertOp::Struct(ops) => {
+                    write!(f, "return ({})", Dis(&c.c_type_to, env),)?;
+                    struct_converter(f, "_0", ops, env)?;
+                    write!(f, ";")
+                }
+                ast_step2::ConvertOp::ReTag(ts) => {
+                    write!(f, "switch(_0.tag){{")?;
+                    for (i, t) in ts.iter().enumerate() {
+                        write!(f, "case {i}:")?;
+                        write!(
+                            f,
+                            "return ({0}){{{1},{{._{1}=",
+                            Dis(&c.c_type_to, env),
+                            t.new_tag
+                        )?;
+                        struct_converter(f, format_args!("_0.value._{i}"), &t.convert_op, env)?;
+                        write!(f, "}}}};")?;
+                        write!(f, "break;")?;
+                    }
+                    write!(f, r#"default:panic("unexpected");"#)?;
+                    write!(f, "}}")
+                }
+                ast_step2::ConvertOp::AddTag(tag, ops) => {
+                    write!(f, "return ({}){{{tag},{{._{tag}=", Dis(&c.c_type_to, env))?;
+                    struct_converter(f, "_0", ops, env)?;
+                    write!(f, "}}}};")
+                }
+            }?;
+            write!(f, "}}")?;
+        }
         writeln!(
             f,
             "int main(void) {{
-                {}
+                {}{}
                 inner_main();
             }}",
-            ast.variable_decls
+            ast.original_variables_map
                 .iter()
-                .rev()
-                .format_with("", |d, f| f(&format_args!(
+                .format_with("", |(_, (decl_id, _)), f| f(&format_args!(
                     "init_{0}();",
-                    Dis(&d.decl_id, env),
+                    Dis(decl_id, env),
                 ))),
+            ast.variable_decls.iter().rev().format_with("", |d, f| {
+                let (org_decl_id, original_p) = ast.original_variables_map[&d.original_decl_id];
+                if let Some(c) = &ast.type_converter.get(&(original_p, d.p)) {
+                    f(&format_args!(
+                        "{}=converter_{}({});",
+                        Dis(&d.decl_id, env),
+                        c.id,
+                        Dis(&org_decl_id, env)
+                    ))
+                } else {
+                    f(&format_args!(
+                        "{}={};",
+                        Dis(&d.decl_id, env),
+                        Dis(&org_decl_id, env)
+                    ))
+                }
+            }),
         )
     }
 }
@@ -658,6 +769,16 @@ impl DisplayWithEnv for GlobalVariableId {
             )
         } else {
             write!(f, "g_{self}_{}", convert_name(&env.variable_names[self]))
+        }
+    }
+}
+
+impl DisplayWithEnv for ast_step1::GlobalVariable {
+    fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if env.global_variable_initialization {
+            write!(f, "init_g_original_{self}()",)
+        } else {
+            write!(f, "g_original_{self}",)
         }
     }
 }
