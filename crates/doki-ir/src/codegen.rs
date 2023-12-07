@@ -316,36 +316,28 @@ int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {
             }?;
             write!(f, "}}")?;
         }
-        writeln!(
-            f,
-            "int main(void) {{
-                {}{}
-                inner_main();
-            }}",
-            ast.original_variables_map
-                .iter()
-                .format_with("", |(_, (decl_id, _)), f| f(&format_args!(
-                    "init_{0}();",
-                    Dis(decl_id, env),
-                ))),
-            ast.variable_decls.iter().rev().format_with("", |d, f| {
-                let (org_decl_id, original_p) = ast.original_variables_map[&d.original_decl_id];
-                if let Some(c) = &ast.type_converter.get(&(original_p, d.p)) {
-                    f(&format_args!(
-                        "{}=converter_{}({});",
-                        Dis(&d.decl_id, env),
-                        c.id,
-                        Dis(&org_decl_id, env)
-                    ))
-                } else {
-                    f(&format_args!(
-                        "{}={};",
-                        Dis(&d.decl_id, env),
-                        Dis(&org_decl_id, env)
-                    ))
-                }
-            }),
-        )
+        write!(f, "int main(void){{")?;
+        if env.boehm {
+            write!(f, "GC_INIT();")?;
+        }
+        for (decl_id, _) in ast.original_variables_map.values() {
+            write!(f, "init_{0}();", Dis(decl_id, env),)?;
+        }
+        for d in ast.variable_decls.iter().rev() {
+            let (org_decl_id, original_p) = ast.original_variables_map[&d.original_decl_id];
+            if let Some(c) = &ast.type_converter.get(&(original_p, d.p)) {
+                write!(
+                    f,
+                    "{}=converter_{}({});",
+                    Dis(&d.decl_id, env),
+                    c.id,
+                    Dis(&org_decl_id, env)
+                )?;
+            } else {
+                write!(f, "{}={};", Dis(&d.decl_id, env), Dis(&org_decl_id, env))?;
+            }
+        }
+        writeln!(f, "inner_main();}}")
     }
 }
 
