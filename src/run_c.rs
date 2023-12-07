@@ -1,17 +1,23 @@
 use owo_colors::OwoColorize;
 use std::fmt::Display;
-use std::io::{ErrorKind, Write};
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::{self, ExitStatus, Stdio};
 
-fn run_clang(f: impl Display, clang_options: &str, tmp_path: &str, boehm: bool) -> Result<(), ()> {
-    let mut c = process::Command::new("clang");
+fn run_cc(
+    f: impl Display,
+    cc: &str,
+    cc_options: &str,
+    tmp_path: &str,
+    boehm: bool,
+) -> Result<(), std::io::Error> {
+    let mut c = process::Command::new(cc);
     c.args(["-std=c17", "-x", "c", "-O2", "-o", &tmp_path, "-"]);
     if boehm {
         c.arg("-lgc");
     }
     match c
-        .args(clang_options.split_ascii_whitespace())
+        .args(cc_options.split_ascii_whitespace())
         .stdin(Stdio::piped())
         .spawn()
     {
@@ -26,39 +32,35 @@ fn run_clang(f: impl Display, clang_options: &str, tmp_path: &str, boehm: bool) 
             log::info!("     {} {tmp_path}", "Running".green().bold());
             Ok(())
         }
-        Err(e) => {
-            match e.kind() {
-                ErrorKind::NotFound => eprintln!(
-                    "clang command not found. \
-                    You need to install clang."
-                ),
-                _ => eprintln!("failed to run clang"),
-            };
-            Err(())
-        }
+        Err(e) => Err(e),
     }
 }
 
-pub fn run(f: impl Display, clang_options: &str, boehm: bool) -> Result<ExitStatus, ()> {
+pub fn run(
+    f: impl Display,
+    cc: &str,
+    cc_options: &str,
+    boehm: bool,
+) -> Result<ExitStatus, std::io::Error> {
     let mut tmp = std::env::temp_dir();
     tmp.push("doki_a.out");
     let tmp_path = tmp.to_str().unwrap();
-    run_clang(f, clang_options, tmp_path, boehm)?;
-    process::Command::new(tmp_path).exec();
-    Err(())
+    run_cc(f, cc, cc_options, tmp_path, boehm)?;
+    Err(process::Command::new(tmp_path).exec())
 }
 
 pub fn run_with_unique_tmp(
     f: impl Display,
-    clang_options: &str,
+    cc: &str,
+    cc_options: &str,
     boehm: bool,
-) -> Result<ExitStatus, ()> {
+) -> Result<ExitStatus, std::io::Error> {
     let tmp = tempfile::Builder::new()
         .prefix(".doki_")
         .tempfile()
         .unwrap();
     let tmp_path = tmp.path().to_str().unwrap().to_string();
-    run_clang(f, clang_options, &tmp_path, boehm)?;
+    run_cc(f, cc, cc_options, &tmp_path, boehm)?;
     tmp.keep().unwrap();
     let e = process::Command::new(&tmp_path)
         .spawn()

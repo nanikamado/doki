@@ -33,8 +33,10 @@ enum Commands {
     #[command(alias("r"))]
     Run {
         file: String,
+        #[arg(long, default_value = "clang")]
+        cc: String,
         #[arg(long, short('C'))]
-        clang_options: Option<String>,
+        cc_options: Option<String>,
         #[arg(long)]
         unique_tmp: bool,
         #[arg(long)]
@@ -107,7 +109,8 @@ fn main() -> ExitCode {
     match args.command {
         Commands::Run {
             file,
-            clang_options,
+            cc,
+            cc_options,
             unique_tmp,
             backtrace,
             boehm,
@@ -122,18 +125,32 @@ fn main() -> ExitCode {
             );
             match r {
                 Ok(c) => {
-                    if let Ok(exit_status) = if unique_tmp {
+                    let r = if unique_tmp {
                         run_c::run_with_unique_tmp(
                             c.to_string(),
-                            clang_options.as_deref().unwrap_or(""),
+                            &cc,
+                            cc_options.as_deref().unwrap_or(""),
                             boehm,
                         )
                     } else {
-                        run_c::run(c.to_string(), clang_options.as_deref().unwrap_or(""), boehm)
-                    } {
-                        ExitCode::from(exit_status.code().unwrap() as u8)
-                    } else {
-                        ExitCode::FAILURE
+                        run_c::run(
+                            c.to_string(),
+                            &cc,
+                            cc_options.as_deref().unwrap_or(""),
+                            boehm,
+                        )
+                    };
+                    match r {
+                        Ok(exit_status) => ExitCode::from(exit_status.code().unwrap() as u8),
+                        Err(e) => {
+                            match e.kind() {
+                                std::io::ErrorKind::NotFound => {
+                                    eprintln!("command not found: {}", cc)
+                                }
+                                _ => eprintln!("{e}"),
+                            };
+                            ExitCode::FAILURE
+                        }
                     }
                 }
                 Err(()) => ExitCode::FAILURE,
