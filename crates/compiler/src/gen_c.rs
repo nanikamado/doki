@@ -1,7 +1,7 @@
 use crate::intrinsics::IntrinsicVariableExt;
 use crate::AnalyzedSrc;
 use doki_ir::intrinsics::IntoEnumIterator;
-use doki_ir::{Block, ConstructorId, GlobalVariable, LocalVariable};
+use doki_ir::{Block, CodegenOptions, ConstructorId, GlobalVariable, LocalVariable};
 use itertools::Itertools;
 use parser::{Ast, DataDecl, Expr, ExprWithSpan, Pattern, PatternWithSpan, Span};
 use rustc_hash::{FxHashMap, FxHasher};
@@ -26,8 +26,7 @@ fn build<'a>(
     ast: Ast<'a>,
     src_files: &FxHashMap<&'a str, &'a str>,
     minimize_types: bool,
-    backtrace: bool,
-    boehm: bool,
+    codegen_options: CodegenOptions,
 ) -> Env<'a> {
     let utf8_to_utf16_ln_col_map = src_files
         .iter()
@@ -44,12 +43,7 @@ fn build<'a>(
         str_constructor_id: Default::default(),
         entry_point: None,
     };
-    if backtrace {
-        env.build_env.backtrace_true();
-    }
-    if boehm {
-        env.build_env.boehm_true();
-    }
+    env.build_env.set_options(codegen_options);
     for d in ast.data_decls.into_iter().chain(once(DataDecl {
         name: "Str",
         field_len: 3,
@@ -132,10 +126,9 @@ pub fn gen_c<'a>(
     ast: Ast<'a>,
     src_files: &mut FxHashMap<&'a str, &'a str>,
     minimize_types: bool,
-    backtrace: bool,
-    boehm: bool,
+    codegen_options: CodegenOptions,
 ) -> impl Display + 'a {
-    let env = build(ast, src_files, minimize_types, backtrace, boehm);
+    let env = build(ast, src_files, minimize_types, codegen_options);
     let (entry_point, span) = env.entry_point.unwrap();
     let (ln, col) = env.utf8_to_utf16_ln_col_map[span.file_name][span.start];
     env.build_env
@@ -153,7 +146,7 @@ pub fn token_map<'a>(
     src_files: &FxHashMap<&'a str, &'a str>,
     minimize_types: bool,
 ) -> AnalyzedSrc<'a> {
-    let env = build(ast, src_files, minimize_types, false, false);
+    let env = build(ast, src_files, minimize_types, CodegenOptions::default());
     let (entry_point, span) = env.entry_point.unwrap();
     let (ln, col) = env.utf8_to_utf16_ln_col_map[span.file_name][span.start];
     let ast = env

@@ -6,8 +6,8 @@ mod tail_recursion_elimination;
 mod util;
 
 pub use crate::ast_step1::{
-    Block, ConstructorId, ConstructorNames, Env, GlobalVariable, Lambda, LocalVariable, TypeId,
-    VariableDecl,
+    Block, CodegenOptions, ConstructorId, ConstructorNames, Env, GlobalVariable, Lambda,
+    LocalVariable, TypeId, VariableDecl,
 };
 pub use crate::ast_step2::{
     DisplayTypeWithEnvStruct as DisplayTypeWithEnv, LocalVariable as LocalVariable2, Type,

@@ -21,8 +21,7 @@ pub struct Ast<'a> {
     pub local_variable_types: LocalVariableTypes,
     pub type_map: PaddedTypeMap,
     pub constructor_names: ConstructorNames,
-    pub backtrace: bool,
-    pub boehm: bool,
+    pub codegen_options: CodegenOptions,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -390,8 +389,14 @@ pub struct Env<'a> {
     global_variables: FxHashMap<GlobalVariable, VariableDecl<'a>>,
     field_len: Vec<usize>,
     constructor_names: ConstructorNames,
-    backtrace: bool,
-    boehm: bool,
+    codegen_options: CodegenOptions,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CodegenOptions {
+    pub backtrace: bool,
+    pub boehm: bool,
+    pub check_address_boundary: bool,
 }
 
 impl<'a> Env<'a> {
@@ -404,8 +409,7 @@ impl<'a> Env<'a> {
             global_variables: Default::default(),
             field_len: Default::default(),
             constructor_names: Default::default(),
-            backtrace: false,
-            boehm: false,
+            codegen_options: Default::default(),
         }
     }
 
@@ -626,8 +630,7 @@ impl<'a> Env<'a> {
             local_variable_types: local_variable_types_old,
             type_map,
             constructor_names: self.constructor_names,
-            backtrace: self.backtrace,
-            boehm: self.boehm,
+            codegen_options: self.codegen_options,
         }
     }
 
@@ -642,12 +645,8 @@ impl<'a> Env<'a> {
         entry_point_block
     }
 
-    pub fn backtrace_true(&mut self) {
-        self.backtrace = true
-    }
-
-    pub fn boehm_true(&mut self) {
-        self.boehm = true
+    pub fn set_options(&mut self, codegen_options: CodegenOptions) {
+        self.codegen_options = codegen_options
     }
 }
 

@@ -23,6 +23,7 @@ use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
 use crate::util::collector::Collector;
 use crate::util::dfa_minimization::Dfa;
 use crate::util::id_generator::{self, IdGenerator};
+use crate::CodegenOptions;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -43,8 +44,7 @@ pub struct Ast<'a> {
     pub local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
     pub used_intrinsic_variables: Collector<(IntrinsicVariable, Vec<CType>, CType)>,
     pub c_type_definitions: Vec<CTypeScheme<CType>>,
-    pub backtrace: bool,
-    pub boehm: bool,
+    pub codegen_options: CodegenOptions,
     pub type_converter: FxHashMap<(TypePointer, TypePointer), TypeConverter>,
 }
 
@@ -272,8 +272,7 @@ impl<'a> Ast<'a> {
             local_variable_replace_map: memo.local_variable_replace_map,
             used_intrinsic_variables: memo.used_intrinsic_variables,
             c_type_definitions: memo.c_type_definitions,
-            backtrace: ast.backtrace,
-            boehm: ast.boehm,
+            codegen_options: ast.codegen_options,
             type_converter,
         }
     }

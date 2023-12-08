@@ -6,6 +6,7 @@ use crate::ast_step2::{
 };
 use crate::intrinsics::IntrinsicVariable;
 use crate::util::collector::Collector;
+use crate::CodegenOptions;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::Display;
@@ -33,8 +34,7 @@ impl Display for Codegen<'_> {
             c_type_definitions: &ast.c_type_definitions,
             refed_types,
             global_variable_initialization: false,
-            backtrace: ast.backtrace,
-            boehm: ast.boehm,
+            codegen_options: ast.codegen_options,
         };
         let structs = sorted.iter().format_with("", |(i, t), f| {
             let i = CType {
@@ -71,7 +71,7 @@ impl Display for Codegen<'_> {
 #include <math.h>
 struct diverge{{}};"
         )?;
-        if env.boehm {
+        if env.codegen_options.boehm {
             write!(
                 f,
                 "\n\
@@ -80,11 +80,106 @@ struct diverge{{}};"
             "
             )?;
         }
-        if env.backtrace {
+        if env.codegen_options.backtrace {
             write!(
                 f,
                 "static char* TRACE_STACK[{BACKTRACE_STACK_LIMIT}];\
                 static int trace_stack_top;",
+            )?;
+        }
+        if env.codegen_options.backtrace {
+            write!(
+                f,
+                "__attribute__ ((__noreturn__)) static int panic(char* msg){{\
+                fprintf(stderr, \"error: %s\\nstack backtrace:\\n\", msg);\
+                while(--trace_stack_top>=0)\
+                fprintf(stderr, \"%5d: %s\\n\", trace_stack_top, TRACE_STACK[trace_stack_top]);\
+                exit(1);}}\
+                static void trace_stack_push(char* span) {{\
+                    if(trace_stack_top=={BACKTRACE_STACK_LIMIT})panic(\"stack overflow\");\
+                    TRACE_STACK[trace_stack_top++]=span;\
+                }}\
+                "
+            )
+        } else {
+            write!(
+                f,
+                "__attribute__ ((__noreturn__)) static int panic(char* msg){{\
+                fprintf(stderr, \"error: %s\\n\", msg);\
+                exit(1);}}\
+                "
+            )
+        }?;
+        write!(
+            f,
+            r#"
+static int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {{
+    size_t n = fread(buff+offset, 1, buff_len, fp);
+    if(ferror(fp))
+        *(int64_t*)status = errno;
+    return n;
+}}"#
+        )?;
+        if env.codegen_options.check_address_boundary {
+            write!(
+                f,
+                "\
+typedef struct{{
+    size_t len;
+    void* p;
+}} array_t;
+static array_t array_new(size_t s){{
+    return (array_t){{s,malloc(s)}};
+}}
+static void array_store(array_t a,size_t i,uint8_t c){{
+    if(a.len<=i){{
+        panic(\"index out of bound\");
+    }}
+    ((uint8_t*)a.p)[i]=c;
+}}
+static uint8_t array_load(array_t a,size_t i){{
+    if(a.len<=i){{
+        panic(\"index out of bound\");
+    }}
+    return ((uint8_t*)a.p)[i];
+}}
+static void array_write(array_t a,size_t offset,size_t len){{
+    if(a.len<offset+len){{
+        panic(\"index out of bound\");
+    }}
+    fwrite((uint8_t*)a.p+offset,1,len,stdout);
+}}
+static int read_file_to_array(array_t a, int offset, int buff_len, array_t fp, void* status) {{
+    if(a.len<offset+buff_len){{
+        panic(\"index out of bound\");
+    }}
+    return read_file(a.p,offset,buff_len,fp.p,status);
+}}
+#define stdout_as_array (array_t){{0,stdout}}
+#define stdin_as_array (array_t){{0,stdin}}
+",
+            )?;
+        } else {
+            write!(
+                f,
+                "\
+typedef void* array_t;
+#define array_new malloc
+static void array_store(array_t a,size_t i,uint8_t c){{
+    ((uint8_t*)a)[i]=c;
+}}
+static uint8_t array_load(array_t a,size_t i){{
+    return ((uint8_t*)a)[i];
+}}
+static void array_write(array_t a,size_t offset,size_t len){{
+    fwrite((uint8_t*)a+offset,1,len,stdout);
+}}
+static int read_file_to_array(array_t a, int offset, int buff_len, array_t fp, void* status) {{
+    return read_file(a,offset,buff_len,fp,status);
+}}
+#define stdout_as_array stdout
+#define stdin_as_array stdin
+",
             )?;
         }
         write!(
@@ -125,39 +220,6 @@ struct diverge{{}};"
             }}",
             Dis(&unit_t, env),
         )?;
-        write!(
-            f,
-            r#"
-int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {{
-    size_t n = fread(buff+offset, 1, buff_len, fp);
-    if(ferror(fp))
-        *(int64_t*)status = errno;
-    return n;
-}}"#
-        )?;
-        if env.backtrace {
-            write!(
-                f,
-                "__attribute__ ((__noreturn__)) static int panic(char* msg){{\
-                fprintf(stderr, \"error: %s\\nstack backtrace:\\n\", msg);\
-                while(--trace_stack_top>=0)\
-                fprintf(stderr, \"%5d: %s\\n\", trace_stack_top, TRACE_STACK[trace_stack_top]);\
-                exit(1);}}\
-                static void trace_stack_push(char* span) {{\
-                    if(trace_stack_top=={BACKTRACE_STACK_LIMIT})panic(\"stack overflow\");\
-                    TRACE_STACK[trace_stack_top++]=span;\
-                }}\
-                "
-            )
-        } else {
-            write!(
-                f,
-                "__attribute__ ((__noreturn__)) static int panic(char* msg){{\
-                fprintf(stderr, \"error: %s\\n\", msg);\
-                exit(1);}}\
-                "
-            )
-        }?;
         for ((v, arg_ts, ret_t), id) in ast.used_intrinsic_variables.as_raw() {
             write!(f, "static {} intrinsic_{v}_{id}", Dis(ret_t, env))?;
             if arg_ts.is_empty() {
@@ -312,7 +374,7 @@ static {0} init_{1}(void){{\
             }
         }
         write!(f, "int main(void){{")?;
-        if env.boehm {
+        if env.codegen_options.boehm {
             write!(f, "GC_INIT();")?;
         }
         for (decl_id, _) in ast.original_variables_map.values() {
@@ -343,10 +405,7 @@ impl DisplayWithEnv for PrimitiveDefPrint<'_> {
             BitOr | BitOrU8 => write!(f, "return _0 | _1;"),
             BitAnd | BitAndU8 => write!(f, "return _0 & _1;"),
             RightShift | RightShiftU8 => write!(f, "return _0 >> _1;"),
-            Write => write!(
-                f,
-                r#"fwrite((uint8_t*)_0+_1,1,_2,stdout);return intrinsic_unit();"#
-            ),
+            Write => write!(f, r#"array_write(_0,_1,_2);return intrinsic_unit();"#),
             Mut => {
                 let t = self.arg_ts[0];
                 write!(
@@ -361,14 +420,14 @@ impl DisplayWithEnv for PrimitiveDefPrint<'_> {
             SetMut => write!(f, "*_0 = _1;return intrinsic_unit();"),
             GetMut => write!(f, "return *_0;"),
             GetChar => write!(f, "return getchar();"),
-            Malloc => write!(f, "return malloc(_0);"),
-            LoadU8 => write!(f, "return ((uint8_t*)_0)[_1];"),
-            StoreU8 => write!(f, "((uint8_t*)_0)[_1] = _2;return intrinsic_unit();"),
+            Malloc => write!(f, "return array_new(_0);"),
+            LoadU8 => write!(f, "return array_load(_0,_1);"),
+            StoreU8 => write!(f, "array_store(_0,_1,_2);return intrinsic_unit();"),
             U8ToI64 => write!(f, "return _0;"),
             I64ToU8 => write!(f, r#"if(_0<0||0xFF<=_0)panic("overflow");return _0;"#),
-            ReadFile => write!(f, "return read_file(_0,_1,_2,_3,_4);"),
-            Stdout => write!(f, "return stdout;"),
-            Stdin => write!(f, "return stdin;"),
+            ReadFile => write!(f, "return read_file_to_array(_0,_1,_2,_3,_4);"),
+            Stdout => write!(f, "return stdout_as_array;"),
+            Stdin => write!(f, "return stdin_as_array;"),
             WriteF64 => write!(f, "snprintf(_0,_1,\"%f\",_2);return intrinsic_unit();"),
             F64StrLen => write!(f, "return snprintf(NULL,0,\"%f\",_0);"),
             SqrtF64 => write!(f, "return sqrt(_0);"),
@@ -503,8 +562,7 @@ struct Env<'a> {
     c_type_definitions: &'a [CTypeScheme<CType>],
     refed_types: &'a FxHashMap<StructId, usize>,
     global_variable_initialization: bool,
-    backtrace: bool,
-    boehm: bool,
+    codegen_options: CodegenOptions,
 }
 
 fn collect_local_variables_in_block(b: &FunctionBody, vs: &mut FxHashSet<LocalVariable>) {
@@ -607,14 +665,14 @@ impl DisplayWithEnv for Instruction {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Instruction::Assign(d, e) => {
-                if env.backtrace {
+                if env.codegen_options.backtrace {
                     if let Expr::Call { span, .. } = e {
                         write!(f, r#"trace_stack_push("{}");"#, StringEscape(span))?;
                     }
                 }
                 let t = &env.local_variable_types.get_type(*d).1;
                 write!(f, "{}={};", Dis(d, env), Dis(&(e, t), env))?;
-                if env.backtrace && matches!(e, Expr::Call { .. }) {
+                if env.codegen_options.backtrace && matches!(e, Expr::Call { .. }) {
                     write!(f, "trace_stack_top--;")?;
                 }
                 Ok(())
@@ -650,7 +708,13 @@ impl DisplayWithEnv for (&Expr, &CType) {
             Expr::I64(a) => write!(fmt, "{a}"),
             Expr::U8(a) => write!(fmt, "{a}"),
             Expr::F64(a) => write!(fmt, "{a}"),
-            Expr::Str(a) => write!(fmt, "\"{}\"", StringEscape(a)),
+            Expr::Str(a) => {
+                if env.codegen_options.check_address_boundary {
+                    write!(fmt, "(array_t){{{},\"{}\"}}", a.len(), StringEscape(a))
+                } else {
+                    write!(fmt, "\"{}\"", StringEscape(a))
+                }
+            }
             Expr::Ident(VariableId::Global(i)) => {
                 #[cfg(debug_assertions)]
                 if let Some(d) = env.cloned_variables.get(i) {
@@ -813,7 +877,7 @@ impl DisplayWithEnv for CType {
             CTypeScheme::I64 => write!(f, "int64_t"),
             CTypeScheme::U8 => write!(f, "uint8_t"),
             CTypeScheme::F64 => write!(f, "double"),
-            CTypeScheme::Ptr => write!(f, "void*"),
+            CTypeScheme::Ptr => write!(f, "array_t"),
             CTypeScheme::Aggregate(_) => write!(f, "struct t{}", self.i.0),
             CTypeScheme::Union(_) => write!(f, "struct t{}", self.i.0),
             CTypeScheme::Mut(t) => write!(f, "{}*", Dis(&t, env)),

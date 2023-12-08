@@ -6,7 +6,7 @@
 mod run_c;
 
 use clap::{Parser, Subcommand};
-use compiler::gen_c;
+use compiler::{gen_c, CodegenOptions};
 use log::LevelFilter;
 use rustc_hash::FxHashMap;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
@@ -43,6 +43,8 @@ enum Commands {
         backtrace: bool,
         #[arg(long)]
         boehm: bool,
+        #[arg(long)]
+        check_address_boundary: bool,
     },
     /// Output generated c code
     #[command(alias("c"))]
@@ -52,6 +54,8 @@ enum Commands {
         backtrace: bool,
         #[arg(long)]
         boehm: bool,
+        #[arg(long)]
+        check_address_boundary: bool,
     },
     /// Start the language server
     LanguageServer,
@@ -60,8 +64,7 @@ enum Commands {
 fn compile<'a>(
     file_name: &'a str,
     no_type_minimization: bool,
-    backtrace: bool,
-    boehm: bool,
+    codegen_options: CodegenOptions,
     src_files: &mut FxHashMap<&'a str, &'a str>,
     arena: &'a mut Arena<String>,
 ) -> Result<impl Display + 'a, ()> {
@@ -70,8 +73,7 @@ fn compile<'a>(
             ast,
             src_files,
             !no_type_minimization,
-            backtrace,
-            boehm,
+            codegen_options,
         )),
         Err((file_name, e)) => {
             e.write(stderr(), file_name, src_files[file_name]).unwrap();
@@ -114,12 +116,16 @@ fn main() -> ExitCode {
             unique_tmp,
             backtrace,
             boehm,
+            check_address_boundary,
         } => {
             let r = compile(
                 &file,
                 args.no_type_minimization,
-                backtrace,
-                boehm,
+                CodegenOptions {
+                    backtrace,
+                    boehm,
+                    check_address_boundary,
+                },
                 &mut src_files,
                 &mut arena,
             );
@@ -160,12 +166,16 @@ fn main() -> ExitCode {
             file,
             backtrace,
             boehm,
+            check_address_boundary,
         } => {
             let r = compile(
                 &file,
                 args.no_type_minimization,
-                backtrace,
-                boehm,
+                CodegenOptions {
+                    backtrace,
+                    boehm,
+                    check_address_boundary,
+                },
                 &mut src_files,
                 &mut arena,
             );

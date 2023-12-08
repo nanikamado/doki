@@ -1,5 +1,5 @@
 use doki_ir::ConstructorNames;
-pub use doki_ir::DisplayTypeWithEnv;
+pub use doki_ir::{CodegenOptions, DisplayTypeWithEnv};
 pub use gen_c::{gen_c, SpanMapEntry};
 pub use parser::{ParseError, Span};
 use rustc_hash::FxHashMap;
