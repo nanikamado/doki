@@ -160,8 +160,8 @@ pub fn token_map<'a>(
         .build_env
         .build_ast_step2(entry_point, format!("{}:{ln}:{col}", span.file_name));
     let global_variables: multimap::MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> = ast
-        .variable_decls
-        .iter()
+        .cloned_variables
+        .values()
         .map(|v| {
             let t = &v.t_for_hash;
             (

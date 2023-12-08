@@ -1,4 +1,4 @@
-use crate::ast_step1::{self, ConstructorId, ConstructorNames};
+use crate::ast_step1::{ConstructorId, ConstructorNames};
 use crate::ast_step2::c_type::CTypeScheme;
 use crate::ast_step2::{
     self, Ast, CType, ConvertOpRef, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId,
@@ -18,11 +18,6 @@ pub struct Codegen<'a>(pub Ast<'a>);
 impl Display for Codegen<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let ast = &self.0;
-        let global_variable_types: FxHashMap<_, CType> = ast
-            .variable_decls
-            .iter()
-            .map(|d| (d.decl_id, d.c_t))
-            .collect();
         let unit_t = CType {
             i: StructId(0),
             boxed: false,
@@ -31,9 +26,9 @@ impl Display for Codegen<'_> {
         let sorted = sort_aggregates(&ast.c_type_definitions, &mut refed_types);
         let refed_types = refed_types.as_raw();
         let env = Env {
-            variable_names: &ast.variable_names,
             local_variable_types: &ast.variable_types,
-            global_variable_types: &global_variable_types,
+            global_variables: &ast.original_variables,
+            cloned_variables: &ast.cloned_variables,
             constructor_names: &ast.constructor_names,
             c_type_definitions: &ast.c_type_definitions,
             refed_types,
@@ -114,16 +109,14 @@ struct diverge{{}};"
             })
         )?;
         write_fns(f, &ast.functions, env, false)?;
-        for d in &ast.variable_decls {
-            write!(f, "static {0} {1};", Dis(&d.c_t, env), Dis(&d.decl_id, env),)?;
-            if d.is_original {
-                write!(
-                    f,
-                    "static {0} init_{1}(void);",
-                    Dis(&d.c_t, env),
-                    Dis(&d.decl_id, env),
-                )?;
-            }
+        for (decl_id, d) in &ast.original_variables {
+            write!(f, "static {0} {1};", Dis(&d.c_t, env), Dis(decl_id, env),)?;
+            write!(
+                f,
+                "static {0} init_{1}(void);",
+                Dis(&d.c_t, env),
+                Dis(decl_id, env),
+            )?;
         }
         write!(
             f,
@@ -181,30 +174,83 @@ int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {
             }?;
             write!(f, "{{{}}}", Dis(&PrimitiveDefPrint { i: *v, arg_ts }, env))?;
         }
-        for d in &ast.variable_decls {
-            if d.is_original {
-                write!(f,
-                    "static {0} init_{1}_inner(void){2}\
-                    static char init_status_{1}=0;\
-                    static {0} init_{1}(void){{\
-                        if(init_status_{1}==2)return {1};\
-                        else if(init_status_{1}==1)panic(\"cycle detected when initializing global variables\");\
-                        init_status_{1}=1;\
-                        {1}=init_{1}_inner();\
-                        init_status_{1}=2;\
-                        return {1};\
-                    }}",
-                    Dis(&d.c_t, env),
-                    Dis(&d.decl_id, env),
-                    Dis(
-                        &FunctionBodyWithCtx {
-                            f: &d.value,
-                            parameters: &[],
-                        },
-                        Env { global_variable_initialization: true, ..env }
-                    )
-                )?;
-            }
+        for c in ast.type_converter.values() {
+            write!(
+                f,
+                "static inline {} converter_{}({});",
+                Dis(&c.c_type_to, env),
+                c.id,
+                Dis(&c.c_type_from, env),
+            )?;
+        }
+        for c in ast.type_converter.values() {
+            write!(
+                f,
+                "static inline {} converter_{}({} _0){{",
+                Dis(&c.c_type_to, env),
+                c.id,
+                Dis(&c.c_type_from, env),
+            )?;
+            match &c.op {
+                ast_step2::ConvertOp::Unknown => panic!(),
+                ast_step2::ConvertOp::Id => write!(f, "return _0;"),
+                ast_step2::ConvertOp::Unexpected => write!(f, r#"panic("unexpected");"#),
+                ast_step2::ConvertOp::Struct(ops) => {
+                    write!(f, "return ({})", Dis(&c.c_type_to, env),)?;
+                    struct_converter(f, "_0", ops, env)?;
+                    write!(f, ";")
+                }
+                ast_step2::ConvertOp::ReTag(ts) => {
+                    write!(f, "switch(_0.tag){{")?;
+                    for (i, t) in ts.iter().enumerate() {
+                        write!(f, "case {i}:")?;
+                        write!(
+                            f,
+                            "return ({0}){{{1},{{._{1}=",
+                            Dis(&c.c_type_to, env),
+                            t.new_tag
+                        )?;
+                        struct_converter(f, format_args!("_0.value._{i}"), &t.convert_op, env)?;
+                        write!(f, "}}}};")?;
+                        write!(f, "break;")?;
+                    }
+                    write!(f, r#"default:panic("unexpected");"#)?;
+                    write!(f, "}}")
+                }
+                ast_step2::ConvertOp::AddTag(tag, ops) => {
+                    write!(f, "return ({}){{{tag},{{._{tag}=", Dis(&c.c_type_to, env))?;
+                    struct_converter(f, "_0", ops, env)?;
+                    write!(f, "}}}};")
+                }
+            }?;
+            write!(f, "}}")?;
+        }
+        for (decl_id, d) in &ast.original_variables {
+            write!(
+                f,
+                "static {0} init_{1}_inner(void){2}\
+static char init_status_{1}=0;\
+static {0} init_{1}(void){{\
+    if(init_status_{1}==2)return {1};\
+    else if(init_status_{1}==1)panic(\"cycle detected when initializing global variables\");\
+    init_status_{1}=1;\
+    {1}=init_{1}_inner();\
+    init_status_{1}=2;\
+    return {1};\
+}}",
+                Dis(&d.c_t, env),
+                Dis(decl_id, env),
+                Dis(
+                    &FunctionBodyWithCtx {
+                        f: &d.value,
+                        parameters: &[],
+                    },
+                    Env {
+                        global_variable_initialization: true,
+                        ..env
+                    }
+                )
+            )?;
         }
         write_fns(f, &ast.functions, env, true)?;
         write!(
@@ -265,77 +311,12 @@ int read_file(uint8_t* buff, int offset, int buff_len, void* fp, void* status) {
                 )
             }
         }
-        for c in ast.type_converter.values() {
-            write!(
-                f,
-                "{} converter_{}({});",
-                Dis(&c.c_type_to, env),
-                c.id,
-                Dis(&c.c_type_from, env),
-            )?;
-        }
-        for c in ast.type_converter.values() {
-            write!(
-                f,
-                "{} converter_{}({} _0){{",
-                Dis(&c.c_type_to, env),
-                c.id,
-                Dis(&c.c_type_from, env),
-            )?;
-            match &c.op {
-                ast_step2::ConvertOp::Unknown => panic!(),
-                ast_step2::ConvertOp::Id => write!(f, "return _0;"),
-                ast_step2::ConvertOp::Unexpected => write!(f, r#"panic("unexpected");"#),
-                ast_step2::ConvertOp::Struct(ops) => {
-                    write!(f, "return ({})", Dis(&c.c_type_to, env),)?;
-                    struct_converter(f, "_0", ops, env)?;
-                    write!(f, ";")
-                }
-                ast_step2::ConvertOp::ReTag(ts) => {
-                    write!(f, "switch(_0.tag){{")?;
-                    for (i, t) in ts.iter().enumerate() {
-                        write!(f, "case {i}:")?;
-                        write!(
-                            f,
-                            "return ({0}){{{1},{{._{1}=",
-                            Dis(&c.c_type_to, env),
-                            t.new_tag
-                        )?;
-                        struct_converter(f, format_args!("_0.value._{i}"), &t.convert_op, env)?;
-                        write!(f, "}}}};")?;
-                        write!(f, "break;")?;
-                    }
-                    write!(f, r#"default:panic("unexpected");"#)?;
-                    write!(f, "}}")
-                }
-                ast_step2::ConvertOp::AddTag(tag, ops) => {
-                    write!(f, "return ({}){{{tag},{{._{tag}=", Dis(&c.c_type_to, env))?;
-                    struct_converter(f, "_0", ops, env)?;
-                    write!(f, "}}}};")
-                }
-            }?;
-            write!(f, "}}")?;
-        }
         write!(f, "int main(void){{")?;
         if env.boehm {
             write!(f, "GC_INIT();")?;
         }
         for (decl_id, _) in ast.original_variables_map.values() {
             write!(f, "init_{0}();", Dis(decl_id, env),)?;
-        }
-        for d in ast.variable_decls.iter().rev() {
-            let (org_decl_id, original_p) = ast.original_variables_map[&d.original_decl_id];
-            if let Some(c) = &ast.type_converter.get(&(original_p, d.p)) {
-                write!(
-                    f,
-                    "{}=converter_{}({});",
-                    Dis(&d.decl_id, env),
-                    c.id,
-                    Dis(&org_decl_id, env)
-                )?;
-            } else {
-                write!(f, "{}={};", Dis(&d.decl_id, env), Dis(&org_decl_id, env))?;
-            }
         }
         writeln!(f, "inner_main();}}")
     }
@@ -515,9 +496,9 @@ fn write_fns(
 
 #[derive(Debug, Clone, Copy)]
 struct Env<'a> {
-    variable_names: &'a FxHashMap<GlobalVariableId, String>,
     local_variable_types: &'a LocalVariableCollector<(Option<Type>, CType)>,
-    global_variable_types: &'a FxHashMap<GlobalVariableId, CType>,
+    global_variables: &'a FxHashMap<GlobalVariableId, ast_step2::VariableDecl<'a>>,
+    cloned_variables: &'a FxHashMap<GlobalVariableId, ast_step2::ClonedVariable<'a>>,
     constructor_names: &'a ConstructorNames,
     c_type_definitions: &'a [CTypeScheme<CType>],
     refed_types: &'a FxHashMap<StructId, usize>,
@@ -671,7 +652,12 @@ impl DisplayWithEnv for (&Expr, &CType) {
             Expr::F64(a) => write!(fmt, "{a}"),
             Expr::Str(a) => write!(fmt, "\"{}\"", StringEscape(a)),
             Expr::Ident(VariableId::Global(i)) => {
-                debug_assert_eq!(**t, env.global_variable_types[i]);
+                #[cfg(debug_assertions)]
+                if let Some(d) = env.cloned_variables.get(i) {
+                    debug_assert_eq!(**t, d.c_t)
+                } else {
+                    debug_assert_eq!(**t, env.global_variables[i].c_t);
+                }
                 i.fmt_with_env(env, fmt)
             }
             Expr::Ident(VariableId::Local(i)) => i.fmt_with_env(env, fmt),
@@ -754,23 +740,34 @@ impl DisplayWithEnv for (&Expr, &CType) {
 impl DisplayWithEnv for GlobalVariableId {
     fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if env.global_variable_initialization {
+            if let Some(d) = env.cloned_variables.get(self) {
+                write!(
+                    f,
+                    "converter_{}(init_g_{}_{}())",
+                    d.converter,
+                    d.original_decl_id,
+                    convert_name(d.name)
+                )
+            } else {
+                let d = &env.global_variables[self];
+                write!(
+                    f,
+                    "init_g_{}_{}()",
+                    d.original_decl_id,
+                    convert_name(d.name)
+                )
+            }
+        } else if let Some(d) = env.cloned_variables.get(self) {
             write!(
                 f,
-                "init_g_{self}_{}()",
-                convert_name(&env.variable_names[self])
+                "converter_{}(g_{}_{})",
+                d.converter,
+                d.original_decl_id,
+                convert_name(d.name)
             )
         } else {
-            write!(f, "g_{self}_{}", convert_name(&env.variable_names[self]))
-        }
-    }
-}
-
-impl DisplayWithEnv for ast_step1::GlobalVariable {
-    fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if env.global_variable_initialization {
-            write!(f, "init_g_original_{self}()",)
-        } else {
-            write!(f, "g_original_{self}",)
+            let d = &env.global_variables[self];
+            write!(f, "g_{}_{}", d.original_decl_id, convert_name(d.name))
         }
     }
 }

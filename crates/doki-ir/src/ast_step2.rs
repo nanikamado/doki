@@ -31,11 +31,11 @@ use std::fmt::{Debug, Display};
 
 #[derive(Debug)]
 pub struct Ast<'a> {
-    pub variable_decls: Vec<VariableDecl<'a>>,
+    pub original_variables: FxHashMap<GlobalVariableId, VariableDecl<'a>>,
+    pub cloned_variables: FxHashMap<GlobalVariableId, ClonedVariable<'a>>,
     pub original_variables_map: FxHashMap<GlobalVariable, (GlobalVariableId, TypePointer)>,
     pub entry_block: FunctionBody,
     pub entry_block_ret_t: CType,
-    pub variable_names: FxHashMap<GlobalVariableId, String>,
     pub functions: Vec<Function>,
     pub variable_types: LocalVariableCollector<(Option<Type>, CType)>,
     pub constructor_names: ConstructorNames,
@@ -64,13 +64,17 @@ pub struct GlobalVariableId(usize);
 pub struct VariableDecl<'a> {
     pub name: &'a str,
     pub value: FunctionBody,
-    pub decl_id: GlobalVariableId,
     pub original_decl_id: GlobalVariable,
-    pub t: Type,
     pub c_t: CType,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ClonedVariable<'a> {
+    pub name: &'a str,
+    pub original_decl_id: GlobalVariable,
+    pub c_t: CType,
+    pub converter: u32,
     pub t_for_hash: TypeForHash,
-    pub p: TypePointer,
-    pub is_original: bool,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -188,6 +192,7 @@ impl<'a> Ast<'a> {
             ast.type_map,
             ast.constructor_names,
         );
+        let original_variables_map = memo.collect_original_global_variables();
         let (entry_block, entry_block_ret_t) = {
             let mut replace_map = Default::default();
             let ast_step1::Instruction::Assign(ret, _) =
@@ -208,15 +213,9 @@ impl<'a> Ast<'a> {
             let (_, c_type) = memo.local_variable_collector.get_type(ret);
             (FunctionBody { basic_blocks }, *c_type)
         };
-        debug_assert_eq!(memo.job_stack.len(), 1);
-        let original_variables_map = memo.collect_original_global_variables();
         let mut type_converter = type_converter::ConverterCollector::new();
         while let Some(j) = memo.job_stack.pop() {
             memo.handle_stack(j, &original_variables_map, &mut type_converter);
-        }
-        let mut variable_names = FxHashMap::default();
-        for v in &memo.monomorphized_variables {
-            variable_names.insert(v.decl_id, v.name.to_string());
         }
         let type_converter = type_converter
             .into_inner()
@@ -261,12 +260,12 @@ impl<'a> Ast<'a> {
             })
             .collect();
         Self {
-            variable_decls: memo.monomorphized_variables,
+            original_variables: memo.monomorphized_variables,
+            cloned_variables: memo.cloned_variables,
             original_variables_map,
             entry_block,
             entry_block_ret_t,
             functions,
-            variable_names,
             variable_types: memo.local_variable_collector,
             constructor_names: memo.constructor_names,
             type_id_generator: memo.type_memo.type_id_generator,
@@ -290,7 +289,8 @@ struct FnId {
 struct Env<'a, 'b> {
     variable_decls: FxHashMap<GlobalVariable, &'b ast_step1::VariableDecl<'a>>,
     monomorphized_variable_map: FxHashMap<Root, GlobalVariableId>,
-    monomorphized_variables: Vec<VariableDecl<'a>>,
+    monomorphized_variables: FxHashMap<GlobalVariableId, VariableDecl<'a>>,
+    cloned_variables: FxHashMap<GlobalVariableId, ClonedVariable<'a>>,
     map: PaddedTypeMap,
     functions: FxHashMap<LambdaId<TypeUnique>, FunctionEntry>,
     type_memo: TypeMemo,
@@ -317,7 +317,7 @@ struct Job {
     p: TypePointer,
     t_for_hash: TypeForHash,
     replace_map: ReplaceMap,
-    only_fn: bool,
+    cloned: bool,
 }
 
 #[derive(Debug)]
@@ -378,6 +378,7 @@ impl<'a, 'b> Env<'a, 'b> {
             variable_decls,
             monomorphized_variable_map: Default::default(),
             monomorphized_variables: Default::default(),
+            cloned_variables: Default::default(),
             map,
             functions: FxHashMap::default(),
             type_memo: TypeMemo::default(),
@@ -403,7 +404,7 @@ impl<'a, 'b> Env<'a, 'b> {
         decl_id: GlobalVariable,
         p: TypePointer,
         replace_map: ReplaceMap,
-        only_fn: bool,
+        cloned: bool,
     ) -> GlobalVariableId {
         debug_assert!(self.map.is_terminal(p));
         let t_for_hash = self.get_type_for_hash(p);
@@ -425,7 +426,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 p,
                 t_for_hash,
                 replace_map,
-                only_fn,
+                cloned,
             });
             new_decl_id
         }
@@ -439,24 +440,30 @@ impl<'a, 'b> Env<'a, 'b> {
     ) {
         let d = *self.variable_decls.get(&j.original_decl_id).unwrap();
         j.p = self.map.find(j.p);
-        type_converter.add(original_variables[&d.decl_id].1, j.p, self);
         let (instructions, _) =
-            self.function_body(&d.value, j.root_t, &mut j.replace_map, d.ret, j.only_fn);
+            self.function_body(&d.value, j.root_t, &mut j.replace_map, d.ret, j.cloned);
         let p = PointerForCType::from(j.p);
-        let d = VariableDecl {
-            value: FunctionBody {
-                basic_blocks: instructions,
-            },
-            decl_id: j.decl_id,
-            original_decl_id: j.original_decl_id,
-            name: d.name,
-            t: self.get_type(p).unwrap(),
-            c_t: self.c_type(p),
-            t_for_hash: j.t_for_hash,
-            p: j.p,
-            is_original: !j.only_fn,
-        };
-        self.monomorphized_variables.push(d);
+        if j.cloned {
+            let converter = type_converter.add(original_variables[&d.decl_id].1, j.p, self);
+            let d = ClonedVariable {
+                original_decl_id: j.original_decl_id,
+                name: d.name,
+                c_t: self.c_type(p),
+                converter,
+                t_for_hash: j.t_for_hash,
+            };
+            self.cloned_variables.insert(j.decl_id, d);
+        } else {
+            let d = VariableDecl {
+                value: FunctionBody {
+                    basic_blocks: instructions,
+                },
+                original_decl_id: j.original_decl_id,
+                name: d.name,
+                c_t: self.c_type(p),
+            };
+            self.monomorphized_variables.insert(j.decl_id, d);
+        }
     }
 
     fn collect_original_global_variables(
@@ -963,7 +970,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     let p2 = self.map.clone_pointer(*p, &mut r);
                     assert_eq!(p1, p2);
                 }
-                let l = VariableId::Global(self.monomorphize_decl_rec(*d, p1, r, only_fn));
+                let l = VariableId::Global(self.monomorphize_decl_rec(*d, p1, r, true));
                 basic_block_env.assign(v, Ident(l));
             }
             // },

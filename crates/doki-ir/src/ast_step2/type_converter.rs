@@ -42,6 +42,7 @@ pub struct TypeConverter {
     pub op: ConvertOp,
 }
 
+#[derive(Debug)]
 pub struct ConverterCollector(FxHashMap<(TypePointer, TypePointer), TypeConverter>);
 
 const FN_TAG: ast_step1::TypeId =
