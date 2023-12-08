@@ -111,15 +111,9 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
     let ident = any()
         .filter(|c: &char| c.is_ident_start() || *c == '_')
         .then(any().filter(|c: &char| c.is_ident_continue()).repeated())
-        .slice()
+        .to_slice()
         .filter(|s| !["match", "with", "end", "let", "in", "data", "import"].contains(s));
     let (string, char_) = {
-        let validator = |digits, span, emitter: &mut chumsky::input::Emitter<_>| {
-            char::from_u32(u32::from_str_radix(digits, 16).unwrap()).unwrap_or_else(|| {
-                emitter.emit(Rich::custom(span, "invalid unicode character"));
-                '\u{FFFD}'
-            })
-        };
         let escape = choice((
             just('\\'),
             just('n').to('\n'),
@@ -128,11 +122,27 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
             just('0').to('\0'),
             just('"'),
             just('\''),
-            just('x').ignore_then(text::digits(16).exactly(2).slice().validate(validator)),
+            just('x').ignore_then(text::digits(16).exactly(2).to_slice().validate(
+                |digits, s: &mut chumsky::input::MapExtra<'_, '_, &str, _>, emitter| {
+                    char::from_u32(u32::from_str_radix(digits, 16).unwrap()).unwrap_or_else(|| {
+                        emitter.emit(Rich::custom(s.span(), "invalid unicode character"));
+                        '\u{FFFD}'
+                    })
+                },
+            )),
             text::digits(16)
                 .at_most(6)
-                .slice()
-                .validate(validator)
+                .to_slice()
+                .validate(
+                    |digits, s: &mut chumsky::input::MapExtra<'_, '_, &str, _>, emitter| {
+                        char::from_u32(u32::from_str_radix(digits, 16).unwrap()).unwrap_or_else(
+                            || {
+                                emitter.emit(Rich::custom(s.span(), "invalid unicode character"));
+                                '\u{FFFD}'
+                            },
+                        )
+                    },
+                )
                 .delimited_by(just("u{"), just("}")),
         ));
         let string = none_of(r#"\""#)
@@ -154,9 +164,10 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
             just('-')
                 .or_not()
                 .then(text::int(10))
-                .map_slice(Pattern::Num)
-                .map_with_span(|p, span| (p, Span::from(span, file_name))),
-            ident.map_with_span(|name, span| {
+                .to_slice()
+                .map(Pattern::Num)
+                .map_with(|p, s| (p, Span::from(s.span(), file_name))),
+            ident.map_with(|name, s| {
                 (
                     if name == "_" {
                         Pattern::Wildcard
@@ -164,23 +175,23 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
                         Pattern::Constructor {
                             name,
                             fields: Vec::new(),
-                            span: Span::from(span, file_name),
+                            span: Span::from(s.span(), file_name),
                         }
                     },
-                    Span::from(span, file_name),
+                    Span::from(s.span(), file_name),
                 )
             }),
         ));
         let p = ident
             .then(whitespace.ignore_then(p.clone()).repeated().collect())
-            .map_with_span(|(name, fields), span| {
+            .map_with(|(name, fields), e| {
                 (
                     Pattern::Constructor {
                         name,
                         fields,
-                        span: Span::from(span, file_name),
+                        span: Span::from(e.span(), file_name),
                     },
-                    Span::from(span, file_name),
+                    Span::from(e.span(), file_name),
                 )
             })
             .or(p);
@@ -232,7 +243,8 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
         let decimal = just('-')
             .or_not()
             .then(text::int(10))
-            .map_slice(|a| I64(str::parse(a).unwrap()));
+            .to_slice()
+            .map(|a| I64(str::parse(a).unwrap()));
         let f64_lit = just('-')
             .or_not()
             .then(text::int(10))
@@ -245,20 +257,21 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
                     .then(text::digits(10))
                     .or_not(),
             )
-            .map_slice(|a| F64(str::parse(a).unwrap()));
+            .to_slice()
+            .map(|a| F64(str::parse(a).unwrap()));
         let u8_binary = text::digits(2)
-            .slice()
+            .to_slice()
             .delimited_by(just("0b"), just("u8"))
             .map(|a| U8(u8::from_str_radix(a, 2).unwrap()));
         let binary = just("0b")
-            .ignore_then(text::digits(2).slice())
+            .ignore_then(text::digits(2).to_slice())
             .map(|a| I64(i64::from_str_radix(a, 2).unwrap()));
         let u8_hex = text::digits(16)
-            .slice()
+            .to_slice()
             .delimited_by(just("0x"), just("u8"))
             .map(|a| U8(u8::from_str_radix(a, 16).unwrap()));
         let hex = just("0x")
-            .ignore_then(text::digits(16).slice())
+            .ignore_then(text::digits(16).to_slice())
             .map(|a| I64(i64::from_str_radix(a, 16).expect(a)));
         let e = choice((
             paren,
@@ -281,7 +294,7 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
                 )
                 .map(Ident),
         ))
-        .map_with_span(|e, s| (e, Span::from(s, file_name)));
+        .map_with(|e, s| (e, Span::from(s.span(), file_name)));
         let e = e
             .clone()
             .foldl(whitespace.ignore_then(e).repeated(), |a, b| {
@@ -293,7 +306,7 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
                 (Call(Box::new(a), Box::new(b)), span)
             });
         pattern
-            .map_with_span(|p, s: SimpleSpan| (p, s))
+            .map_with(|p, s| (p, s.span()))
             .then_ignore(just(":").padded_by(whitespace))
             .repeated()
             .foldr(e, |(param, span), acc| {
@@ -312,7 +325,7 @@ fn parser(file_name: &str) -> impl Parser<'_, &str, Vec<Decl<'_>>, extra::Err<Ri
             })
     });
     let variable_decl = ident
-        .map_with_span(|i, s| (i, s))
+        .map_with(|i, s| (i, s.span()))
         .then_ignore(just("=").padded_by(whitespace))
         .then(expr)
         .padded_by(whitespace)
