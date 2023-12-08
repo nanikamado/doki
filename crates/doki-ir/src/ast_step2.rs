@@ -212,7 +212,7 @@ impl<'a> Ast<'a> {
         let original_variables_map = memo.collect_original_global_variables();
         let mut type_converter = type_converter::ConverterCollector::new();
         while let Some(j) = memo.job_stack.pop() {
-            memo.handle_job(j, &original_variables_map, &mut type_converter);
+            memo.handle_stack(j, &original_variables_map, &mut type_converter);
         }
         let mut variable_names = FxHashMap::default();
         for v in &memo.monomorphized_variables {
@@ -431,7 +431,7 @@ impl<'a, 'b> Env<'a, 'b> {
         }
     }
 
-    fn handle_job(
+    fn handle_stack(
         &mut self,
         mut j: Job,
         original_variables: &FxHashMap<GlobalVariable, (GlobalVariableId, TypePointer)>,
