@@ -5,18 +5,10 @@ data T 5
 data R 0
 data B 0
 
-tree_insert = cmp: key: value: t: match tree_insert_rec cmp key value t with
-        T _c key value a b => T B key value a b,
-    end
-
-tree_insert_rec = cmp: k: v: t: match t with
-        E => T R k v E E,
-        T color key value a b => match cmp k key with
-                Lt => balance (T color key value (tree_insert_rec cmp k v a) b),
-                Gt => balance (T color key value a (tree_insert_rec cmp k v b)),
-                Eq => T B key value a b,
-            end,
-    end
+tree_insert = cmp: key: value: t: tree_modify cmp key t (v: match v with
+        None => value,
+        Some v => v,
+    end)
 
 balance = t: match t with
         T B wk wv (T R uk uv (T R vk vv t1 t2) t3) t4
@@ -45,12 +37,16 @@ tree_get = cmp: x: t: match t with
             end,
     end
 
-tree_modify = cmp: x: t: f: match t with
-        E => T B x (f None) E E,
-        T c k v l r => match cmp x k with
-                Lt => T c k v (tree_modify cmp x l f) r,
-                Gt => T c k v l (tree_modify cmp x r f),
-                Eq => T c k (f (Some v)) l r,
+tree_modify = cmp: key: t: f: match tree_modify_rec cmp key t f with
+        T _ key value a b => T B key value a b,
+    end
+
+tree_modify_rec = cmp: k: t: f: match t with
+        E => T R k (f None) E E,
+        T color key value a b => match cmp k key with
+                Lt => balance (T color key value (tree_modify_rec cmp k a f) b),
+                Gt => balance (T color key value a (tree_modify_rec cmp k b f)),
+                Eq => T color key (f (Some value)) a b,
             end,
     end
 
@@ -61,10 +57,7 @@ tree_to_list = acc: t: match t with
             in tree_to_list acc l,
     end
 
-tree_to_string = key_to_string: value_to_string: t:
-    let l = list_map (tree_to_list Nil t) (Cons k v:
-        let k = key_to_string k
-        in let v = value_to_string v
-        in PrintAnd (PrintAnd k ": ") v)
-    in let s = join l ", "
-    in PrintAnd (PrintAnd "{" s) "}"
+color_to_string = c: match c with
+        R => "R",
+        B => "B",
+    end
