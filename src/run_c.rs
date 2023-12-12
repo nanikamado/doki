@@ -1,3 +1,4 @@
+use itertools::{self, Itertools};
 use owo_colors::OwoColorize;
 use std::fmt::Display;
 use std::io::Write;
@@ -16,11 +17,14 @@ fn run_cc(
     if boehm {
         c.arg("-lgc");
     }
-    match c
-        .args(cc_options.split_ascii_whitespace())
-        .stdin(Stdio::piped())
-        .spawn()
-    {
+    c.args(cc_options.split_ascii_whitespace());
+    log::info!(
+        "     {} {cc} {}",
+        "Running".green().bold(),
+        c.get_args()
+            .format_with(" ", |a, f| f(&format_args!("{}", a.to_str().unwrap())))
+    );
+    match c.stdin(Stdio::piped()).spawn() {
         Ok(mut child) => {
             child
                 .stdin

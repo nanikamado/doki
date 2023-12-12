@@ -329,6 +329,7 @@ dependencies = [
  "backtrace-on-stack-overflow",
  "clap",
  "compiler",
+ "itertools 0.12.0",
  "language-server",
  "log",
  "owo-colors",
