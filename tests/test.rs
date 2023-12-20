@@ -350,3 +350,12 @@ fn toml() {
 fn global_mut() {
     positive_test("global_mut.doki", "2\n2\n");
 }
+
+#[test]
+fn nbody() {
+    positive_test_with_stdin(
+        "benchmarksgame/nbody.doki",
+        "50000000",
+        "-0.169075164\n-0.169059907\n",
+    );
+}

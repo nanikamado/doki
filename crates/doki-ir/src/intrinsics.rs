@@ -136,8 +136,9 @@ impl IntrinsicVariable {
             StoreU8 => vec![PTR, I64, U8],
             ReadFile => vec![PTR, I64, I64, PTR, MUT],
             Stdout | Stdin => Vec::new(),
-            WriteF64 => vec![PTR, I64, F64],
-            F64StrLen | SqrtF64 => vec![F64],
+            WriteF64 => vec![PTR, I64, F64, PTR],
+            SqrtF64 => vec![F64],
+            F64StrLen => vec![F64, PTR],
         }
     }
 }

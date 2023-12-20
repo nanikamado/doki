@@ -1,0 +1,173 @@
+import "../../../library/prelude.doki"
+
+pi = 3.14159265358979
+solar_mass = mul_f64 (mul_f64 4.0 pi) pi
+days_per_year = 365.24
+
+data Planet 7
+
+planet_x_mut = Planet x _ _ _ _ _ _: x
+planet_y_mut = Planet _ y _ _ _ _ _: y
+planet_z_mut = Planet _ _ z _ _ _ _: z
+planet_vx_mut = Planet _ _ _ vx _ _ _: vx
+planet_vy_mut = Planet _ _ _ _ vy _ _: vy
+planet_vz_mut = Planet _ _ _ _ _ vz _: vz
+
+planet_x = a: get (planet_x_mut a)
+planet_y = a: get (planet_y_mut a)
+planet_z = a: get (planet_z_mut a)
+planet_vx = a: get (planet_vx_mut a)
+planet_vy = a: get (planet_vy_mut a)
+planet_vz = a: get (planet_vz_mut a)
+planet_mass = Planet _ _ _ _ _ _ mass: mass
+
+new_planet = x: y: z: vx: vy: vz: mass:
+    Planet (mut x) (mut y) (mut z) (mut vx) (mut vy) (mut vz) mass
+
+jupiter = new_planet
+    4.84143144246472090e+00
+    -1.16032004402742839e+00
+    -1.03622044471123109e-01
+    (mul_f64 1.66007664274403694e-03 days_per_year)
+    (mul_f64 7.69901118419740425e-03 days_per_year)
+    (mul_f64 -6.90460016972063023e-05 days_per_year)
+    (mul_f64 9.54791938424326609e-04 solar_mass)
+
+saturn = new_planet
+    8.34336671824457987e+00
+    4.12479856412430479e+00
+    -4.03523417114321381e-01
+    (mul_f64 -2.76742510726862411e-03 days_per_year)
+    (mul_f64 4.99852801234917238e-03 days_per_year)
+    (mul_f64 2.30417297573763929e-05 days_per_year)
+    (mul_f64 2.85885980666130812e-04 solar_mass)
+
+uranus = new_planet
+     1.28943695621391310e+01
+    -1.51111514016986312e+01
+    -2.23307578892655734e-01
+    (mul_f64 2.96460137564761618e-03 days_per_year)
+    (mul_f64 2.37847173959480950e-03 days_per_year)
+    (mul_f64 -2.96589568540237556e-05 days_per_year)
+    (mul_f64 4.36624404335156298e-05 solar_mass)
+
+neptune = new_planet
+    1.53796971148509165e+01
+    -2.59193146099879641e+01
+    1.79258772950371181e-01
+    (mul_f64 2.68067772490389322e-03 days_per_year)
+    (mul_f64 1.62824170038242295e-03 days_per_year)
+    (mul_f64 -9.51592254519715870e-05 days_per_year)
+    (mul_f64 5.15138902046611451e-05 solar_mass)
+
+sun = new_planet 0.0 0.0 0.0 0.0 0.0 0.0 solar_mass
+
+bodies =
+    (Cons sun
+    (Cons jupiter
+    (Cons saturn
+    (Cons uranus
+    (Cons neptune
+    Nil)))))
+
+times_aux = i: limit: f:
+    match eq i limit with
+        True => Unit,
+        False => let _ = f i
+            in times_aux (plus i 1) limit f,
+    end
+
+times = times_aux 0
+
+pow2 = a: mul_f64 a a
+
+trace_f64 = a: let _ = println (f64_to_str a)
+    in a
+
+offset_momentum = _:
+    let Cons px (Cons py pz) = fold (Cons 0.0 (Cons 0.0 0.0)) bodies (Cons px (Cons py pz): body:
+        let mass = planet_mass body
+        in Cons (plus_f64 px (mul_f64 (planet_vx body) mass))
+            (Cons
+                (plus_f64 py (mul_f64 (planet_vy body) mass))
+                (plus_f64 pz (mul_f64 (planet_vz body) mass)))
+    )
+    in let _ = set (planet_vx_mut sun) (div_f64 (minus_f64 0.0 px) solar_mass)
+    in let _ = set (planet_vy_mut sun) (div_f64 (minus_f64 0.0 py) solar_mass)
+    in let _ = set (planet_vz_mut sun) (div_f64 (minus_f64 0.0 pz) solar_mass)
+    in Unit
+
+list_each = l: f: match l with
+        Nil => Nil,
+        Cons h t => let _ = f h
+            in list_each t f,
+    end
+
+advance = dt:
+    let _ = fix (k: bodies:
+        match bodies with
+            Cons body_i t =>
+                let vxi = planet_vx_mut body_i
+                in let vyi = planet_vy_mut body_i
+                in let vzi = planet_vz_mut body_i
+                in let _ = list_each t (body_j:
+                    let dx = minus_f64 (planet_x body_i) (planet_x body_j)
+                    in let dy = minus_f64 (planet_y body_i) (planet_y body_j)
+                    in let dz = minus_f64 (planet_z body_i) (planet_z body_j)
+                    in let d2 = plus_f64 (pow2 dx) (plus_f64 (pow2 dy) (pow2 dz))
+                    in let mag = div_f64 dt (mul_f64 d2 (sqrt_f64 d2))
+                    in let mass_j = planet_mass body_j
+                    in let _ = set vxi (minus_f64 (get vxi) (mul_f64 dx (mul_f64 mass_j mag)))
+                    in let _ = set vyi (minus_f64 (get vyi) (mul_f64 dy (mul_f64 mass_j mag)))
+                    in let _ = set vzi (minus_f64 (get vzi) (mul_f64 dz (mul_f64 mass_j mag)))
+                    in let vxj = planet_vx_mut body_j
+                    in let vyj = planet_vy_mut body_j
+                    in let vzj = planet_vz_mut body_j
+                    in let mass_i = planet_mass body_i
+                    in let _ = set vxj (plus_f64 (get vxj) (mul_f64 dx (mul_f64 mass_i mag)))
+                    in let _ = set vyj (plus_f64 (get vyj) (mul_f64 dy (mul_f64 mass_i mag)))
+                    in let _ = set vzj (plus_f64 (get vzj) (mul_f64 dz (mul_f64 mass_i mag)))
+                    in Unit
+                )
+                in k t,
+            Nil => Unit,
+        end
+    ) bodies
+    in let _ = list_each bodies (body:
+        let x = planet_x_mut body
+        in let y = planet_y_mut body
+        in let z = planet_z_mut body
+        in let _ = set x (plus_f64 (get x) (mul_f64 dt (planet_vx body)))
+        in let _ = set y (plus_f64 (get y) (mul_f64 dt (planet_vy body)))
+        in let _ = set z (plus_f64 (get z) (mul_f64 dt (planet_vz body)))
+        in Unit
+    )
+    in Unit
+
+energy = e: bodies: match bodies with
+        Cons body_i t =>
+            let d = mul_f64
+                0.5
+                (mul_f64 (planet_mass body_i)
+                    (plus_f64
+                        (pow2 (planet_vx body_i))
+                        (plus_f64 (pow2 (planet_vy body_i)) (pow2 (planet_vz body_i)))))
+            in let e = plus_f64 e d
+            in let e = fold e t (e: body_j:
+                let dx = minus_f64 (planet_x body_i) (planet_x body_j)
+                in let dy = minus_f64 (planet_y body_i) (planet_y body_j)
+                in let dz = minus_f64 (planet_z body_i) (planet_z body_j)
+                in let distance = sqrt_f64 (plus_f64 (pow2 dx) (plus_f64 (pow2 dy) (pow2 dz)))
+                in minus_f64 e (div_f64 (mul_f64 (planet_mass body_i) (planet_mass body_j)) distance)
+            )
+            in energy e t,
+        Nil => e,
+    end
+
+main = _:
+    let n = read_num 0
+    in let _ = offset_momentum Unit
+    in let _ = println (f64_to_str (energy 0.0 bodies))
+    in let _ = times n (i: advance 0.01)
+    in let _ = println (f64_to_str (energy 0.0 bodies))
+    in Unit

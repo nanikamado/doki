@@ -46,6 +46,14 @@ sqrt_f64 = intrinsic_sqrt_f64
 
 
 malloc = intrinsic_malloc
+mut = intrinsic_mut
+get = intrinsic_get
+set = intrinsic_set
+
+fold = acc: l: f: match l with
+        Nil => acc,
+        Cons a l => fold (f acc a) l f,
+    end
 
 data Unit 0
 data True 0
@@ -70,6 +78,15 @@ bool_to_string = a: match a with
         True => "True",
         False => "False",
     end
+
+f64_to_str = a:
+    let Str _ _ format_string = "%0.9f"
+    in let n = intrinsic_f64_str_len a format_string
+    in let s = malloc n
+    in let _ = intrinsic_write_f64 s n a format_string
+    in Str 0 (minus n 1) s
+
+fix = f: a: f (fix f) a
 
 data Nil 0
 data Cons 2
@@ -157,20 +174,29 @@ getchar = _: let s = intrinsic_getchar 0
 data Array 3
 
 array_new = _: Array 0 0 (malloc 0)
+array_with_capacity = data_type: cap: Array 0 0 (malloc (mul cap (size data_type)))
 
 store_u8 = intrinsic_store_u8
 
-array_add_capacity = Array len cap p: d:
+data U8Type 0
+data F64Type 0
+
+size = d: match d with
+        U8Type => 1,
+        F64Type => 8,
+    end
+
+array_add_capacity = data_type: Array len cap p: d:
     let new_cap = max (mul cap 2) (plus len d)
-    in let new_p = malloc new_cap
+    in let new_p = malloc (mul new_cap (size data_type))
     in let _ = ptr_copy new_p 0 p 0 len
     in Array len new_cap new_p
 
-array_push = Array len cap p: a:
+array_push = data_type: Array len cap p: a:
     let Cons cap p =
         match le (plus len 1) cap with
             True => Cons cap p,
-            False => let Array len cap p = array_add_capacity (Array len cap p) 1
+            False => let Array len cap p = array_add_capacity data_type (Array len cap p) 1
                 in Cons cap p,
         end
     in let _ = store_u8 p len a
@@ -180,7 +206,7 @@ array_append = Array len cap p: Str d2 len2 p2:
     let Cons cap p =
         match le (plus len len2) cap with
             True => Cons cap p,
-            False => let Array len cap p = array_add_capacity (Array len cap p) len2
+            False => let Array len cap p = array_add_capacity U8Type (Array len cap p) len2
                 in Cons cap p,
         end
     in let _ = ptr_copy p len p2 d2 len2
@@ -198,10 +224,10 @@ read_all_aux = buff: let buff = read_stdin buff
     in let Array len cap p = buff
     in match eq len cap with
         False => buff,
-        True => read_all_aux (array_add_capacity (Array len cap p) cap),
+        True => read_all_aux (array_add_capacity U8Type (Array len cap p) cap),
     end
 
-read_all = _: read_all_aux (array_add_capacity (array_new Unit) 1)
+read_all = _: read_all_aux (array_add_capacity U8Type (array_new Unit) 1)
 
 reverse_aux = a: b:
     match a with

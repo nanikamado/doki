@@ -1,10 +1,5 @@
 import "../../../library/prelude.doki"
 
-fold = acc: l: f: match l with
-        Nil => acc,
-        Cons a l => fold (f acc a) l f,
-    end
-
 join = l: sep: match l with
         Nil => "",
         Cons h Nil => h,

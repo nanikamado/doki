@@ -155,6 +155,12 @@ static int read_file_to_array(array_t a, int offset, int buff_len, array_t fp, v
     }}
     return read_file(a.p,offset,buff_len,fp.p,status);
 }}
+static void snprintf_f64_array(array_t a, int64_t len, double l, const char* format_string) {{
+    if(a.len<len){{
+        panic(\"index out of bound\");
+    }}
+    snprintf(a.p,len,format_string,l);
+}}
 #define stdout_as_array (array_t){{0,stdout}}
 #define stdin_as_array (array_t){{0,stdin}}
 ",
@@ -176,6 +182,9 @@ static void array_write(array_t a,size_t offset,size_t len){{
 }}
 static int read_file_to_array(array_t a, int offset, int buff_len, array_t fp, void* status) {{
     return read_file(a,offset,buff_len,fp,status);
+}}
+static void snprintf_f64_array(array_t a, int64_t len, double l, const char* format_string) {{
+    snprintf(a,len,format_string,l);
 }}
 #define stdout_as_array stdout
 #define stdin_as_array stdin
@@ -211,6 +220,16 @@ static int read_file_to_array(array_t a, int offset, int buff_len, array_t fp, v
                 "static {0} init_{1}(void);",
                 Dis(&d.c_t, env),
                 Dis(decl_id, env),
+            )?;
+        }
+        for d in ast.cloned_variables.values() {
+            write!(
+                f,
+                "static {} g_{}_{}_{};",
+                Dis(&d.c_t, env),
+                d.original_decl_id,
+                d.converter,
+                convert_name(d.name),
             )?;
         }
         write!(
@@ -380,6 +399,15 @@ static {0} init_{1}(void){{\
         for (decl_id, _) in ast.original_variables_map.values() {
             write!(f, "init_{0}();", Dis(decl_id, env),)?;
         }
+        for d in ast.cloned_variables.values() {
+            write!(
+                f,
+                "g_{0}_{1}_{2}=converter_{1}(g_{0}_{2});",
+                d.original_decl_id,
+                d.converter,
+                convert_name(d.name)
+            )?;
+        }
         writeln!(f, "inner_main();}}")
     }
 }
@@ -428,8 +456,11 @@ impl DisplayWithEnv for PrimitiveDefPrint<'_> {
             ReadFile => write!(f, "return read_file_to_array(_0,_1,_2,_3,_4);"),
             Stdout => write!(f, "return stdout_as_array;"),
             Stdin => write!(f, "return stdin_as_array;"),
-            WriteF64 => write!(f, "snprintf(_0,_1,\"%f\",_2);return intrinsic_unit();"),
-            F64StrLen => write!(f, "return snprintf(NULL,0,\"%f\",_0);"),
+            WriteF64 => write!(
+                f,
+                "snprintf_f64_array(_0,_1,_2,_3);return intrinsic_unit();"
+            ),
+            F64StrLen => write!(f, "return snprintf(NULL,0,_1,_0)+1;"),
             SqrtF64 => write!(f, "return sqrt(_0);"),
         }
     }
@@ -824,9 +855,9 @@ impl DisplayWithEnv for GlobalVariableId {
         } else if let Some(d) = env.cloned_variables.get(self) {
             write!(
                 f,
-                "converter_{}(g_{}_{})",
-                d.converter,
+                "g_{}_{}_{}",
                 d.original_decl_id,
+                d.converter,
                 convert_name(d.name)
             )
         } else {

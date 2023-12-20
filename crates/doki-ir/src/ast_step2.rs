@@ -941,7 +941,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 let e = self.add_tags_to_expr(
                     F64(*s),
                     p,
-                    TypeId::Intrinsic(IntrinsicTypeTag::U8),
+                    TypeId::Intrinsic(IntrinsicTypeTag::F64),
                     &mut basic_block_env.instructions,
                 );
                 basic_block_env.assign(v, e)
