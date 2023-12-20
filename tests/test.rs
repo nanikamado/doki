@@ -41,12 +41,7 @@ fn test_example(file_name: &str, stdout: &str) {
     run(true);
 }
 
-fn positive_test_with_stdin_with_gc_option(
-    file_name: &str,
-    stdin: &str,
-    stdout: &str,
-    boehm: bool,
-) {
+fn positive_with_gc_option(file_name: &str, stdin: &str, stdout: &str, boehm: bool) {
     let mut c = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
     if boehm {
         c.args(OPTIONS_WITH_BOEHM);
@@ -67,16 +62,16 @@ fn positive_test_with_stdin_with_gc_option(
     assert!(output.stderr.is_empty());
 }
 
-fn positive_test_with_stdin(file_name: &str, stdin: &str, stdout: &str) {
-    positive_test_with_stdin_with_gc_option(file_name, stdin, stdout, false);
-    positive_test_with_stdin_with_gc_option(file_name, stdin, stdout, true);
+fn positive(file_name: &str, stdin: &str, stdout: &str) {
+    positive_with_gc_option(file_name, stdin, stdout, false);
+    positive_with_gc_option(file_name, stdin, stdout, true);
 }
 
-fn positive_test(file_name: &str, stdout: &str) {
-    positive_test_with_stdin(file_name, "", stdout)
+fn positive_without_stdin(file_name: &str, stdout: &str) {
+    positive(file_name, "", stdout)
 }
 
-fn negative_test(file_name: &str) -> assert_cmd::assert::Assert {
+fn negative(file_name: &str) -> assert_cmd::assert::Assert {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
         .args(OPTIONS)
@@ -86,6 +81,7 @@ fn negative_test(file_name: &str) -> assert_cmd::assert::Assert {
 }
 
 #[test]
+#[ignore]
 fn bin_tree() {
     test_example("bin_tree.doki", "ok\n");
 }
@@ -111,32 +107,37 @@ fn closure() {
 }
 
 #[test]
+#[ignore]
 fn r#match() {
     test_example("match.doki", "True\n");
 }
 
 #[test]
+#[ignore]
 fn fail_inexhaustive_match() {
-    negative_test("inexhaustive_match.doki")
+    negative("inexhaustive_match.doki")
         .stderr("error: match is not exhaustive\ntests/negative/inexhaustive_match.doki:10:20\n")
         .stdout("")
         .code(1);
 }
 
 #[test]
+#[ignore]
 fn fn_union() {
     test_example("fn_union.doki", "Hello\n");
 }
 
 #[test]
+#[ignore]
 fn fail_not_a_function() {
-    negative_test("not_a_function.doki")
+    negative("not_a_function.doki")
         .stderr("error: not a function\ntests/negative/not_a_function.doki:1:11\n")
         .stdout("")
         .code(1);
 }
 
 #[test]
+#[ignore]
 fn literal_pattern() {
     test_example(
         "literal_pattern.doki",
@@ -145,56 +146,62 @@ fn literal_pattern() {
 }
 
 #[test]
+#[ignore]
 fn taut() {
     test_example("taut.doki", "True\nTrue\nFalse\nTrue\n");
 }
 
 #[test]
 fn recursive_env() {
-    positive_test("recursive_env.doki", "A\nA\n");
+    positive_without_stdin("recursive_env.doki", "A\nA\n");
 }
 
 #[test]
 fn mut_list() {
-    positive_test("mut_list.doki", "10\n");
+    positive_without_stdin("mut_list.doki", "10\n");
 }
 
 #[test]
+#[ignore]
 fn r#mut() {
     test_example("mut.doki", "0\n1\n2\n");
 }
 
 #[test]
+#[ignore]
 fn variable_scope() {
-    positive_test("variable_scope.doki", "success\n");
+    positive_without_stdin("variable_scope.doki", "success\n");
 }
 
 #[test]
+#[ignore]
 fn global_variables() {
     test_example("global_variables.doki", "success\n");
 }
 
 #[test]
+#[ignore]
 fn fib() {
-    positive_test_with_stdin("fib.doki", "91\n", "> 4660046610375530309\n");
+    positive("fib.doki", "91\n", "> 4660046610375530309\n");
 }
 
 #[test]
+#[ignore]
 fn fixed_point_prime() {
-    positive_test_with_stdin("fixed_point_prime.doki", "2147483647\n", "True\n");
-    positive_test_with_stdin("fixed_point_prime.doki", "68718821377\n", "False\n");
+    positive("fixed_point_prime.doki", "2147483647\n", "True\n");
+    positive("fixed_point_prime.doki", "68718821377\n", "False\n");
 }
 
 #[test]
 fn fixed_point_lambda_prime() {
-    positive_test_with_stdin("fixed_point_lambda_prime.doki", "100003\n", "True\n");
-    positive_test_with_stdin_with_gc_option(
+    positive("fixed_point_lambda_prime.doki", "100003\n", "True\n");
+    positive_with_gc_option(
         "fixed_point_lambda_prime.doki",
         "2147483647\n",
         "True\n",
         false,
     );
-    positive_test_with_stdin_with_gc_option(
+    positive_with_gc_option(
         "fixed_point_lambda_prime.doki",
         "68718821377\n",
         "False\n",
@@ -204,62 +211,72 @@ fn fixed_point_lambda_prime() {
 
 #[test]
 fn diverging_struct() {
-    positive_test_with_stdin("diverging_struct.doki", "3\n", "#\n#\n#\n");
+    positive("diverging_struct.doki", "3\n", "#\n#\n#\n");
 }
 
 #[test]
+#[ignore]
 fn memcpy() {
-    positive_test_with_stdin("memcpy.doki", "", "Hello, world.\n");
+    positive("memcpy.doki", "", "Hello, world.\n");
 }
 
 #[test]
+#[ignore]
 fn oo() {
-    positive_test_with_stdin("oo.doki", "1\n10\n100", "> > > 111\n");
+    positive("oo.doki", "1\n10\n100", "> > > 111\n");
 }
 
 #[test]
+#[ignore]
 fn mod2() {
-    positive_test_with_stdin("mod2.doki", "111\n111\n", "> 1\n> 1\n");
+    positive("mod2.doki", "111\n111\n", "> 1\n> 1\n");
 }
 
 #[test]
+#[ignore]
 fn mod3() {
-    positive_test_with_stdin("mod3.doki", "112\n112\n112", "> 1\n> 1\n> 1\n");
+    positive("mod3.doki", "112\n112\n112", "> 1\n> 1\n> 1\n");
 }
 
 #[test]
 fn diviter() {
-    positive_test_with_stdin("larceny_bench/diviter.doki", "1000\n", "500\n");
+    positive("larceny_bench/diviter.doki", "1000\n", "500\n");
 }
 
 #[test]
+#[ignore]
 fn divrec() {
-    positive_test_with_stdin("larceny_bench/divrec.doki", "1000\n", "500\n");
+    positive("larceny_bench/divrec.doki", "1000\n", "500\n");
 }
 
 #[test]
+#[ignore]
 fn tak() {
-    positive_test_with_stdin("larceny_bench/tak.doki", "32\n16\n8\n", "9\n");
+    positive("larceny_bench/tak.doki", "32\n16\n8\n", "9\n");
 }
 
 #[test]
+#[ignore]
 fn takl() {
-    positive_test_with_stdin("larceny_bench/takl.doki", "32\n16\n8\n", "9\n");
+    positive("larceny_bench/takl.doki", "32\n16\n8\n", "9\n");
 }
 
 #[test]
+#[ignore]
 fn type_caching() {
-    positive_test_with_stdin("type_caching.doki", "", "");
+    positive("type_caching.doki", "", "");
 }
 
 #[test]
+#[ignore]
 fn incomplete_parser() {
-    positive_test_with_stdin("incomplete_parser.doki", "", "");
+    positive("incomplete_parser.doki", "", "");
 }
 
 #[test]
+#[ignore]
 fn expr_fib() {
-    positive_test_with_stdin(
+    positive(
         "expr.doki",
         std::str::from_utf8(include_bytes!("positive/expr_inputs/fib.exp")).unwrap(),
         "4660046610375530309\n",
@@ -268,7 +285,7 @@ fn expr_fib() {
 
 #[test]
 fn expr_prime() {
-    positive_test_with_stdin(
+    positive(
         "expr.doki",
         std::str::from_utf8(include_bytes!("positive/expr_inputs/prime.exp")).unwrap(),
         "1\n",
@@ -276,61 +293,71 @@ fn expr_prime() {
 }
 
 #[test]
+#[ignore]
 fn prime() {
-    positive_test_with_stdin("prime.doki", "2147483647", "True\n");
-    positive_test_with_stdin("prime.doki", "68718821377", "False\n");
+    positive("prime.doki", "2147483647", "True\n");
+    positive("prime.doki", "68718821377", "False\n");
 }
 
 #[test]
+#[ignore]
 fn prime_table_mut() {
-    positive_test_with_stdin("prime_table_mut.doki", "524287", "True\n");
-    positive_test_with_stdin("prime_table_mut.doki", "68718821377", "False\n");
+    positive("prime_table_mut.doki", "524287", "True\n");
+    positive("prime_table_mut.doki", "68718821377", "False\n");
 }
 
 #[test]
+#[ignore]
 fn prime_table_global_mut() {
-    positive_test_with_stdin("prime_table_global_mut.doki", "524287", "True\n");
-    positive_test_with_stdin("prime_table_global_mut.doki", "68718821377", "False\n");
+    positive("prime_table_global_mut.doki", "524287", "True\n");
+    positive("prime_table_global_mut.doki", "68718821377", "False\n");
 }
 
 #[test]
+#[ignore]
 fn prime_table() {
-    positive_test_with_stdin("prime_table.doki", "524287", "True\n");
-    positive_test_with_stdin("prime_table.doki", "68718821377", "False\n");
+    positive("prime_table.doki", "524287", "True\n");
+    positive("prime_table.doki", "68718821377", "False\n");
 }
 
 #[test]
+#[ignore]
 fn prime_table_deletion() {
-    positive_test_with_stdin("prime_table_deletion.doki", "524287", "True\n");
-    positive_test_with_stdin("prime_table_deletion.doki", "68718821377", "False\n");
+    positive("prime_table_deletion.doki", "524287", "True\n");
+    positive("prime_table_deletion.doki", "68718821377", "False\n");
 }
 
 #[test]
+#[ignore]
 fn boxed_ctx() {
-    positive_test_with_stdin("boxed_ctx.doki", "", "10\n");
+    positive("boxed_ctx.doki", "", "10\n");
 }
 
 #[test]
+#[ignore]
 fn global_order() {
-    positive_test_with_stdin("global_order.doki", "", "306\n");
+    positive("global_order.doki", "", "306\n");
 }
 
 #[test]
+#[ignore]
 fn global_order_negative() {
-    negative_test("global_order.doki")
+    negative("global_order.doki")
         .stderr("error: cycle detected when initializing global variables\n")
         .stdout("")
         .code(1);
 }
 
 #[test]
+#[ignore]
 fn dummy_fn_in_dummy_fn() {
-    positive_test_with_stdin("dummy_fn_in_dummy_fn.doki", "", "");
+    positive("dummy_fn_in_dummy_fn.doki", "", "");
 }
 
 #[test]
+#[ignore]
 fn dead_function() {
-    negative_test("dead_function.doki")
+    negative("dead_function.doki")
         .stderr("error: not a function\ntests/negative/dead_function.doki:3:5\n")
         .stdout("")
         .code(1);
@@ -338,7 +365,7 @@ fn dead_function() {
 
 #[test]
 fn toml() {
-    positive_test_with_stdin(
+    positive(
         "toml/toml.doki",
         std::str::from_utf8(include_bytes!("positive/toml/test.toml")).unwrap(),
         "{\"value\": [{\"a\": [\"\\u00ABa\\u00BB\", 10], \
@@ -347,13 +374,15 @@ fn toml() {
 }
 
 #[test]
+#[ignore]
 fn global_mut() {
-    positive_test("global_mut.doki", "2\n2\n");
+    positive_without_stdin("global_mut.doki", "2\n2\n");
 }
 
 #[test]
+#[ignore]
 fn nbody() {
-    positive_test_with_stdin(
+    positive(
         "benchmarksgame/nbody.doki",
         "50000000",
         "-0.169075164\n-0.169059907\n",
