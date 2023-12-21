@@ -174,9 +174,10 @@ getchar = _: let s = intrinsic_getchar 0
 data Array 3
 
 array_new = _: Array 0 0 (malloc 0)
-array_with_capacity = data_type: cap: Array 0 0 (malloc (mul cap (size data_type)))
+array_with_capacity = data_type: cap: Array 0 cap (malloc (mul cap (size data_type)))
 
 store_u8 = intrinsic_store_u8
+store_f64 = intrinsic_store_f64
 
 data U8Type 0
 data F64Type 0
@@ -186,20 +187,25 @@ size = d: match d with
         F64Type => 8,
     end
 
+store = data_type: match data_type with
+        U8Type => store_u8,
+        F64Type => store_f64,
+    end
+
 array_add_capacity = data_type: Array len cap p: d:
     let new_cap = max (mul cap 2) (plus len d)
     in let new_p = malloc (mul new_cap (size data_type))
-    in let _ = ptr_copy new_p 0 p 0 len
+    in let _ = ptr_copy new_p 0 p 0 (mul len (size data_type))
     in Array len new_cap new_p
 
 array_push = data_type: Array len cap p: a:
     let Cons cap p =
-        match le (plus len 1) cap with
+        match lt len cap with
             True => Cons cap p,
             False => let Array len cap p = array_add_capacity data_type (Array len cap p) 1
                 in Cons cap p,
         end
-    in let _ = store_u8 p len a
+    in let _ = store data_type p len a
     in Array (plus len 1) cap p
 
 array_append = Array len cap p: Str d2 len2 p2:
@@ -211,6 +217,14 @@ array_append = Array len cap p: Str d2 len2 p2:
         end
     in let _ = ptr_copy p len p2 d2 len2
     in Array (plus len len2) cap p
+
+array_get_f64 = Array len cap p: i:
+    let True = lt i len
+    in intrinsic_load_f64 p i
+
+array_set_f64 = Array len cap p: i: a:
+    let True = lt i len
+    in intrinsic_store_f64 p i a
 
 array_to_str = Array len cap p: Str 0 len p
 

@@ -35,6 +35,8 @@ pub enum IntrinsicVariable {
     Malloc,
     LoadU8,
     StoreU8,
+    LoadF64,
+    StoreF64,
     U8ToI64,
     I64ToU8,
     ReadFile,
@@ -57,12 +59,12 @@ impl IntrinsicVariable {
         match self {
             Minus | Plus | Percent | Multi | Div | Lt | Eq | EqU8 | EqF64 | GetChar | U8ToI64
             | BitAnd | BitOr | RightShift | ReadFile | F64StrLen => Some(IntrinsicTypeTag::I64),
-            Write | SetMut | StoreU8 | WriteF64 => Some(IntrinsicTypeTag::Unit),
+            Write | SetMut | StoreU8 | StoreF64 | WriteF64 => Some(IntrinsicTypeTag::Unit),
             Mut => Some(IntrinsicTypeTag::Mut),
             Malloc | Stdout | Stdin => Some(IntrinsicTypeTag::Ptr),
             LoadU8 | I64ToU8 | BitAndU8 | BitOrU8 | RightShiftU8 => Some(IntrinsicTypeTag::U8),
             GetMut => None,
-            PlusF64 | MinusF64 | DivF64 | LeF64 | LtF64 | MultiF64 | SqrtF64 => {
+            LoadF64 | PlusF64 | MinusF64 | DivF64 | LeF64 | LtF64 | MultiF64 | SqrtF64 => {
                 Some(IntrinsicTypeTag::F64)
             }
         }
@@ -132,8 +134,9 @@ impl IntrinsicVariable {
             Mut => vec![None],
             SetMut => vec![MUT, None],
             GetMut => vec![MUT],
-            LoadU8 => vec![PTR, I64],
+            LoadU8 | LoadF64 => vec![PTR, I64],
             StoreU8 => vec![PTR, I64, U8],
+            StoreF64 => vec![PTR, I64, F64],
             ReadFile => vec![PTR, I64, I64, PTR, MUT],
             Stdout | Stdin => Vec::new(),
             WriteF64 => vec![PTR, I64, F64, PTR],

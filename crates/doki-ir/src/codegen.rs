@@ -131,17 +131,29 @@ typedef struct{{
 static array_t array_new(size_t s){{
     return (array_t){{s,malloc(s)}};
 }}
-static void array_store(array_t a,size_t i,uint8_t c){{
+static void store_u8(array_t a,size_t i,uint8_t c){{
     if(a.len<=i){{
         panic(\"index out of bound\");
     }}
     ((uint8_t*)a.p)[i]=c;
 }}
-static uint8_t array_load(array_t a,size_t i){{
+static uint8_t load_u8(array_t a,size_t i){{
     if(a.len<=i){{
         panic(\"index out of bound\");
     }}
     return ((uint8_t*)a.p)[i];
+}}
+static void store_f64(array_t a,size_t i,double c){{
+    if(a.len<=i){{
+        panic(\"index out of bound\");
+    }}
+    ((double*)a.p)[i]=c;
+}}
+static double load_f64(array_t a,size_t i){{
+    if(a.len<=i){{
+        panic(\"index out of bound\");
+    }}
+    return ((double*)a.p)[i];
 }}
 static void array_write(array_t a,size_t offset,size_t len){{
     if(a.len<offset+len){{
@@ -171,11 +183,17 @@ static void snprintf_f64_array(array_t a, int64_t len, double l, const char* for
                 "\
 typedef void* array_t;
 #define array_new malloc
-static void array_store(array_t a,size_t i,uint8_t c){{
+static void store_u8(array_t a,size_t i,uint8_t c){{
     ((uint8_t*)a)[i]=c;
 }}
-static uint8_t array_load(array_t a,size_t i){{
+static uint8_t load_u8(array_t a,size_t i){{
     return ((uint8_t*)a)[i];
+}}
+static void store_f64(array_t a,size_t i,double c){{
+    ((double*)a)[i]=c;
+}}
+static double load_f64(array_t a,size_t i){{
+    return ((double*)a)[i];
 }}
 static void array_write(array_t a,size_t offset,size_t len){{
     fwrite((uint8_t*)a+offset,1,len,stdout);
@@ -449,8 +467,10 @@ impl DisplayWithEnv for PrimitiveDefPrint<'_> {
             GetMut => write!(f, "return *_0;"),
             GetChar => write!(f, "return getchar();"),
             Malloc => write!(f, "return array_new(_0);"),
-            LoadU8 => write!(f, "return array_load(_0,_1);"),
-            StoreU8 => write!(f, "array_store(_0,_1,_2);return intrinsic_unit();"),
+            LoadU8 => write!(f, "return load_u8(_0,_1);"),
+            StoreU8 => write!(f, "store_u8(_0,_1,_2);return intrinsic_unit();"),
+            LoadF64 => write!(f, "return load_f64(_0,_1);"),
+            StoreF64 => write!(f, "store_f64(_0,_1,_2);return intrinsic_unit();"),
             U8ToI64 => write!(f, "return _0;"),
             I64ToU8 => write!(f, r#"if(_0<0||0xFF<=_0)panic("overflow");return _0;"#),
             ReadFile => write!(f, "return read_file_to_array(_0,_1,_2,_3,_4);"),
