@@ -369,15 +369,25 @@ print_list = l: f: match l with
     end
 
 data PrintList 1
+data WithType 2
 
 obj_to_string = obj: match obj with
-        Num n => i64_to_string n,
-        String s => PrintStringEscaped s,
+        Num n => WithType "number" (PrintAnd "\"" (PrintAnd (i64_to_string n) "\"")),
+        String s => WithType "string" (PrintStringEscaped s),
         E | T _ _ _ _ _ => PrintTree obj,
         Nil | Cons _ _ => PrintList (reverse obj),
-        True => "true",
-        False => "false",
+        True => WithType "bool" "true",
+        False => WithType "bool" "false",
     end
+
+// obj_to_string = obj: match obj with
+//         Num n => i64_to_string n,
+//         String s => PrintStringEscaped s,
+//         E | T _ _ _ _ _ => PrintTree obj,
+//         Nil | Cons _ _ => PrintList (reverse obj),
+//         True => "true",
+//         False => "false",
+//     end
 
 plus_u8 = a: b: intrinsic_i64_to_u8 (plus (intrinsic_u8_to_i64 a) (intrinsic_u8_to_i64 b))
 
@@ -463,6 +473,11 @@ print_fmt = a: match a with
             in append_to_print_buff "\"",
         PrintTree t => print_tree (k: print_fmt (PrintStringEscaped k)) (v: print_fmt (obj_to_string v)) t,
         PrintList l => print_list l (v: print_fmt (obj_to_string v)),
+        WithType t a => let _ = append_to_print_buff r#"{"type":""#
+            in let _ = append_to_print_buff t
+            in let _ = append_to_print_buff r#"","value":"#
+            in let _ = print_fmt a
+            in append_to_print_buff "}",
         s => append_to_print_buff s,
     end
 
