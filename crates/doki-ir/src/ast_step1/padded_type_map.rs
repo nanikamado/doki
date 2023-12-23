@@ -12,30 +12,25 @@ use std::mem;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TypeId {
     UserDefined(ConstructorId),
+    Function(u32),
     Intrinsic(IntrinsicTypeTag),
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Copy, Hash)]
 pub struct TypePointer(u32);
 
-#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord, Copy)]
-pub enum TypeTagForBoxPoint {
-    Normal(TypeId),
-    Lambda(u32),
-}
-
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum BoxPoint {
     #[default]
     NotSure,
     Diverging,
-    Boxed(BTreeMap<TypeTagForBoxPoint, Vec<Option<bool>>>),
+    Boxed(BTreeMap<TypeId, Vec<Option<bool>>>),
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Terminal {
     pub type_map: BTreeMap<TypeId, Vec<TypePointer>>,
-    pub functions: Vec<(LambdaId<TypePointer>, Vec<TypePointer>)>,
+    // pub functions: BTreeMap<u32, Vec<TypePointer>>,
     pub box_point: BoxPoint,
     /// Cloning is not allowed
     pub fixed: bool,
@@ -100,11 +95,7 @@ impl PaddedTypeMap {
                     a_t.type_map.insert(b_id, b_normal.clone());
                 }
             }
-            if fix_b {
-                fix.extend(b_t.functions.iter().flat_map(|(_, ps)| ps));
-            }
             debug_assert_eq!(a_t.box_point, BoxPoint::NotSure);
-            a_t.functions.extend(b_t.functions);
             let fix_a = !a_t.fixed && b_t.fixed;
             for (a, b) in pairs {
                 self.union(a, b);
@@ -131,7 +122,6 @@ impl PaddedTypeMap {
             };
             debug_assert_eq!(a_t.box_point, b_t.box_point);
             debug_assert_eq!(a_t.fixed, b_t.fixed);
-            let functions = a_t.functions.clone();
             for (a, b) in a_t
                 .type_map
                 .values()
@@ -142,12 +132,6 @@ impl PaddedTypeMap {
                 .zip_eq(b_t.type_map.values().flatten())
             {
                 self.union_without_insertion(a, *b);
-            }
-            for ((l_a, a), (l_b, b)) in functions.into_iter().zip_eq(b_t.functions) {
-                self.union_without_insertion(l_a.root_t, l_b.root_t);
-                for (a, b) in a.into_iter().zip_eq(b) {
-                    self.union_without_insertion(a, b);
-                }
             }
         }
     }
@@ -160,7 +144,8 @@ impl PaddedTypeMap {
     ) {
         let t = self.dereference_mut(p);
         debug_assert_eq!(t.box_point, BoxPoint::NotSure);
-        t.functions.push((id, lambda_ctx.clone()));
+        t.type_map
+            .insert(TypeId::Function(id.id), lambda_ctx.clone());
         if t.fixed {
             for p in lambda_ctx {
                 self.fix_pointer(p)
@@ -289,27 +274,9 @@ impl PaddedTypeMap {
                 (id, t)
             })
             .collect();
-        let functions = t
-            .functions
-            .into_iter()
-            .map(|(LambdaId { id, root_t }, args)| {
-                let args = args
-                    .iter()
-                    .map(|p| self.clone_pointer(*p, replace_map))
-                    .collect_vec();
-                (
-                    LambdaId {
-                        id,
-                        root_t: self.clone_pointer(root_t, replace_map),
-                    },
-                    args,
-                )
-            })
-            .collect();
         self.map[new_p.0 as usize] = Node::Terminal(Terminal {
             type_map,
             box_point: BoxPoint::NotSure,
-            functions,
             fixed: false,
         });
         new_p
@@ -326,14 +293,7 @@ impl PaddedTypeMap {
         }
         terminal.fixed = true;
         let type_map = terminal.type_map.values().cloned().collect_vec();
-        let functions = terminal.functions.clone();
         for ps in type_map {
-            for p in ps {
-                self.fix_pointer(p)
-            }
-        }
-        for (id, ps) in functions {
-            self.fix_pointer(id.root_t);
             for p in ps {
                 self.fix_pointer(p)
             }
@@ -373,18 +333,6 @@ impl PaddedTypeMap {
                         )))
                     ))
                 });
-                let n = t.functions.iter().format_with("", |(id, args), f| {
-                    f(&format_args!(
-                        r#",lambda:{{id:{},root_t:{},args:[{}]}}"#,
-                        id.id,
-                        JsonDebugRec(self, id.root_t, &visited_pointers),
-                        args.iter().format_with(",", |p, f| f(&JsonDebugRec(
-                            self,
-                            *p,
-                            &visited_pointers
-                        )))
-                    ))
-                });
                 let fixed = if t.fixed {
                     if t.type_map.is_empty() {
                         "fixed:true"
@@ -394,7 +342,7 @@ impl PaddedTypeMap {
                 } else {
                     ""
                 };
-                write!(f, r#"type_map:{{{m}{n}{fixed}}}}}"#)
+                write!(f, r#"type_map:{{{m}{fixed}}}}}"#)
             }
             Node::Null => write!(f, r#"type:null}}"#),
         }
@@ -538,6 +486,7 @@ impl Display for TypeId {
         match self {
             TypeId::UserDefined(a) => write!(f, "{a}"),
             TypeId::Intrinsic(a) => write!(f, "{a:?}"),
+            TypeId::Function(a) => write!(f, "fn_{a}"),
         }
     }
 }

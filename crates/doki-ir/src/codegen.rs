@@ -2,7 +2,7 @@ use crate::ast_step1::{ConstructorId, ConstructorNames};
 use crate::ast_step2::c_type::CTypeScheme;
 use crate::ast_step2::{
     self, Ast, CType, ConvertOpRef, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId,
-    Instruction, LocalVariable, LocalVariableCollector, StructId, Tester, Type, VariableId,
+    Instruction, LocalVariable, LocalVariableCollector, StructId, Tester, Types, VariableId,
 };
 use crate::intrinsics::IntrinsicVariable;
 use crate::util::collector::Collector;
@@ -557,7 +557,7 @@ fn write_fns(
             write!(
                 f,
                 "static {} {}{}",
-                Dis(&env.local_variable_types.get_type(function.ret).1, env),
+                Dis(&env.local_variable_types.get_type(function.ret).c_type, env),
                 if global_variable_initialization {
                     "init_"
                 } else {
@@ -569,12 +569,15 @@ fn write_fns(
                 write!(f, "(void)")?;
             } else {
                 let ps = function.parameters.iter().format_with(",", |l, f| {
-                    let (t, ct) = env.local_variable_types.get_type(*l);
+                    let t = env.local_variable_types.get_type(*l);
                     f(&format_args!(
                         "{} {}/*{}*/",
-                        Dis(ct, env),
+                        Dis(&t.c_type, env),
                         Dis(l, env),
-                        ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
+                        ast_step2::DisplayTypeWithEnvStructOption(
+                            &t.type_for_display,
+                            env.constructor_names
+                        ),
                     ))
                 });
                 write!(f, "({ps})")?;
@@ -606,7 +609,7 @@ fn write_fns(
 
 #[derive(Debug, Clone, Copy)]
 struct Env<'a> {
-    local_variable_types: &'a LocalVariableCollector<(Option<Type>, CType)>,
+    local_variable_types: &'a LocalVariableCollector<Types>,
     global_variables: &'a FxHashMap<GlobalVariableId, ast_step2::VariableDecl<'a>>,
     cloned_variables: &'a FxHashMap<GlobalVariableId, ast_step2::ClonedVariable<'a>>,
     constructor_names: &'a ConstructorNames,
@@ -682,11 +685,14 @@ impl DisplayWithEnv for FunctionBodyWithCtx<'_> {
             f,
             "{{{}",
             vs.iter().format_with("", |v, f| {
-                let (t, ct) = env.local_variable_types.get_type(*v);
+                let t = env.local_variable_types.get_type(*v);
                 f(&format_args!(
                     "{} /*{}*/ {};",
-                    Dis(ct, env),
-                    ast_step2::DisplayTypeWithEnvStructOption(t, env.constructor_names),
+                    Dis(&t.c_type, env),
+                    ast_step2::DisplayTypeWithEnvStructOption(
+                        &t.type_for_display,
+                        env.constructor_names
+                    ),
                     Dis(v, env),
                 ))
             }),
@@ -721,7 +727,7 @@ impl DisplayWithEnv for Instruction {
                         write!(f, r#"trace_stack_push("{}");"#, StringEscape(span))?;
                     }
                 }
-                let t = &env.local_variable_types.get_type(*d).1;
+                let t = &env.local_variable_types.get_type(*d).c_type;
                 write!(f, "{}={};", Dis(d, env), Dis(&(e, t), env))?;
                 if env.codegen_options.backtrace && matches!(e, Expr::Call { .. }) {
                     write!(f, "trace_stack_top--;")?;

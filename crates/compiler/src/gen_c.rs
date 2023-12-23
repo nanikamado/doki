@@ -197,7 +197,13 @@ pub fn token_map<'a>(
                         .unwrap()
                         .binary_search_by_key(id, |(_, id)| *id)
                 })
-                .map(|(_, _, l)| ast.variable_types.get_type(*l).clone().0.unwrap())
+                .map(|(_, _, l)| {
+                    ast.variable_types
+                        .get_type(*l)
+                        .type_for_display
+                        .clone()
+                        .unwrap()
+                })
                 .collect();
             Some((s, SpanMapEntry::Expr(ts)))
         } else {

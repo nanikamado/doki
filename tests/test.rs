@@ -307,7 +307,6 @@ fn prime_table_mut() {
 }
 
 #[test]
-#[ignore]
 fn prime_table_global_mut() {
     positive("prime_table_global_mut.doki", "524287", "True\n");
     positive("prime_table_global_mut.doki", "68718821377", "False\n");

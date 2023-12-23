@@ -1,13 +1,10 @@
 use super::{LambdaId, TypeIdTag, TypeUnique};
-use crate::ast_step1::{
-    self, ConstructorNames, PaddedTypeMap, TypeId, TypePointer, TypeTagForBoxPoint,
-};
+use crate::ast_step1::{self, ConstructorNames, PaddedTypeMap, TypeId, TypePointer};
 use crate::intrinsics::IntrinsicTypeTag;
 use crate::util::id_generator::IdGenerator;
 use itertools::Itertools;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use std::collections::BTreeMap;
 use std::fmt::{self, Display, Formatter};
 use std::rc::Rc;
 
@@ -25,14 +22,8 @@ pub enum TypeInnerOf<T: TypeFamily> {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
-pub enum TypeTag<T: TypeFamily> {
-    TypeId(TypeId),
-    LambdaId(LambdaId<T::LambdaTag>),
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub struct TypeUnitOf<T: TypeFamily> {
-    id: TypeTag<T>,
+    id: TypeId,
     args: SmallVec<[TypeInnerOf<T>; 2]>,
 }
 
@@ -87,9 +78,6 @@ pub struct TypeMemo {
     type_memo_for_hash: FxHashMap<TypePointer, TypeForHash>,
     pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
     trace: FxHashMap<TypePointer, usize>,
-    #[allow(clippy::type_complexity)]
-    lambda_ids_pointer_memo:
-        FxHashMap<TypePointer, BTreeMap<LambdaId<TypeUnique>, (u32, Vec<TypePointer>)>>,
 }
 
 impl TypeMemo {
@@ -116,36 +104,6 @@ impl TypeMemo {
             let TypeInnerOf::Type(t) = t else { panic!() };
             self.type_memo_for_hash.insert(p, t.clone());
             t
-        }
-    }
-
-    pub fn get_lambda_ids_pointer<'a>(
-        &'a mut self,
-        p: TypePointer,
-        map: &mut PaddedTypeMap,
-    ) -> &'a BTreeMap<LambdaId<TypeUnique>, (u32, Vec<TypePointer>)> {
-        let p = map.find(p);
-        // Reason: false positive
-        #[allow(clippy::map_entry)]
-        if self.lambda_ids_pointer_memo.contains_key(&p) {
-            &self.lambda_ids_pointer_memo[&p]
-        } else {
-            let mut new_ids = BTreeMap::new();
-            for (i, (original_id, args)) in map
-                .dereference_without_find(p)
-                .functions
-                .clone()
-                .into_iter()
-                .enumerate()
-            {
-                let id = original_id.map_type(|p| {
-                    let t = self.get_type_for_hash(p, map);
-                    self.type_id_generator.get_or_insert(t)
-                });
-                new_ids.entry(id).or_insert((i as u32, args));
-            }
-            self.lambda_ids_pointer_memo.insert(p, new_ids);
-            &self.lambda_ids_pointer_memo[&p]
         }
     }
 
@@ -181,30 +139,13 @@ impl TypeMemo {
         for (id, args) in terminal.type_map.clone() {
             let args = args.iter().map(|t| self.get_type_inner(*t, map));
             let args = if let Some(box_point) = &box_point {
-                args.zip_eq(&box_point[&TypeTagForBoxPoint::Normal(id)])
+                args.zip_eq(&box_point[&id])
                     .map(|(t, boxed)| set_refed(t, *boxed))
                     .collect()
             } else {
                 args.collect()
             };
-            ts.push(TypeUnitOf {
-                id: TypeTag::TypeId(id),
-                args,
-            })
-        }
-        for (id, (index_in_type_map, ctx)) in self.get_lambda_ids_pointer(p, map).clone() {
-            let args = ctx.iter().map(|c| self.get_type_inner(*c, map));
-            let args = if let Some(box_point) = &box_point {
-                args.zip_eq(&box_point[&TypeTagForBoxPoint::Lambda(index_in_type_map)])
-                    .map(|(t, boxed)| set_refed(t, *boxed))
-                    .collect()
-            } else {
-                args.collect()
-            };
-            ts.push(TypeUnitOf {
-                id: TypeTag::LambdaId(id),
-                args,
-            });
+            ts.push(TypeUnitOf { id, args })
         }
         TypeInnerOf::Type(TypeOf {
             ts: Rc::new(ts),
@@ -250,30 +191,13 @@ impl TypeMemo {
                 .iter()
                 .map(|t| TypeMemo::get_type_inner_for_hash(*t, trace, map));
             let args = if let Some(box_point) = box_point {
-                args.zip_eq(&box_point[&TypeTagForBoxPoint::Normal(*id)])
+                args.zip_eq(&box_point[id])
                     .map(|(t, boxed)| set_refed(t, *boxed))
                     .collect()
             } else {
                 args.collect()
             };
-            ts.push(TypeUnitOf {
-                id: TypeTag::TypeId(*id),
-                args,
-            })
-        }
-        let mut ls = FxHashSet::default();
-        for (l, _) in &terminal.functions {
-            let l = LambdaId {
-                id: l.id,
-                root_t: TypeMemo::get_type_inner_for_hash(l.root_t, trace, map),
-            };
-            ls.insert(l);
-        }
-        for l in ls {
-            ts.push(TypeUnitOf {
-                id: TypeTag::LambdaId(l),
-                args: SmallVec::new(),
-            });
+            ts.push(TypeUnitOf { id: *id, args })
         }
         TypeInnerOf::Type(TypeOf {
             ts: Rc::new(ts),
@@ -355,13 +279,13 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeOf<R> {
                 let mut normals = Vec::new();
                 for t in self.ts.iter() {
                     match &t.id {
-                        TypeTag::TypeId(TypeId::Intrinsic(IntrinsicTypeTag::Fn)) => {
+                        TypeId::Intrinsic(IntrinsicTypeTag::Fn) => {
                             function = Some((&t.args[0], &t.args[1]));
                         }
-                        TypeTag::TypeId(u) => {
+                        TypeId::Function(_) => fn_contexts.push(t),
+                        u => {
                             normals.push((u, &t.args));
                         }
-                        TypeTag::LambdaId(l) => fn_contexts.push(l),
                     }
                 }
                 let is_single = normals.len() + function.is_some() as usize == 1;
@@ -374,6 +298,7 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeOf<R> {
                         match id {
                             TypeId::UserDefined(i) => write!(f, "{}", env.get(i))?,
                             TypeId::Intrinsic(i) => write!(f, "{i:?}")?,
+                            TypeId::Function(i) => writeln!(f, "Fn({i})")?,
                         };
                         if !args.is_empty() {
                             write!(
@@ -406,9 +331,17 @@ impl<R: TypeFamily> DisplayTypeWithEnv for TypeOf<R> {
                             "{} -{}{}{}-> ",
                             DisplayTypeHelper(arg, P::Strong, env),
                             if id_paren { "(" } else { "" },
-                            fn_contexts
-                                .iter()
-                                .format_with(" | ", |a, f| f(&DisplayTypeHelper(*a, P::Fn, env))),
+                            fn_contexts.iter().format_with(" | ", |a, f| {
+                                f(&a.id)?;
+                                f(&format_args!(
+                                    "[{}]",
+                                    a.args.iter().format_with(", ", |a, f| f(&DisplayTypeHelper(
+                                        a,
+                                        P::Weak,
+                                        env
+                                    )))
+                                ))
+                            }),
                             if id_paren { ")" } else { "" },
                         )?;
                         ret.fmt_with_env(P::Fn, f, env)?;
@@ -504,17 +437,11 @@ impl<R: TypeFamily> fmt::Debug for TypeInnerOf<R> {
 impl<R: TypeFamily> fmt::Debug for TypeUnitOf<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.id {
-            TypeTag::TypeId(TypeId::Intrinsic(IntrinsicTypeTag::Fn)) => {
+            TypeId::Intrinsic(IntrinsicTypeTag::Fn) => {
                 write!(f, "({:?}) -> {:?}", self.args[0], self.args[1])?;
             }
-            TypeTag::TypeId(id) => {
+            id => {
                 write!(f, "{id}")?;
-                if !self.args.is_empty() {
-                    write!(f, "[{:?}]", self.args.iter().format(", "))?;
-                };
-            }
-            TypeTag::LambdaId(l) => {
-                write!(f, "{l}")?;
                 if !self.args.is_empty() {
                     write!(f, "[{:?}]", self.args.iter().format(", "))?;
                 };
