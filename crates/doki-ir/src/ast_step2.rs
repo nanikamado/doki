@@ -10,8 +10,8 @@ use self::type_converter::ConverterCollector;
 pub use self::type_converter::{ConvertOp, ConvertOpRef};
 use self::type_memo::TypeMemo;
 pub use self::type_memo::{
-    DisplayTypeWithEnv, DisplayTypeWithEnvStruct, DisplayTypeWithEnvStructOption, Type,
-    TypeForHash, TypeInner, TypeInnerForHash, TypeInnerOf, TypeUnitOf,
+    DisplayTypeWithEnv, DisplayTypeWithEnvStruct, DisplayTypeWithEnvStructOption, Type, TypeInner,
+    TypeUnit,
 };
 use self::union_find::UnionFind;
 use crate::ast_step1::{
@@ -41,7 +41,7 @@ pub struct Ast<'a> {
     pub functions: Vec<Function>,
     pub variable_types: LocalVariableCollector<Types>,
     pub constructor_names: ConstructorNames,
-    pub type_id_generator: IdGenerator<TypeForHash, TypeIdTag>,
+    pub type_id_generator: IdGenerator<Type, TypeIdTag>,
     pub local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
     pub used_intrinsic_variables: Collector<(IntrinsicVariable, Vec<CType>, CType)>,
     pub c_type_definitions: Vec<CTypeScheme<CType>>,
@@ -82,7 +82,7 @@ pub struct ClonedVariable<'a> {
     pub original_decl_id: GlobalVariable,
     pub c_t: CType,
     pub converter: u32,
-    pub t_for_hash: TypeForHash,
+    pub t_for_hash: Type,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -288,9 +288,9 @@ impl<'a> Ast<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 struct FnId {
-    arg_t: TypeForHash,
-    ret_t: TypeForHash,
-    lambda_id: LambdaId<TypeForHash>,
+    arg_t: Type,
+    ret_t: Type,
+    lambda_id: LambdaId<Type>,
 }
 
 struct Env<'a, 'b> {
@@ -299,7 +299,7 @@ struct Env<'a, 'b> {
     monomorphized_variables: FxHashMap<GlobalVariableId, VariableDecl<'a>>,
     cloned_variables: FxHashMap<GlobalVariableId, ClonedVariable<'a>>,
     map: PaddedTypeMap,
-    functions: FxHashMap<LambdaId<Vec<TypeForHash>>, FunctionEntry>,
+    functions: FxHashMap<LambdaId<Vec<Type>>, FunctionEntry>,
     type_memo: TypeMemo,
     local_variable_types_old: LocalVariableTypes,
     local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
@@ -322,7 +322,7 @@ struct Job {
     root_t: Root,
     decl_id: GlobalVariableId,
     p: TypePointer,
-    t_for_hash: TypeForHash,
+    t_for_hash: Type,
     replace_map: ReplaceMap,
     cloned: bool,
 }
@@ -1287,7 +1287,7 @@ impl<'a, 'b> Env<'a, 'b> {
         }
     }
 
-    fn get_type_for_hash(&mut self, p: TypePointer) -> TypeForHash {
+    fn get_type_for_hash(&mut self, p: TypePointer) -> Type {
         self.collect_box_points(p);
         self.type_memo.get_type_for_hash(p, &mut self.map)
     }

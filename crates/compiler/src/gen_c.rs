@@ -137,7 +137,7 @@ pub fn gen_c<'a>(
 
 pub enum SpanMapEntry {
     Expr(Vec<doki_ir::Type>),
-    GlobalVariable { ts: Vec<doki_ir::TypeForHash> },
+    GlobalVariable { ts: Vec<doki_ir::Type> },
 }
 
 pub fn token_map<'a>(
