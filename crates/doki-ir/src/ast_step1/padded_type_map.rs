@@ -12,7 +12,7 @@ use std::mem;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TypeId {
     UserDefined(ConstructorId),
-    Function(u32),
+    Function(LambdaId),
     Intrinsic(IntrinsicTypeTag),
 }
 
@@ -136,16 +136,10 @@ impl PaddedTypeMap {
         }
     }
 
-    pub fn insert_lambda_id(
-        &mut self,
-        p: TypePointer,
-        id: LambdaId<TypePointer>,
-        lambda_ctx: Vec<TypePointer>,
-    ) {
+    pub fn insert_lambda_id(&mut self, p: TypePointer, id: LambdaId, lambda_ctx: Vec<TypePointer>) {
         let t = self.dereference_mut(p);
         debug_assert_eq!(t.box_point, BoxPoint::NotSure);
-        t.type_map
-            .insert(TypeId::Function(id.id), lambda_ctx.clone());
+        t.type_map.insert(TypeId::Function(id), lambda_ctx.clone());
         if t.fixed {
             for p in lambda_ctx {
                 self.fix_pointer(p)
@@ -370,22 +364,6 @@ pub struct JsonDebug<'a>(pub &'a PaddedTypeMap, pub TypePointer);
 impl Display for JsonDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.json_debug(f, self.1, &FxHashSet::default())
-    }
-}
-
-impl<T> LambdaId<T> {
-    pub fn map_type<U>(self, mut f: impl FnMut(T) -> U) -> LambdaId<U> {
-        LambdaId {
-            id: self.id,
-            root_t: f(self.root_t),
-        }
-    }
-
-    pub fn map_type_ref<U>(&self, mut f: impl FnMut(&T) -> U) -> LambdaId<U> {
-        LambdaId {
-            id: self.id,
-            root_t: f(&self.root_t),
-        }
     }
 }
 

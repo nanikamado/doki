@@ -34,10 +34,7 @@ pub struct GlobalVariable(u32);
 pub struct ConstructorId(u32);
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct LambdaId<T> {
-    pub id: u32,
-    pub root_t: T,
-}
+pub struct LambdaId(u32);
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct VariableDecl<'a> {
@@ -70,7 +67,7 @@ pub enum Instruction {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Lambda {
-        lambda_id: LambdaId<TypePointer>,
+        lambda_id: LambdaId,
         parameter: LocalVariable,
         body: Block,
         ret: LocalVariable,
@@ -127,10 +124,9 @@ impl TypeInfEnv<'_> {
             .global_variables_before_type_inf
             .remove(&decl_id)
             .unwrap();
-        let root_t = self.global_variable_types[&decl_id];
         let unfixed_unreplicatable_pointers_tmp =
             std::mem::take(&mut self.unfixed_unreplicatable_pointers_of_current_scc);
-        self.block(&mut d.value, root_t, true);
+        self.block(&mut d.value, true);
         let unfixed_unreplicatable_pointers = std::mem::replace(
             &mut self.unfixed_unreplicatable_pointers_of_current_scc,
             unfixed_unreplicatable_pointers_tmp,
@@ -140,7 +136,7 @@ impl TypeInfEnv<'_> {
         self.global_variables.push(d);
     }
 
-    fn block(&mut self, block: &mut Block, root_t: TypePointer, outside_of_fn: bool) {
+    fn block(&mut self, block: &mut Block, outside_of_fn: bool) {
         for i in &mut block.instructions {
             match i {
                 Instruction::Assign(v, e) => {
@@ -160,7 +156,7 @@ impl TypeInfEnv<'_> {
                             self.defined_local_variables.insert(*parameter);
                             let arg = self.local_variable_types.get(*parameter);
                             let ret = self.local_variable_types.get(*ret);
-                            self.block(body, root_t, false);
+                            self.block(body, false);
                             *context = self
                                 .used_local_variables
                                 .iter()
@@ -169,10 +165,7 @@ impl TypeInfEnv<'_> {
                                 .collect_vec();
                             self.type_map.insert_lambda_id(
                                 t,
-                                LambdaId {
-                                    id: lambda_id.id,
-                                    root_t,
-                                },
+                                *lambda_id,
                                 context
                                     .iter()
                                     .map(|p| self.local_variable_types.get(*p))
@@ -348,8 +341,8 @@ impl TypeInfEnv<'_> {
                 }
                 Instruction::FailTest | Instruction::Panic { .. } => (),
                 Instruction::TryCatch(a, b) => {
-                    self.block(a, root_t, outside_of_fn);
-                    self.block(b, root_t, outside_of_fn);
+                    self.block(a, outside_of_fn);
+                    self.block(b, outside_of_fn);
                 }
             }
         }
@@ -415,10 +408,7 @@ impl<'a> Env<'a> {
 
     pub fn lambda<'b>(&mut self, block: &'b mut Block, assign_v: LocalVariable) -> Lambda<'b> {
         let parameter = self.new_local_variable();
-        let lambda_id = LambdaId {
-            id: self.lambda_count,
-            root_t: PaddedTypeMap::null_pointer(),
-        };
+        let lambda_id = LambdaId(self.lambda_count);
         self.lambda_count += 1;
         let ret = self.new_local_variable();
         let e = Expr::Lambda {
@@ -620,7 +610,7 @@ impl<'a> Env<'a> {
                 env.get_type_global(v);
             }
         }
-        env.block(&mut entry_block, PaddedTypeMap::null_pointer(), true);
+        env.block(&mut entry_block, true);
         let type_map = env.type_map;
         let local_variable_types_old = env.local_variable_types;
         Ast {
@@ -723,9 +713,9 @@ impl Block {
     }
 }
 
-impl<T: Debug> Display for LambdaId<T> {
+impl Display for LambdaId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "f{}({:?})", self.id, self.root_t)
+        write!(f, "f{}", self.0)
     }
 }
 

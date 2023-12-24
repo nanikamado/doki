@@ -1,4 +1,4 @@
-use super::{LambdaId, TypeIdTag, TypeUnique};
+use super::{TypeIdTag, TypeUnique};
 use crate::ast_step1::{self, ConstructorNames, PaddedTypeMap, TypeId, TypePointer};
 use crate::intrinsics::IntrinsicTypeTag;
 use crate::util::id_generator::IdGenerator;
@@ -350,18 +350,16 @@ impl DisplayTypeWithEnv for TypeInner {
     }
 }
 
-impl<R: DisplayTypeWithEnv> DisplayTypeWithEnv for LambdaId<R> {
-    fn fmt_with_env(
-        &self,
-        _p: Precedence,
-        f: &mut std::fmt::Formatter<'_>,
-        env: &ConstructorNames,
-    ) -> std::fmt::Result {
-        write!(f, "f{}(", self.id,)?;
-        self.root_t.fmt_with_env(P::Strong, f, env)?;
-        write!(f, ")")
-    }
-}
+// impl DisplayTypeWithEnv for LambdaId {
+//     fn fmt_with_env(
+//         &self,
+//         _p: Precedence,
+//         f: &mut std::fmt::Formatter<'_>,
+//         env: &ConstructorNames,
+//     ) -> std::fmt::Result {
+//         write!(f, "{}", self)
+//     }
+// }
 
 impl DisplayTypeWithEnv for TypeUnique {
     fn fmt_with_env(

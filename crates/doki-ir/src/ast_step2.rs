@@ -290,7 +290,7 @@ impl<'a> Ast<'a> {
 struct FnId {
     arg_t: Type,
     ret_t: Type,
-    lambda_id: LambdaId<Type>,
+    lambda_id: LambdaId,
 }
 
 struct Env<'a, 'b> {
@@ -299,7 +299,7 @@ struct Env<'a, 'b> {
     monomorphized_variables: FxHashMap<GlobalVariableId, VariableDecl<'a>>,
     cloned_variables: FxHashMap<GlobalVariableId, ClonedVariable<'a>>,
     map: PaddedTypeMap,
-    functions: FxHashMap<LambdaId<Vec<Type>>, FunctionEntry>,
+    functions: FxHashMap<(LambdaId, Vec<Type>), FunctionEntry>,
     type_memo: TypeMemo,
     local_variable_types_old: LocalVariableTypes,
     local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
@@ -888,28 +888,18 @@ impl<'a, 'b> Env<'a, 'b> {
                     .iter()
                     .map(|l| self.get_defined_local_variable(*l, root_t))
                     .collect_vec();
-                let lambda_id = LambdaId {
-                    id: lambda_id.id,
-                    root_t: once(parameter_t)
+                let lambda_id_with_ctx = (
+                    *lambda_id,
+                    once(parameter_t)
                         .chain(once(ret_t))
                         .chain(parameters.iter().map(|a| {
                             let t = self.local_variable_collector.get_type(*a);
                             self.get_type_for_hash(t.type_pointer.unwrap())
                         }))
                         .collect_vec(),
-                };
-                let e = if let Some(e) = self.functions.get(&lambda_id) {
-                    e
-                } else {
-                    let e = FunctionEntry::Placeholder(FxLambdaId(self.functions.len() as u32));
-                    self.functions.entry(lambda_id.clone()).or_insert(e)
-                };
-                let fx_lambda_id = match e {
-                    FunctionEntry::Placeholder(id) => *id,
-                    FunctionEntry::Function(f) => f.id,
-                };
+                );
                 if !only_fn {
-                    let type_id = TypeId::Function(lambda_id.id);
+                    let type_id = TypeId::Function(*lambda_id);
                     let context = box_construction_args(
                         parameters.iter().copied(),
                         p,
@@ -925,23 +915,34 @@ impl<'a, 'b> Env<'a, 'b> {
                     let e = self.add_tags_to_expr(l, p, type_id, &mut basic_block_env.instructions);
                     basic_block_env.assign(v, e);
                 }
-                parameters.insert(0, new_parameter);
-                let parameter_t = self.local_variable_collector.get_type(new_parameter);
-                let parameter_ct = &self.c_type_definitions[parameter_t.c_type.i.0];
-                let (basic_blocks, ret) = if matches!(parameter_ct, CTypeScheme::Diverge) {
-                    self.dummy_function_body(ret_p)
+                let e = if let Some(e) = self.functions.get(&lambda_id_with_ctx) {
+                    e
                 } else {
-                    self.function_body(body, root_t, replace_map, *ret, false)
+                    let e = FunctionEntry::Placeholder(FxLambdaId(self.functions.len() as u32));
+                    self.functions
+                        .entry(lambda_id_with_ctx.clone())
+                        .or_insert(e)
                 };
-                self.functions.insert(
-                    lambda_id,
-                    FunctionEntry::Function(Function {
-                        id: fx_lambda_id,
-                        parameters,
-                        body: FunctionBody { basic_blocks },
-                        ret,
-                    }),
-                );
+                if let FunctionEntry::Placeholder(fx_lambda_id) = *e {
+                    parameters.insert(0, new_parameter);
+                    let parameter_t = self.local_variable_collector.get_type(new_parameter);
+                    let parameter_ct = &self.c_type_definitions[parameter_t.c_type.i.0];
+                    let (basic_blocks, ret) = if matches!(parameter_ct, CTypeScheme::Diverge) {
+                        self.dummy_function_body(ret_p)
+                    } else {
+                        self.function_body(body, root_t, replace_map, *ret, false)
+                    };
+                    let o = self.functions.insert(
+                        lambda_id_with_ctx,
+                        FunctionEntry::Function(Function {
+                            id: fx_lambda_id,
+                            parameters,
+                            body: FunctionBody { basic_blocks },
+                            ret,
+                        }),
+                    );
+                    debug_assert!(matches!(o.unwrap(), FunctionEntry::Placeholder(_)));
+                };
             }
             ast_step1::Expr::I64(s) => {
                 let e = self.add_tags_to_expr(
@@ -1229,14 +1230,14 @@ impl<'a, 'b> Env<'a, 'b> {
         {
             if let TypeId::Function(original_lambda_id) = id {
                 let len = self.functions.len() as u32;
-                let lambda_id = LambdaId {
-                    id: original_lambda_id,
-                    root_t: fn_type
+                let lambda_id = (
+                    original_lambda_id,
+                    fn_type
                         .iter()
                         .chain(&ctx)
                         .map(|a| self.get_type_for_hash(*a))
                         .collect_vec(),
-                };
+                );
                 let e = self
                     .functions
                     .entry(lambda_id)
@@ -1885,7 +1886,7 @@ impl<'a, 'b> Env<'a, 'b> {
 struct PossibleFunction {
     tag: u32,
     lambda_id: FxLambdaId,
-    original_lambda_id: u32,
+    original_lambda_id: LambdaId,
     c_type: CType,
     ctx: Vec<TypePointer>,
 }
