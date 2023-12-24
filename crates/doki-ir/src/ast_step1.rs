@@ -390,6 +390,7 @@ pub struct CodegenOptions {
     pub backtrace: bool,
     pub boehm: bool,
     pub check_address_boundary: bool,
+    pub type_comments: bool,
 }
 
 impl<'a> Env<'a> {

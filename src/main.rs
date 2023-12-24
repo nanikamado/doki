@@ -56,6 +56,8 @@ enum Commands {
         boehm: bool,
         #[arg(long)]
         check_address_boundary: bool,
+        #[arg(long)]
+        type_comments: bool,
     },
     /// Start the language server
     LanguageServer,
@@ -125,6 +127,7 @@ fn main() -> ExitCode {
                     backtrace,
                     boehm,
                     check_address_boundary,
+                    type_comments: false,
                 },
                 &mut src_files,
                 &mut arena,
@@ -167,6 +170,7 @@ fn main() -> ExitCode {
             backtrace,
             boehm,
             check_address_boundary,
+            type_comments,
         } => {
             let r = compile(
                 &file,
@@ -175,6 +179,7 @@ fn main() -> ExitCode {
                     backtrace,
                     boehm,
                     check_address_boundary,
+                    type_comments,
                 },
                 &mut src_files,
                 &mut arena,

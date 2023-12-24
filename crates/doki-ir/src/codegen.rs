@@ -571,13 +571,10 @@ fn write_fns(
                 let ps = function.parameters.iter().format_with(",", |l, f| {
                     let t = env.local_variable_types.get_type(*l);
                     f(&format_args!(
-                        "{} {}/*{}*/",
+                        "{} {}{}",
                         Dis(&t.c_type, env),
                         Dis(l, env),
-                        ast_step2::DisplayTypeWithEnvStructOption(
-                            &t.type_for_display,
-                            env.constructor_names
-                        ),
+                        Dis(&TypeComment(&t.type_for_display), env),
                     ))
                 });
                 write!(f, "({ps})")?;
@@ -687,12 +684,9 @@ impl DisplayWithEnv for FunctionBodyWithCtx<'_> {
             vs.iter().format_with("", |v, f| {
                 let t = env.local_variable_types.get_type(*v);
                 f(&format_args!(
-                    "{} /*{}*/ {};",
+                    "{} {}{};",
                     Dis(&t.c_type, env),
-                    ast_step2::DisplayTypeWithEnvStructOption(
-                        &t.type_for_display,
-                        env.constructor_names
-                    ),
+                    Dis(&TypeComment(&t.type_for_display), env),
                     Dis(v, env),
                 ))
             }),
@@ -715,6 +709,21 @@ impl DisplayWithEnv for FunctionBodyWithCtx<'_> {
             }
         }
         write!(f, "}}")
+    }
+}
+
+struct TypeComment<'a>(&'a Option<crate::Type>);
+
+impl DisplayWithEnv for TypeComment<'_> {
+    fn fmt_with_env(&self, env: Env<'_>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if env.codegen_options.type_comments {
+            write!(
+                f,
+                "/*{}*/",
+                ast_step2::DisplayTypeWithEnvStructOption(self.0, env.constructor_names)
+            )?;
+        }
+        Ok(())
     }
 }
 
