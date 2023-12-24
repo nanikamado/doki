@@ -155,13 +155,18 @@ pub fn token_map<'a>(
     let global_variables: multimap::MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> = ast
         .cloned_variables
         .values()
-        .map(|v| {
-            let t = &v.t_for_hash;
-            (
-                v.original_decl_id,
-                (t.clone(), ast.type_id_generator.get(t).unwrap()),
-            )
-        })
+        .map(|v| (v.original_decl_id, (&v.type_, v.root_t)))
+        .chain(
+            ast.original_variables
+                .iter()
+                .filter(|(decl_id, _)| {
+                    ast.original_variable_usage
+                        .get(decl_id)
+                        .copied()
+                        .unwrap_or_default()
+                })
+                .map(|(_, v)| (v.original_decl_id, (&v.type_, v.root_t))),
+        )
         .collect();
     let mut span_map: BTreeMap<_, _> = env
         .global_variable_span_map
@@ -173,7 +178,7 @@ pub fn token_map<'a>(
                     .into_iter()
                     .flatten()
                     .sorted_by_key(|(_, id)| id)
-                    .map(|(t, _)| t.clone())
+                    .map(|(t, _)| (*t).clone())
                     .collect_vec();
                 Some((s, SpanMapEntry::GlobalVariable { ts }))
             } else {

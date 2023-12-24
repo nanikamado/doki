@@ -18,10 +18,6 @@ impl<T: std::hash::Hash + Eq, U: Copy> IdGenerator<T, U> {
             phantom: PhantomData,
         })
     }
-
-    pub fn get(&self, value: &T) -> Option<Id<U>> {
-        self.0.get(value).copied()
-    }
 }
 
 impl<T, U> Default for IdGenerator<T, U> {
