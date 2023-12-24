@@ -243,7 +243,7 @@ impl<'a> Ast<'a> {
             .into_values()
             .flat_map(|f| match f {
                 FunctionEntry::Placeholder(e) => {
-                    if let Some((ret, parameters)) = memo.fn_signatures_for_dummy_fns.get(&e) {
+                    if let Some((ret, parameters)) = memo.fn_signatures_for_dummy_fns.remove(&e) {
                         // this function is only called from unreachable code which is not deleted
                         let basic_blocks = vec![BasicBlock {
                             instructions: Vec::new(),
@@ -253,9 +253,9 @@ impl<'a> Ast<'a> {
                         }];
                         Some(Function {
                             id: e,
-                            parameters: parameters.clone(),
+                            parameters,
                             body: FunctionBody { basic_blocks },
-                            ret: *ret,
+                            ret,
                         })
                     } else {
                         // this function is only called from unreachable code which is not deleted
@@ -870,8 +870,7 @@ impl<'a, 'b> Env<'a, 'b> {
             map: &PaddedTypeMap,
             local_variable_collector: &mut LocalVariableCollector<Types>,
         ) -> Vec<LocalVariable> {
-            let box_point = map.dereference_without_find(p).box_point.clone();
-            let BoxPoint::Boxed(b) = box_point else {
+            let BoxPoint::Boxed(b) = &map.dereference_without_find(p).box_point else {
                 panic!()
             };
             args.zip(&b[&type_id])
