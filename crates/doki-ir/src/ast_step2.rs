@@ -211,13 +211,8 @@ impl<'a> Ast<'a> {
             let p = memo.map.new_pointer();
             let t = memo.get_type_for_hash(p);
             let type_id = memo.type_memo.type_id_generator.get_or_insert(t);
-            let (basic_blocks, ret) = memo.function_body(
-                &ast.entry_block,
-                (type_id, ast.global_variable_for_entry_block),
-                &mut replace_map,
-                *ret,
-                false,
-            );
+            let (basic_blocks, ret) =
+                memo.function_body(&ast.entry_block, type_id, &mut replace_map, *ret, false);
             let t = memo.local_variable_collector.get_type(ret);
             (FunctionBody { basic_blocks }, t.c_type)
         };
@@ -295,7 +290,7 @@ struct FnId {
 
 struct Env<'a, 'b> {
     variable_decls: FxHashMap<GlobalVariable, &'b ast_step1::VariableDecl<'a>>,
-    monomorphized_variable_map: FxHashMap<Root, GlobalVariableId>,
+    monomorphized_variable_map: FxHashMap<(ast_step1::GlobalVariable, Root), GlobalVariableId>,
     monomorphized_variables: FxHashMap<GlobalVariableId, VariableDecl<'a>>,
     cloned_variables: FxHashMap<GlobalVariableId, ClonedVariable<'a>>,
     map: PaddedTypeMap,
@@ -340,7 +335,7 @@ pub struct FxLambdaId(pub u32);
 pub struct TypeIdTag;
 
 pub type TypeUnique = id_generator::Id<TypeIdTag>;
-type Root = (TypeUnique, ast_step1::GlobalVariable);
+type Root = TypeUnique;
 
 struct BasicBlockEnv {
     basic_blocks: Vec<Option<BasicBlock>>,
@@ -415,17 +410,17 @@ impl<'a, 'b> Env<'a, 'b> {
     ) -> GlobalVariableId {
         debug_assert!(self.map.is_terminal(p));
         let t_for_hash = self.get_type_for_hash(p);
-        let t_id = self
+        let root_t = self
             .type_memo
             .type_id_generator
             .get_or_insert(t_for_hash.clone());
-        let root_t = (t_id, decl_id);
-        if let Some(d) = self.monomorphized_variable_map.get(&root_t) {
+        let k = (decl_id, root_t);
+        if let Some(d) = self.monomorphized_variable_map.get(&k) {
             *d
         } else {
             let new_decl_id = GlobalVariableId(self.global_variable_count);
             self.global_variable_count += 1;
-            self.monomorphized_variable_map.insert(root_t, new_decl_id);
+            self.monomorphized_variable_map.insert(k, new_decl_id);
             self.job_stack.push(Job {
                 original_decl_id: decl_id,
                 root_t,

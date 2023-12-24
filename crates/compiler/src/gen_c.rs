@@ -172,6 +172,7 @@ pub fn token_map<'a>(
                     .get_vec(&g)
                     .into_iter()
                     .flatten()
+                    .sorted_by_key(|(_, id)| id)
                     .map(|(t, _)| t.clone())
                     .collect_vec();
                 Some((s, SpanMapEntry::GlobalVariable { ts }))
@@ -183,7 +184,7 @@ pub fn token_map<'a>(
     let m: multimap::MultiMap<_, _, std::hash::BuildHasherDefault<FxHasher>> = ast
         .local_variable_replace_map
         .into_iter()
-        .map(|((l, (id, g)), l2)| (l, (g, id, l2)))
+        .map(|((l, id), l2)| (l, (id, l2)))
         .collect();
     span_map.extend(env.local_variable_span_map.into_iter().flat_map(|(s, l)| {
         if s.file_name == path {
@@ -191,13 +192,8 @@ pub fn token_map<'a>(
                 .get_vec(&l)
                 .into_iter()
                 .flatten()
-                .sorted_by_key(|(g, id, _)| {
-                    global_variables
-                        .get_vec(g)
-                        .unwrap()
-                        .binary_search_by_key(id, |(_, id)| *id)
-                })
-                .map(|(_, _, l)| {
+                .sorted_by_key(|(id, _)| id)
+                .map(|(_, l)| {
                     ast.variable_types
                         .get_type(*l)
                         .type_for_display
