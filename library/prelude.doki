@@ -121,13 +121,15 @@ log10 = a: match a with
         _ => plus (log10 (div a 10)) 1,
     end
 
-i64_to_string_aux = s: d: a: l:
+zero_char_i64 = intrinsic_u8_to_i64 '0'
+
+i64_to_string_aux = sig: s: d: a: l:
     match l with
         0 => Unit,
         _ =>
             let d = minus d 1
-            in let _ = intrinsic_store_u8 s d (intrinsic_i64_to_u8 (plus 48 (rem a 10)))
-            in i64_to_string_aux s d (div a 10) (minus l 1),
+            in let _ = intrinsic_store_u8 s d (intrinsic_i64_to_u8 (sig zero_char_i64 (rem a 10)))
+            in i64_to_string_aux sig s d (div a 10) (minus l 1),
     end
 
 max = a: b: match lt a b with
@@ -140,13 +142,13 @@ i64_to_string = a:
     in let l = max 1 (log10 a)
     in let str_l = plus l match negative with True => 1, False => 0, end
     in let s = intrinsic_malloc str_l
-    in let a = match negative with
-            False => a,
+    in let sig = match negative with
+            False => plus,
             True =>
                 let _ = intrinsic_store_u8 s 0 45u8
-                in minus 0 a,
+                in minus,
         end
-    in let _ = i64_to_string_aux s str_l a l
+    in let _ = i64_to_string_aux sig s str_l a l
     in Str 0 str_l s
 
 ptr_copy = dist: dist_d: src: src_d: len: match len with

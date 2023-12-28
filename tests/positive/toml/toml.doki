@@ -35,6 +35,30 @@ char_list_to_num_hex_aux = acc: s:
 
 char_list_to_num_hex = char_list_to_num_hex_aux 0
 
+char_list_to_num_oct_aux = acc: s: match s with
+        Nil => acc,
+        Cons c s => match and (le_u8 '0' c) (le_u8 c '7') with
+            False => acc,
+            True => char_list_to_num_oct_aux
+                    (plus (mul 8 acc) (minus (intrinsic_u8_to_i64 c) 48))
+                    s,
+        end,
+    end
+
+char_list_to_num_oct = char_list_to_num_oct_aux 0
+
+char_list_to_num_bin_aux = acc: s: match s with
+        Nil => acc,
+        Cons c s => match or (eq_u8 '0' c) (eq_u8 c '1') with
+            False => acc,
+            True => char_list_to_num_bin_aux
+                    (plus (mul 2 acc) (minus (intrinsic_u8_to_i64 c) 48))
+                    s,
+        end,
+    end
+
+char_list_to_num_bin = char_list_to_num_bin_aux 0
+
 unwrap_or = a: alt: match a with
         None => alt,
         Some a => a,
@@ -117,6 +141,12 @@ alt = p1: p2: i:
         Ok a => Ok a,
     end
 
+or_not = p1: i:
+    match p1 i with
+        Err e => Ok (Cons None i),
+        Ok (Cons a i) => Ok (Cons (Some a) i),
+    end
+
 any = i: match pop_str i with
         Nil => Err Unit,
         Cons c i => Ok (Cons c i),
@@ -127,6 +157,8 @@ is_digit_hex = c:
     or (and (le_u8 48u8 c) (le_u8 c 57u8))
     (or (and (le_u8 65u8 c) (le_u8 c 70u8))
     (and (le_u8 97u8 c) (le_u8 c 102u8)))
+is_digit_oct = c: and (le_u8 '0' c) (le_u8 c '7')
+is_digit_bin = c: or (eq_u8 '0' c) (eq_u8 c '1')
 
 filter = p: f: i: match p i with
         Err e => Err e,
@@ -138,6 +170,8 @@ filter = p: f: i: match p i with
 
 digit = filter any is_digit
 digit_hex = filter any is_digit_hex
+digit_oct = filter any is_digit_oct
+digit_bin = filter any is_digit_bin
 
 num = repeated_at_least_one digit
 
@@ -164,7 +198,7 @@ repeated_with_count = p: n: i: match n with
 then_ignore = a: b: parser_map (then a b) (Cons a _: a)
 ignore_then = a: b: parser_map (then a b) (Cons _ a: a)
 
-whitespace = repeated (one_of " \n\t")
+whitespace = repeated (one_of " \n\r\t")
 
 padded = p: ignore_then whitespace (then_ignore p whitespace)
 
@@ -172,9 +206,135 @@ delimited_by = start: p: _end: ignore_then start (then_ignore p _end)
 
 separated_by = p: separator: alt (then p (repeated (ignore_then separator p))) (i: Ok (Cons Nil i))
 
+and_lazy = a: b: match a with
+        True => b Unit,
+        False => False,
+    end
+
+or_lazy = a: b: match a with
+        False => b Unit,
+        True => True,
+    end
+
+head_eq = s: i:
+    match Cons (pop_str s) (pop_str i) with
+        Cons Nil _ => True,
+        Cons (Cons s_h s_t) (Cons i_h i_t) => and_lazy (eq_u8 s_h i_h) (_: head_eq s_t i_t),
+        _ => False,
+    end
+
+until = s: i:
+    match head_eq s i with
+        True => Ok (Cons None i),
+        False => match pop_str i with
+                Nil => Err Unit,
+                Cons a i => until s i,
+            end,
+    end
+
+and_is = a: b: i: match a i with
+        Err e => Err e,
+        Ok a_r => match b i with
+                Err e => Err e,
+                Ok _ => Ok a_r,
+            end,
+    end
+
+parser_not = p: i: match p i with
+        Err _ => Ok (Cons Unit i),
+        Ok _ => Err Unit,
+    end
+
+// =================== Date Parser =====================
+
+data DateTime 2
+
+date_parser = i:
+    let d = repeated_with_count digit
+    in let date = then (d 4)
+        (then (just "-")
+        (then (d 2)
+        (then (just "-")
+        (d 2))))
+    in let time = then (d 2)
+        (then (just ":")
+        (then (d 2)
+        (then (just ":")
+        (then (d 2)
+        (or_not (then (just ".")
+        num))))))
+    in let add_t = t: p: parser_map (parser_slice p) (DateTime t)
+    in let date_time = then date
+            (then (one_of "Tt ")
+            time)
+    in let date_time_with_zone = then
+        date_time
+        (alt
+            (then
+                (one_of "+-")
+                (then (d 2) (then (just ":") (d 2))))
+            (one_of "Zz"))
+    in let date_time =
+        alt (add_t "datetime" date_time_with_zone)
+        (alt (add_t "datetime-local" date_time)
+        (alt (add_t "date-local" date)
+        (add_t "time-local" time)))
+    in date_time i
+
+// =================== Num Parser ===================
+
+num_with_underscore = s:
+    let num = then num (repeated (ignore_then (just "_") (repeated digit)))
+    in parser_map num list_flatten s
+
+toml_num = s:
+    let num = parser_map num_with_underscore char_list_to_num
+    in let hex = repeated_at_least_one digit_hex
+    in let hex = then hex (repeated (ignore_then (just "_") (repeated digit_hex)))
+    in let hex = parser_map (ignore_then (just "0x") hex) (a: char_list_to_num_hex (list_flatten a))
+    in let oct = repeated_at_least_one digit_oct
+    in let oct = then oct (repeated (ignore_then (just "_") (repeated digit_oct)))
+    in let oct = parser_map (ignore_then (just "0o") oct) (a: char_list_to_num_oct (list_flatten a))
+    in let bin = repeated_at_least_one digit_bin
+    in let bin = then bin (repeated (ignore_then (just "_") (repeated digit_bin)))
+    in let bin = parser_map (ignore_then (just "0b") bin) (a: char_list_to_num_bin (list_flatten a))
+    in let num = alt
+        hex
+        (alt oct
+        (alt bin
+        (alt (ignore_then (or_not (just "+")) num)
+        (ignore_then (just "-") (parser_map num (minus 0))))))
+    in num s
+
+float = s:
+    let num = parser_slice num
+    in let num = parser_map
+        (then num (repeated (ignore_then (just "_") num)))
+        concat_strings
+    in let signed_num = alt
+        (ignore_then (or_not (just "+")) num)
+        (parser_map (ignore_then (just "-") num) (append_str "-"))
+    in let point_num = parser_map (ignore_then (just ".") num) (append_str ".")
+    in let exponent = parser_map (ignore_then (alt (just "e") (just "E")) signed_num) (append_str "e")
+    in let or_empty = p: parser_map (or_not p) (a: unwrap_or a "")
+    in let float = parser_map
+        (then
+            signed_num
+            (alt
+                (parser_map
+                    (then point_num (or_empty exponent))
+                    (Cons a b: append_str a b))
+                exponent))
+        (Cons a b: append_str a b)
+    in let float = alt float
+        (alt (parser_slice (then (or_not (one_of "+-")) (just "inf")))
+        (ignore_then (or_not (one_of "+-")) (just "nan")))
+    in parser_map float Float s
+
 // =================== Parser ===================
 
 data Num 1
+data Float 1
 data String 1
 data Define 2
 data BaseKey 1
@@ -211,8 +371,9 @@ i64_to_utf8_list = c:
             (Cons (tail_bytes c 0) Nil))),
     end
 
-concat_strings = ss: let a = fold (array_new Unit) ss array_append
-    in array_to_str a
+concat_strings_to_array = ss: fold (array_new Unit) ss array_append
+
+concat_strings = ss: array_to_str (concat_strings_to_array ss)
 
 string = s:
     let unicode_escape_4 =
@@ -239,12 +400,41 @@ string = s:
     in let escape = alt
         escape
         (parser_map (alt unicode_escape_4 unicode_escape_8) char_list_to_string)
-    in let basic_string = parser_slice (none_of r#"\""#)
+    in let is_not_multiline_content = c: or_lazy (eq_u8 c '\\')
+        (_: or_lazy (le_u8 c 8u8)
+        (_: or_lazy (eq_u8 c 0xBu8)
+        (_: or_lazy (eq_u8 c 0xCu8)
+        (_: or_lazy (and (le_u8 0xEu8 c) (le_u8 c 0x1Fu8))
+        (_: eq_u8 c 0x7Fu8)))))
+    in let is_not_string_content = c: or_lazy (eq_u8 c '"')
+        (_: or_lazy (eq_u8 c '\n')
+        (_: or_lazy (eq_u8 c '\r')
+        (_: is_not_multiline_content c)))
+    in let basic_string = parser_slice (filter any (c: not (is_not_string_content c)))
     in let basic_string = alt basic_string (ignore_then (just "\\") escape)
     in let basic_string = parser_map (repeated basic_string) concat_strings
     in let basic_string = delimited_by (just "\"") basic_string (just "\"")
+    in let multiline_string = parser_slice (and_is
+        (filter any (c: not (is_not_multiline_content c)))
+        (parser_not (then (just r#"""""#) (parser_not (just r#"""#)))))
+    in let escape = alt escape
+        (parser_map (then (repeated (one_of " \t"))
+                (then (just "\n")
+                (repeated (one_of " \t\n"))))
+            (_: ""))
+    in let multiline_string = alt multiline_string (ignore_then (just "\\") escape)
+    in let multiline_string = parser_map (repeated multiline_string) concat_strings
+    in let multiline_string = delimited_by (then (just r#"""""#) (or_not (just "\n")))
+        multiline_string
+        (just r#"""""#)
     in let literal_string = delimited_by (just "'") (parser_slice (repeated (none_of r#"'"#))) (just "'")
-    in alt basic_string literal_string s
+    in let multi_literal_string = parser_slice (repeated (and_is
+        any
+        (parser_not (then (just "'''") (parser_not (just "'"))))))
+    in let multi_literal_string = delimited_by (then (just "'''") (or_not (just "\n")))
+        multi_literal_string
+        (just "'''")
+    in alt multiline_string (alt basic_string (alt multi_literal_string literal_string)) s
 
 key = s: let is_ident_head = c: let c1 = and (le_u8 65u8 c) (le_u8 c 90u8)
         in let c2 = and (le_u8 97u8 c) (le_u8 c 122u8)
@@ -255,22 +445,37 @@ key = s: let is_ident_head = c: let c1 = and (le_u8 65u8 c) (le_u8 c 90u8)
     in let dot = filter any (c: eq_u8 c 46u8)
     in separated_by (padded (alt string bare_key)) dot s
 
+comment = then (just "#") (repeated (none_of "\n"))
+
+comment_or_whitespace = repeated (alt (one_of " \n\r\t") comment)
+
 value = s:
     let string = parser_map string (a: String a)
-    in let num = parser_map num (s: Num (char_list_to_num s))
-    in let list = delimited_by (just "[") (separated_by (padded value) (just ",")) (just "]")
+    in let num = parser_map toml_num Num
+    in let padded_r = p: ignore_then comment_or_whitespace (then_ignore p comment_or_whitespace)
+    in let list = delimited_by (just "[")
+        (padded_r (separated_by value (padded_r (just ","))))
+        (then (or_not (just ",")) (then comment_or_whitespace (just "]")))
     in let list = parser_map list reverse
-    in let obj_inner = separated_by (then (then_ignore key (padded (just "="))) (padded value)) (just ",")
-    in let obj = delimited_by (just "{") obj_inner (just "}")
+    in let obj_inner = separated_by
+        (then key (ignore_then (padded (just "=")) value))
+        (padded (just ","))
+    in let obj = delimited_by (just "{") (padded obj_inner) (just "}")
     in let obj = parser_map obj (kvs: fold E kvs (acc: Cons k v: replace_value acc k v))
     in let b_true = parser_map (just "true") (_: True)
     in let b_false = parser_map (just "false") (_: False)
-    in alt num (alt string (alt list (alt obj (alt b_true b_false)))) s
+    in alt string
+        (alt list
+        (alt obj
+        (alt date_parser
+        (alt float
+        (alt num
+        (alt b_true b_false))))))
+        s
 
 parser = s: let equation = parser_map (then (then_ignore key (padded (just "="))) value) (Cons k v: Define k v)
     in let base_key = parser_map (delimited_by (just "[") key (just "]")) BaseKey
     in let list_append = parser_map (delimited_by (just "[[") key (just "]]")) ListAppend
-    in let comment = then (just "#") (repeated (none_of "\n"))
     in let pad = repeated (alt comment (one_of " \n\t"))
     in let equations = ignore_then pad (repeated (then_ignore (alt equation (alt base_key list_append)) pad))
     in equations s
@@ -372,12 +577,14 @@ data PrintList 1
 data WithType 2
 
 obj_to_string = obj: match obj with
-        Num n => WithType "number" (PrintAnd "\"" (PrintAnd (i64_to_string n) "\"")),
+        Num n => WithType "integer" (PrintAnd "\"" (PrintAnd (i64_to_string n) "\"")),
+        Float n => WithType "float" (PrintAnd "\"" (PrintAnd n "\"")),
         String s => WithType "string" (PrintStringEscaped s),
         E | T _ _ _ _ _ => PrintTree obj,
         Nil | Cons _ _ => PrintList (reverse obj),
-        True => WithType "bool" "true",
-        False => WithType "bool" "false",
+        True => WithType "bool" r#""true""#,
+        False => WithType "bool" r#""false""#,
+        DateTime t a => WithType t (PrintAnd "\"" (PrintAnd a "\"")),
     end
 
 // obj_to_string = obj: match obj with
