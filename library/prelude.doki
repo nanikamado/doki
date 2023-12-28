@@ -158,7 +158,7 @@ ptr_copy = dist: dist_d: src: src_d: len: match len with
 append_str = Str d1 l1 p1: Str d2 l2 p2:
     let l = plus l1 l2
     in let p = intrinsic_malloc l
-    in let _ = ptr_copy p 0 p1 d2 l1
+    in let _ = ptr_copy p 0 p1 d1 l1
     in let _ = ptr_copy p l1 p2 d2 l2
     in Str 0 l p
 
