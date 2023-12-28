@@ -1588,7 +1588,7 @@ impl<'a, 'b> Env<'a, 'b> {
         let p = self.map.find(p);
         let p = self.normalizer_for_c_type.find(PointerForCType::from(p));
         debug_assert_eq!(p.modifier, PointerModifier::Normal);
-        let p = p.p;
+        let p = self.map.find(p.p);
         let reference_point = self.map.dereference_without_find(p).box_point.clone();
         debug_assert_ne!(reference_point, BoxPoint::NotSure);
         if reference_point == BoxPoint::Diverging {
