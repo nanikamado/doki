@@ -314,6 +314,7 @@ struct Env<'a, 'b> {
     normalizer_for_c_type: UnionFind<PointerForCType>,
     job_stack: Vec<Job>,
     fn_signatures_for_dummy_fns: FxHashMap<FxLambdaId, (LocalVariable, Vec<LocalVariable>)>,
+    pointers_box_point_collected: FxHashSet<TypePointer>,
 }
 
 struct Job {
@@ -403,6 +404,7 @@ impl<'a, 'b> Env<'a, 'b> {
             normalizer_for_c_type: Default::default(),
             job_stack: Vec::with_capacity(20),
             fn_signatures_for_dummy_fns: Default::default(),
+            pointers_box_point_collected: FxHashSet::default(),
         }
     }
 
@@ -1752,8 +1754,9 @@ impl<'a, 'b> Env<'a, 'b> {
             None,
             &mut Default::default(),
             &mut Vec::with_capacity(5),
+            &mut Default::default(),
             None,
-        )
+        );
     }
 
     fn collect_pointers(&mut self, p: TypePointer, pointers: &mut FxHashMap<PointerForCType, u32>) {
@@ -1794,6 +1797,7 @@ impl<'a, 'b> Env<'a, 'b> {
         parent_of_p: Option<(TypePointer, TypeId, u32)>,
         trace_map: &mut FxHashSet<TypePointer>,
         non_union_trace: &mut Vec<TypePointer>,
+        direct_trace: &mut FxHashSet<TypePointer>,
         mut divergent_stopper: Option<DivergentStopper>,
     ) {
         let p = self.map.find_imm(p);
@@ -1804,6 +1808,8 @@ impl<'a, 'b> Env<'a, 'b> {
                     return;
                 }
             }
+        } else if !self.pointers_box_point_collected.insert(p) {
+            return;
         }
         let terminal = self.map.dereference_without_find_mut(p);
         if terminal.box_point == BoxPoint::NotSure {
@@ -1822,7 +1828,7 @@ impl<'a, 'b> Env<'a, 'b> {
         let is_union = normal_len > 1;
         if is_union {
             if let Some((p, union_index, field)) = parent_of_p {
-                divergent_stopper = Some(DivergentStopper::Union {
+                divergent_stopper = Some(DivergentStopper {
                     p,
                     union_index,
                     field,
@@ -1834,14 +1840,15 @@ impl<'a, 'b> Env<'a, 'b> {
                 for u in non_union_trace {
                     self.map.dereference_without_find_mut(*u).box_point = BoxPoint::Diverging;
                 }
-            } else if let DivergentStopper::Union {
-                p,
-                union_index,
-                field,
-            } = divergent_stopper.unwrap()
-            {
+            } else if direct_trace.contains(&p) {
+                let DivergentStopper {
+                    p,
+                    union_index,
+                    field,
+                } = divergent_stopper.unwrap();
                 let terminal = self.map.dereference_without_find_mut(p);
                 if let BoxPoint::Boxed(pss) = &mut terminal.box_point {
+                    debug_assert!(!matches!(union_index, TypeId::Intrinsic(_)));
                     pss.get_mut(&union_index).unwrap()[field as usize] = Some(true);
                 };
             }
@@ -1862,6 +1869,7 @@ impl<'a, 'b> Env<'a, 'b> {
             non_union_trace
         };
         trace_map.insert(p);
+        direct_trace.insert(p);
         for (id, ts) in type_map {
             match id {
                 TypeId::UserDefined(_) | TypeId::Function(_) => {
@@ -1871,6 +1879,7 @@ impl<'a, 'b> Env<'a, 'b> {
                             Some((p, id, j as u32)),
                             trace_map,
                             non_union_trace,
+                            direct_trace,
                             divergent_stopper,
                         );
                     }
@@ -1882,25 +1891,23 @@ impl<'a, 'b> Env<'a, 'b> {
                             Some((p, id, j as u32)),
                             trace_map,
                             non_union_trace,
-                            Some(DivergentStopper::Indirect),
+                            &mut Default::default(),
+                            None,
                         );
                     }
                 }
-                TypeId::Intrinsic(_) => {
+                TypeId::Intrinsic(IntrinsicTypeTag::Fn) => {
                     for (j, t) in ts.into_iter().enumerate() {
-                        self.collect_box_points_aux(
-                            t,
-                            Some((p, id, j as u32)),
-                            trace_map,
-                            &mut Vec::new(),
-                            Some(DivergentStopper::Indirect),
-                        );
-                        #[cfg(debug_assertions)]
-                        if let BoxPoint::Boxed(b) = &self.map.dereference_without_find(p).box_point
+                        if let BoxPoint::Boxed(b) =
+                            &mut self.map.dereference_without_find_mut(p).box_point
                         {
-                            assert!(b[&id][j].is_some())
+                            b.get_mut(&id).unwrap()[j] = Some(false);
                         }
+                        self.collect_box_points(t);
                     }
+                }
+                _ => {
+                    debug_assert!(ts.is_empty());
                 }
             }
         }
@@ -1908,6 +1915,7 @@ impl<'a, 'b> Env<'a, 'b> {
             non_union_trace.pop().unwrap();
         }
         trace_map.remove(&p);
+        direct_trace.remove(&p);
         if let Some((p, i, j)) = parent_of_p {
             let t = self.map.dereference_without_find_mut(p);
             if let BoxPoint::Boxed(b) = &mut t.box_point {
@@ -1965,13 +1973,10 @@ impl Display for GlobalVariableId {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum DivergentStopper {
-    Indirect,
-    Union {
-        p: TypePointer,
-        union_index: TypeId,
-        field: u32,
-    },
+struct DivergentStopper {
+    p: TypePointer,
+    union_index: TypeId,
+    field: u32,
 }
 
 impl From<LocalVariable> for VariableId {
