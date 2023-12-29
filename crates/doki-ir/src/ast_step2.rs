@@ -9,10 +9,7 @@ pub use self::local_variable::{LocalVariable, LocalVariableCollector};
 use self::type_converter::ConverterCollector;
 pub use self::type_converter::{ConvertOp, ConvertOpRef};
 use self::type_memo::TypeMemo;
-pub use self::type_memo::{
-    DisplayTypeWithEnv, DisplayTypeWithEnvStruct, DisplayTypeWithEnvStructOption, Type, TypeInner,
-    TypeUnit,
-};
+pub use self::type_memo::{DisplayTypeWithEnvStruct, DisplayTypeWithEnvStructOption, Type};
 use self::union_find::UnionFind;
 use crate::ast_step1::{
     self, BoxPoint, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
