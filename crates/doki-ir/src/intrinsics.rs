@@ -45,6 +45,7 @@ pub enum IntrinsicVariable {
     WriteF64,
     F64StrLen,
     SqrtF64,
+    Exit,
 }
 
 impl Display for IntrinsicVariable {
@@ -63,7 +64,7 @@ impl IntrinsicVariable {
             Mut => Some(IntrinsicTypeTag::Mut),
             Malloc | Stdout | Stdin => Some(IntrinsicTypeTag::Ptr),
             LoadU8 | I64ToU8 | BitAndU8 | BitOrU8 | RightShiftU8 => Some(IntrinsicTypeTag::U8),
-            GetMut => None,
+            GetMut | Exit => None,
             LoadF64 | PlusF64 | MinusF64 | DivF64 | LeF64 | LtF64 | MultiF64 | SqrtF64 => {
                 Some(IntrinsicTypeTag::F64)
             }
@@ -105,6 +106,7 @@ impl IntrinsicVariable {
                     vec![t],
                 )
             }
+            Exit => (),
             _ => {
                 let ret_type = self.runtime_return_type().unwrap();
                 type_map.insert_normal(t, TypeId::Intrinsic(ret_type), Vec::new());
@@ -129,7 +131,7 @@ impl IntrinsicVariable {
             EqU8 | BitAndU8 | BitOrU8 => vec![U8, U8],
             RightShiftU8 => vec![U8, I64],
             Write => vec![PTR, I64, I64],
-            Malloc | I64ToU8 | GetChar => vec![I64],
+            Malloc | I64ToU8 | GetChar | Exit => vec![I64],
             U8ToI64 => vec![U8],
             Mut => vec![None],
             SetMut => vec![MUT, None],

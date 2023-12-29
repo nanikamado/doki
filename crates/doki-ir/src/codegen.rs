@@ -482,6 +482,7 @@ impl DisplayWithEnv for PrimitiveDefPrint<'_> {
             ),
             F64StrLen => write!(f, "return snprintf(NULL,0,_1,_0)+1;"),
             SqrtF64 => write!(f, "return sqrt(_0);"),
+            Exit => write!(f, "exit(_0);"),
         }
     }
 }

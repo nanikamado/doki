@@ -45,6 +45,7 @@ impl IntrinsicVariable {
             WriteF64 => "intrinsic_write_f64",
             F64StrLen => "intrinsic_f64_str_len",
             SqrtF64 => "intrinsic_sqrt_f64",
+            Exit => "intrinsic_exit",
         }
     }
 }
