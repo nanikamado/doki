@@ -299,11 +299,16 @@ impl PaddedTypeMap {
         &self,
         f: &mut impl std::fmt::Write,
         p: TypePointer,
+        boxed: bool,
         visited_pointers: &FxHashSet<TypePointer>,
     ) -> Result<(), std::fmt::Error> {
         let mut visited_pointers = visited_pointers.clone();
         if visited_pointers.contains(&p) {
-            return write!(f, r#"{{p:"{p}",type:rec}}"#);
+            return write!(
+                f,
+                r#"{{p:"{p}",type:rec{}}}"#,
+                if boxed { ",boxed:true" } else { "" }
+            );
         } else {
             visited_pointers.insert(p);
         }
@@ -313,20 +318,59 @@ impl PaddedTypeMap {
                 write!(
                     f,
                     r#"pointer:{}}}"#,
-                    JsonDebugRec(self, *p2, &visited_pointers)
+                    JsonDebugRec {
+                        map: self,
+                        p: *p2,
+                        visited_pointers: &visited_pointers,
+                        boxed
+                    }
                 )
             }
             Node::Terminal(t) => {
-                let m = t.type_map.iter().format_with(",", |(id, ps), f| {
-                    f(&format_args!(
-                        r#"{id}:[{}]"#,
-                        ps.iter().format_with(",", |p, f| f(&JsonDebugRec(
-                            self,
-                            *p,
-                            &visited_pointers
-                        )))
-                    ))
-                });
+                write!(f, r#"type_map:{{"#)?;
+                match &t.box_point {
+                    BoxPoint::NotSure => {
+                        self.json_debug_type_map(f, &t.type_map, &visited_pointers)?;
+                        if !t.type_map.is_empty() {
+                            write!(f, ",")?;
+                        }
+                        write!(f, r#"box_point:"not sure""#)?;
+                    }
+                    BoxPoint::Diverging => {
+                        self.json_debug_type_map(f, &t.type_map, &visited_pointers)?;
+                        assert!(!t.type_map.is_empty());
+                        write!(f, r#",box_point:"diverged""#)?;
+                    }
+                    BoxPoint::Boxed(box_point) => {
+                        let m = t.type_map.iter().zip_eq(box_point).format_with(
+                            ",",
+                            |((id, ps), (id2, box_point)), f| {
+                                assert_eq!(id, id2);
+                                f(&format_args!(
+                                    r#"{id}:[{}]"#,
+                                    ps.iter().zip_eq(box_point).format_with(
+                                        ",",
+                                        |(p, boxed), f| {
+                                            f(&JsonDebugRec {
+                                                map: self,
+                                                p: *p,
+                                                visited_pointers: &visited_pointers,
+                                                boxed: boxed.unwrap(),
+                                            })
+                                        }
+                                    )
+                                ))
+                            },
+                        );
+                        write!(f, "{m}")?;
+                    }
+                }
+                let boxed_s = if boxed {
+                    assert!(!t.type_map.is_empty());
+                    ",boxed:true"
+                } else {
+                    ""
+                };
                 let fixed = if t.fixed {
                     if t.type_map.is_empty() {
                         "fixed:true"
@@ -336,24 +380,47 @@ impl PaddedTypeMap {
                 } else {
                     ""
                 };
-                write!(f, r#"type_map:{{{m}{fixed}}}}}"#)
+                write!(f, r#"{boxed_s}{fixed}}}}}"#)
             }
             Node::Null => write!(f, r#"type:null}}"#),
         }
     }
+
+    #[cfg(debug_assertions)]
+    fn json_debug_type_map(
+        &self,
+        f: &mut impl std::fmt::Write,
+        type_map: &BTreeMap<TypeId, Vec<TypePointer>>,
+        visited_pointers: &FxHashSet<TypePointer>,
+    ) -> Result<(), std::fmt::Error> {
+        let m = type_map.iter().format_with(",", |(id, ps), f| {
+            f(&format_args!(
+                r#"{id}:[{}]"#,
+                ps.iter().format_with(",", |p, f| f(&JsonDebugRec {
+                    map: self,
+                    p: *p,
+                    visited_pointers,
+                    boxed: false
+                }))
+            ))
+        });
+        write!(f, "{m}")
+    }
 }
 
 #[cfg(debug_assertions)]
-struct JsonDebugRec<'a>(
-    pub &'a PaddedTypeMap,
-    pub TypePointer,
-    pub &'a FxHashSet<TypePointer>,
-);
+struct JsonDebugRec<'a> {
+    pub map: &'a PaddedTypeMap,
+    pub p: TypePointer,
+    pub visited_pointers: &'a FxHashSet<TypePointer>,
+    pub boxed: bool,
+}
 
 #[cfg(debug_assertions)]
 impl Display for JsonDebugRec<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.json_debug(f, self.1, self.2)
+        self.map
+            .json_debug(f, self.p, self.boxed, self.visited_pointers)
     }
 }
 
@@ -363,7 +430,7 @@ pub struct JsonDebug<'a>(pub &'a PaddedTypeMap, pub TypePointer);
 #[cfg(debug_assertions)]
 impl Display for JsonDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.json_debug(f, self.1, &FxHashSet::default())
+        self.0.json_debug(f, self.1, false, &FxHashSet::default())
     }
 }
 
@@ -464,7 +531,7 @@ impl Display for TypeId {
         match self {
             TypeId::UserDefined(a) => write!(f, "{a}"),
             TypeId::Intrinsic(a) => write!(f, "{a:?}"),
-            TypeId::Function(a) => write!(f, "fn_{a}"),
+            TypeId::Function(a) => write!(f, "{a}"),
         }
     }
 }
