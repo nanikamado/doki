@@ -6,7 +6,6 @@ pub use self::padded_type_map::{BoxPoint, PaddedTypeMap, ReplaceMap, TypeId, Typ
 use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariable};
 use crate::util::scc;
 use itertools::Itertools;
-use owo_colors::OwoColorize;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::{Debug, Display};
 use std::mem;
@@ -99,13 +98,10 @@ pub enum BasicFunction {
     },
 }
 
-struct TypeInfEnv<'a> {
+struct TypeInfEnv {
     type_map: PaddedTypeMap,
-    // Type pointers that can be replicated, but will be unreplicatable after fixed
     unreplicatable_pointers: FxHashMap<GlobalVariable, Vec<TypePointer>>,
     local_variable_types: LocalVariableTypes,
-    global_variables_before_type_inf: FxHashMap<GlobalVariable, VariableDecl<'a>>,
-    global_variables: Vec<VariableDecl<'a>>,
     global_variable_types: FxHashMap<GlobalVariable, TypePointer>,
     field_len: Vec<usize>,
     used_local_variables: FxHashSet<LocalVariable>,
@@ -116,24 +112,7 @@ struct TypeInfEnv<'a> {
     current_scc_id: u32,
 }
 
-impl TypeInfEnv<'_> {
-    fn get_type_global(&mut self, decl_id: GlobalVariable) {
-        let mut d = self
-            .global_variables_before_type_inf
-            .remove(&decl_id)
-            .unwrap();
-        let unfixed_unreplicatable_pointers_tmp =
-            std::mem::take(&mut self.unfixed_unreplicatable_pointers_of_current_scc);
-        self.block(&mut d.value, true);
-        let unfixed_unreplicatable_pointers = std::mem::replace(
-            &mut self.unfixed_unreplicatable_pointers_of_current_scc,
-            unfixed_unreplicatable_pointers_tmp,
-        );
-        self.unreplicatable_pointers
-            .insert(decl_id, unfixed_unreplicatable_pointers);
-        self.global_variables.push(d);
-    }
-
+impl TypeInfEnv {
     fn block(&mut self, block: &mut Block, outside_of_fn: bool) {
         for i in &mut block.instructions {
             match i {
@@ -218,6 +197,7 @@ impl TypeInfEnv<'_> {
                                     self.unreplicatable_pointers.get(decl_id).unwrap();
                                 let v_cloned = self.type_map.clone_pointer(p, replace_map);
                                 if replace_map.len() >= 100 {
+                                    use owo_colors::OwoColorize;
                                     log::info!(
                                         "     {} skipping polymorphism because type is too big",
                                         "Warning".yellow().bold()
@@ -580,16 +560,14 @@ impl<'a> Env<'a> {
         let mut scc = FxHashMap::default();
         for (i, c) in scc_v.iter().enumerate() {
             for v in c {
-                scc.insert(*v, i as u32);
+                scc.insert(*v, i as u32 + 1);
             }
         }
         let mut env = TypeInfEnv {
             type_map: self.type_map,
             unreplicatable_pointers: Default::default(),
             local_variable_types: self.local_variable_types,
-            global_variables_before_type_inf: self.global_variables,
             global_variable_types: Default::default(),
-            global_variables: Default::default(),
             field_len: self.field_len,
             used_local_variables: Default::default(),
             defined_local_variables: Default::default(),
@@ -598,22 +576,34 @@ impl<'a> Env<'a> {
             scc,
             current_scc_id: 0,
         };
+        let mut variable_decls = Vec::with_capacity(self.global_variables.len());
         for c in scc_v.into_iter().rev() {
             env.current_scc_id = env.scc[&c[0]];
             for v in &c {
-                let ret = env.global_variables_before_type_inf[v].ret;
+                let ret = self.global_variables[v].ret;
                 let t = env.local_variable_types.get(ret);
                 env.global_variable_types.insert(*v, t);
             }
-            for v in c {
-                env.get_type_global(v);
+            for &decl_id in &c {
+                let mut d = self.global_variables.remove(&decl_id).unwrap();
+                let unfixed_unreplicatable_pointers_tmp =
+                    std::mem::take(&mut env.unfixed_unreplicatable_pointers_of_current_scc);
+                env.block(&mut d.value, true);
+                let unfixed_unreplicatable_pointers = std::mem::replace(
+                    &mut env.unfixed_unreplicatable_pointers_of_current_scc,
+                    unfixed_unreplicatable_pointers_tmp,
+                );
+                env.unreplicatable_pointers
+                    .insert(decl_id, unfixed_unreplicatable_pointers);
+                variable_decls.push(d);
             }
         }
-        env.block(&mut entry_block, true);
+        env.current_scc_id = 0;
+        env.block(&mut entry_block, false);
         let type_map = env.type_map;
         let local_variable_types_old = env.local_variable_types;
         Ast {
-            variable_decls: env.global_variables,
+            variable_decls,
             entry_block,
             global_variable_for_entry_block,
             local_variable_types: local_variable_types_old,
