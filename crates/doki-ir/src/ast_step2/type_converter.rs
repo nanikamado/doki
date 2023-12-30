@@ -25,8 +25,9 @@ pub enum ConvertOp {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConvertOpRef {
     None,
-    Ref(CType),
+    RemainRef(CType),
     AddRef(CType),
+    Deref,
 }
 
 impl ConvertOpRef {
@@ -171,7 +172,7 @@ impl ConverterCollector {
                 (SingleOrUnion::Union, SingleOrUnion::Union) => {
                     let b_t = env.map.dereference_imm(b);
                     let a_t = env.map.dereference_imm(a);
-                    match (b_t.box_point.clone(), a_t.box_point.clone()) {
+                    match (a_t.box_point.clone(), b_t.box_point.clone()) {
                         (BoxPoint::NotSure, _)
                         | (_, BoxPoint::NotSure)
                         | (BoxPoint::Diverging, _)
@@ -190,7 +191,7 @@ impl ConverterCollector {
                                             args.iter()
                                                 .copied()
                                                 .zip_eq(
-                                                    a_box_point[type_id].iter().map(|a| a.unwrap()),
+                                                    b_box_point[type_id].iter().map(|a| a.unwrap()),
                                                 )
                                                 .collect_vec(),
                                         ),
@@ -210,15 +211,15 @@ impl ConverterCollector {
                                         *k,
                                         v.iter()
                                             .copied()
-                                            .zip_eq(b_box_point[k].iter().map(|a| a.unwrap()))
+                                            .zip_eq(a_box_point[k].iter().map(|a| a.unwrap()))
                                             .collect_vec(),
                                     )
                                 })
                                 .collect_vec()
                                 .into_iter()
-                                .map(|(type_id, args)| {
+                                .map(|(type_id, a_args)| {
                                     let (b_tag, b_args) = &b_t[&type_id];
-                                    let convert_op = args
+                                    let convert_op = a_args
                                         .iter()
                                         .zip(b_args)
                                         .map(|(a, b)| self.add_aux(*a, *b, env))
@@ -259,8 +260,8 @@ impl ConverterCollector {
     ) -> (u32, ConvertOpRef) {
         let c = self.add(a, b, env);
         let r = match (a_boxed, b_boxed) {
-            (true, true) => ConvertOpRef::Ref(env.c_type(PointerForCType::from(b))),
-            (true, false) => panic!(),
+            (true, true) => ConvertOpRef::RemainRef(env.c_type(PointerForCType::from(b))),
+            (true, false) => ConvertOpRef::Deref,
             (false, true) => ConvertOpRef::AddRef(env.c_type(PointerForCType::from(b))),
             (false, false) => ConvertOpRef::None,
         };

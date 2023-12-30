@@ -380,10 +380,11 @@ static {0} init_{1}(void){{\
                         if *c == 0 {
                             match r {
                                 ConvertOpRef::None => f(&format_args!("{param}._{i}")),
-                                ConvertOpRef::Ref(t) => f(&format_args!(
+                                ConvertOpRef::RemainRef(t) => f(&format_args!(
                                     "ref_{}(*{param}._{i})",
                                     env.refed_types[&t.i]
                                 )),
+                                ConvertOpRef::Deref => f(&format_args!("*{param}._{i}")),
                                 ConvertOpRef::AddRef(t) => match env.refed_types.get(&t.i) {
                                     Some(t) => f(&format_args!("ref_{}({param}._{i})", t)),
                                     _ => f(&format_args!("/*u={t:?}*/ref_none",)),
@@ -394,7 +395,10 @@ static {0} init_{1}(void){{\
                                 ConvertOpRef::None => {
                                     f(&format_args!("converter_{}({param}._{i})", c))
                                 }
-                                ConvertOpRef::Ref(t) => f(&format_args!(
+                                ConvertOpRef::Deref => {
+                                    f(&format_args!("converter_{}(*{param}._{i})", c))
+                                }
+                                ConvertOpRef::RemainRef(t) => f(&format_args!(
                                     "ref_{}(converter_{}(*{param}._{i}))",
                                     env.refed_types[&t.i], c
                                 )),
