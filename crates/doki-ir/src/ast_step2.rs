@@ -1745,17 +1745,6 @@ impl<'a, 'b> Env<'a, 'b> {
         }
     }
 
-    pub fn collect_box_points(&mut self, p: TypePointer) {
-        self.collect_box_points_aux(
-            p,
-            None,
-            &mut Default::default(),
-            &mut Vec::with_capacity(5),
-            &mut Default::default(),
-            None,
-        );
-    }
-
     fn collect_pointers(&mut self, p: TypePointer, pointers: &mut FxHashMap<PointerForCType, u32>) {
         let p = self.map.find_imm(p);
         let contains = pointers.insert(PointerForCType::from(p), 0).is_some();
@@ -1786,6 +1775,17 @@ impl<'a, 'b> Env<'a, 'b> {
                 );
             }
         }
+    }
+
+    pub fn collect_box_points(&mut self, p: TypePointer) {
+        self.collect_box_points_aux(
+            p,
+            None,
+            &mut Default::default(),
+            &mut Vec::with_capacity(5),
+            &mut Default::default(),
+            None,
+        );
     }
 
     fn collect_box_points_aux(
