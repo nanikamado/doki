@@ -194,32 +194,21 @@ impl TypeInfEnv {
                                 self.type_map.union(p, t);
                                 *pp = p;
                             } else {
+                                let cloned_p = self.type_map.clone_pointer(p, replace_map);
+                                self.type_map.union(t, cloned_p);
+                                *pp = t;
                                 let unreplicatables =
                                     self.unreplicatable_pointers.get(decl_id).unwrap();
-                                let v_cloned = self.type_map.clone_pointer(p, replace_map);
-                                if replace_map.len() >= 100 {
-                                    use owo_colors::OwoColorize;
-                                    log::info!(
-                                        "     {} skipping polymorphism because type is too big",
-                                        "Warning".yellow().bold()
-                                    );
-                                    replace_map.clear();
-                                    self.type_map.union(p, t);
-                                    *pp = p;
-                                } else {
-                                    self.type_map.union(t, v_cloned);
-                                    *pp = t;
-                                    let mut unfixed = unreplicatables
-                                        .iter()
-                                        .map(|p| self.type_map.clone_pointer(*p, replace_map))
-                                        .collect_vec();
-                                    if !unfixed.is_empty() {
-                                        self.unfixed_unreplicatable_pointers_in_local_variables
-                                            .insert(*v, unfixed.clone());
-                                    }
-                                    self.unfixed_unreplicatable_pointers_of_current_scc
-                                        .append(&mut unfixed);
+                                let mut unfixed = unreplicatables
+                                    .iter()
+                                    .map(|p| self.type_map.clone_pointer(*p, replace_map))
+                                    .collect_vec();
+                                if !unfixed.is_empty() {
+                                    self.unfixed_unreplicatable_pointers_in_local_variables
+                                        .insert(*v, unfixed.clone());
                                 }
+                                self.unfixed_unreplicatable_pointers_of_current_scc
+                                    .append(&mut unfixed);
                             }
                         }
                         Expr::LocalIdent(d) => {
@@ -597,6 +586,14 @@ impl<'a> Env<'a> {
                 env.unreplicatable_pointers
                     .insert(decl_id, unfixed_unreplicatable_pointers);
                 variable_decls.push(d);
+            }
+            for &decl_id in &c {
+                let p = env.global_variable_types[&decl_id];
+                let mut replace_map = ReplaceMap::default();
+                env.type_map.clone_pointer(p, &mut replace_map);
+                if replace_map.len() >= 100 {
+                    env.type_map.fix_pointer(p);
+                }
             }
         }
         env.current_scc_id = 0;
