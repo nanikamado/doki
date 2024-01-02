@@ -260,11 +260,7 @@ impl DisplayTypeWithEnv for Type {
                 }
                 if let Some(first) = normals.pop() {
                     let w = |f: &mut Formatter, id, args: &[TypeInner]| {
-                        match id {
-                            TypeId::UserDefined(i) => write!(f, "{}", env.get(i))?,
-                            TypeId::Intrinsic(i) => write!(f, "{i:?}")?,
-                            TypeId::Function(i) => writeln!(f, "Fn({i})")?,
-                        };
+                        env.print_type_id(id, f)?;
                         if !args.is_empty() {
                             write!(
                                 f,

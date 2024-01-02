@@ -3,6 +3,12 @@ print = Str d l p: intrinsic_write p d l
 println = a: let _ = print a
     in print "\n"
 
+debug = a:
+    let _ = intrinsic_debug a
+    in print "\n"
+
+trace = a: let _ = debug a in a
+
 div = intrinsic_div
 plus = intrinsic_plus
 mul = intrinsic_mul

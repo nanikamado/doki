@@ -339,6 +339,14 @@ impl ConstructorNames {
     pub fn get(&self, c: ConstructorId) -> &str {
         &self.0[c.0 as usize]
     }
+
+    pub fn print_type_id(&self, id: TypeId, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match id {
+            TypeId::UserDefined(i) => write!(f, "{}", self.get(i)),
+            TypeId::Intrinsic(i) => write!(f, "{i:?}"),
+            TypeId::Function(i) => write!(f, "{i}"),
+        }
+    }
 }
 
 #[derive(Debug)]

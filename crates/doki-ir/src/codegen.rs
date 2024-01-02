@@ -1,3 +1,5 @@
+mod intrinsic_debug;
+
 use crate::ast_step1::{ConstructorId, ConstructorNames};
 use crate::ast_step2::c_type::CTypeScheme;
 use crate::ast_step2::{
@@ -273,6 +275,7 @@ static void snprintf_f64_array(array_t a, int64_t len, double l, const char* for
             }?;
             write!(f, "{{{}}}", Dis(&PrimitiveDefPrint { i: *v, arg_ts }, env))?;
         }
+        intrinsic_debug::print_debug_printers(f, &ast.printer_collector, &ast.printer_c_type, env)?;
         for c in ast.type_converter.values() {
             write!(
                 f,
@@ -467,6 +470,7 @@ impl DisplayWithEnv for PrimitiveDefPrint<'_> {
                     Dis(&t, env),
                 )
             }
+            Debug => Ok(()),
             SetMut => write!(f, "*_0 = _1;return intrinsic_unit();"),
             GetMut => write!(f, "return *_0;"),
             GetChar => write!(f, "return getchar();"),
@@ -819,6 +823,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
                         "intrinsic_{v}_{id}({})",
                         args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                     ),
+                    DebugPrint { p } => write!(fmt, "intrinsic_debug_{p}({})", Dis(&args[0], env)),
                     Construction => {
                         write!(
                             fmt,

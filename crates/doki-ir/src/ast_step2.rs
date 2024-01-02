@@ -1,10 +1,12 @@
 pub mod c_type;
+mod intrinsic_debug;
 mod local_variable;
 mod type_converter;
 mod type_memo;
 mod union_find;
 
 use self::c_type::{CTypeEnv, CTypeScheme, PointerForCType};
+pub use self::intrinsic_debug::{FieldOp, PrinterCollector};
 pub use self::local_variable::{LocalVariable, LocalVariableCollector};
 use self::type_converter::ConverterCollector;
 pub use self::type_converter::{ConvertOp, ConvertOpRef};
@@ -41,6 +43,8 @@ pub struct Ast<'a> {
     pub constructor_names: ConstructorNames,
     pub local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
     pub used_intrinsic_variables: Collector<(IntrinsicVariable, Vec<CType>, CType)>,
+    pub printer_collector: PrinterCollector,
+    pub printer_c_type: FxHashMap<TypePointer, CType>,
     pub c_type_definitions: Vec<CTypeScheme<CType>>,
     pub codegen_options: CodegenOptions,
     pub type_converter: FxHashMap<(TypePointer, TypePointer), TypeConverter>,
@@ -159,6 +163,7 @@ pub enum Expr {
 #[derive(Debug, PartialEq, Clone, Copy, Eq)]
 pub enum BasicFunction {
     Intrinsic { v: IntrinsicVariable, id: u32 },
+    DebugPrint { p: TypePointer },
     Construction,
     FieldAccessor { field: u32, boxed: bool },
 }
@@ -235,6 +240,13 @@ impl<'a> Ast<'a> {
                 )
             })
             .collect();
+        let printer_c_type = memo
+            .printer_collector
+            .inner()
+            .clone()
+            .keys()
+            .map(|p| (*p, memo.c_type(PointerForCType::from(*p))))
+            .collect();
         let functions = memo
             .functions
             .into_values()
@@ -277,6 +289,8 @@ impl<'a> Ast<'a> {
             c_type_definitions: memo.c_type_definitions,
             codegen_options: ast.codegen_options,
             type_converter,
+            printer_collector: memo.printer_collector,
+            printer_c_type,
         }
     }
 }
@@ -312,6 +326,7 @@ struct Env<'a, 'b> {
     job_stack: Vec<Job>,
     fn_signatures_for_dummy_fns: FxHashMap<FxLambdaId, (LocalVariable, Vec<LocalVariable>)>,
     pointers_box_point_collected: FxHashSet<TypePointer>,
+    printer_collector: PrinterCollector,
 }
 
 struct Job {
@@ -402,6 +417,7 @@ impl<'a, 'b> Env<'a, 'b> {
             job_stack: Vec::with_capacity(20),
             fn_signatures_for_dummy_fns: Default::default(),
             pointers_box_point_collected: FxHashSet::default(),
+            printer_collector: Default::default(),
         }
     }
 
@@ -1173,6 +1189,27 @@ impl<'a, 'b> Env<'a, 'b> {
                         },
                     },
                 )
+            }
+            ast_step1::Expr::BasicCall {
+                args,
+                id: ast_step1::BasicFunction::Intrinsic(IntrinsicVariable::Debug),
+            } => {
+                let args = args
+                    .iter()
+                    .map(|a| self.get_defined_local_variable(*a, root_t))
+                    .collect_vec();
+                let p = self
+                    .local_variable_collector
+                    .get_type(args[0])
+                    .type_pointer
+                    .unwrap();
+                let p = self.map.find(p);
+                self.printer_collector.add(p, &mut self.map);
+                let e = BasicCall {
+                    args,
+                    id: BasicFunction::DebugPrint { p },
+                };
+                basic_block_env.assign(v, e);
             }
             ast_step1::Expr::BasicCall {
                 args,

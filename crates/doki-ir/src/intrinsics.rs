@@ -46,6 +46,7 @@ pub enum IntrinsicVariable {
     F64StrLen,
     SqrtF64,
     Exit,
+    Debug,
 }
 
 impl Display for IntrinsicVariable {
@@ -60,7 +61,7 @@ impl IntrinsicVariable {
         match self {
             Minus | Plus | Percent | Multi | Div | Lt | Eq | EqU8 | EqF64 | GetChar | U8ToI64
             | BitAnd | BitOr | RightShift | ReadFile | F64StrLen => Some(IntrinsicTypeTag::I64),
-            Write | SetMut | StoreU8 | StoreF64 | WriteF64 => Some(IntrinsicTypeTag::Unit),
+            Write | SetMut | StoreU8 | StoreF64 | WriteF64 | Debug => Some(IntrinsicTypeTag::Unit),
             Mut => Some(IntrinsicTypeTag::Mut),
             Malloc | Stdout | Stdin => Some(IntrinsicTypeTag::Ptr),
             LoadU8 | I64ToU8 | BitAndU8 | BitOrU8 | RightShiftU8 => Some(IntrinsicTypeTag::U8),
@@ -133,7 +134,7 @@ impl IntrinsicVariable {
             Write => vec![PTR, I64, I64],
             Malloc | I64ToU8 | GetChar | Exit => vec![I64],
             U8ToI64 => vec![U8],
-            Mut => vec![None],
+            Mut | Debug => vec![None],
             SetMut => vec![MUT, None],
             GetMut => vec![MUT],
             LoadU8 | LoadF64 => vec![PTR, I64],
