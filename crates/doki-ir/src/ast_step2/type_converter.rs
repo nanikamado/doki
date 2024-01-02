@@ -230,17 +230,7 @@ impl ConverterCollector {
                                     }
                                 })
                                 .collect_vec();
-                            if ops.iter().enumerate().all(|(old_tag, op)| {
-                                old_tag as u32 == op.new_tag
-                                    && op
-                                        .convert_op
-                                        .iter()
-                                        .all(|(a, p)| *a == 0 && !p.is_add_ref())
-                            }) {
-                                ConvertOp::Id
-                            } else {
-                                ConvertOp::ReTag(ops)
-                            }
+                            ConvertOp::ReTag(ops)
                         }
                     }
                 }

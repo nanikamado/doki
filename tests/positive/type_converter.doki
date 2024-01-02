@@ -1,0 +1,23 @@
+import "../../library/prelude.doki"
+
+data A 0
+data B 0
+data C 0
+
+to_string = a:
+    match a with
+        A => "A",
+        B => "B",
+        C => "C",
+    end
+
+a = match 1 with
+        0 => A,
+        _ => C,
+    end
+
+main = _:
+    println (to_string (match 0 with
+        0 => a,
+        _ => B,
+    end))

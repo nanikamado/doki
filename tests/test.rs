@@ -387,3 +387,9 @@ fn nbody() {
         "-0.169075164\n-0.169059907\n",
     );
 }
+
+#[test]
+#[ignore]
+fn type_converter() {
+    positive_without_stdin("type_converter.doki", "C\n");
+}
