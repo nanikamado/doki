@@ -1,11 +1,5 @@
 import "../../../library/prelude.doki"
 
-join = l: sep: match l with
-        Nil => "",
-        Cons h Nil => h,
-        Cons h t => PrintAnd h (PrintAnd sep (join t sep)),
-    end
-
 char_list_to_num_hex_aux = acc: s:
     match s with
         Nil => acc,
@@ -71,8 +65,11 @@ ok_flat_map = a: f: match a with
 
 right_shift_u8 = intrinsic_right_shift_u8
 right_shift = intrinsic_right_shift
+left_shift_u8 = intrinsic_left_shift_u8
+left_shift = intrinsic_left_shift
 bitwise_and = intrinsic_bitwise_and
 bitwise_or = intrinsic_bitwise_or
+bitwise_and_u8 = intrinsic_bitwise_and_u8
 bitwise_or_u8 = intrinsic_bitwise_or_u8
 i64_to_u8 = intrinsic_i64_to_u8
 
@@ -81,6 +78,15 @@ i64_to_u8 = intrinsic_i64_to_u8
 parser_map = a: f: i:
     match a i with
         Ok (Cons a i) => Ok (Cons (f a) i),
+        Err e => Err e,
+    end
+
+parser_filter = a: f: i:
+    match a i with
+        Ok (Cons a i) => match f a with
+                True => Ok (Cons a i),
+                False => Err Unit,
+            end,
         Err e => Err e,
     end
 
@@ -198,13 +204,15 @@ repeated_with_count = p: n: i: match n with
 then_ignore = a: b: parser_map (then a b) (Cons a _: a)
 ignore_then = a: b: parser_map (then a b) (Cons _ a: a)
 
-whitespace = repeated (one_of " \n\r\t")
+whitespace = repeated (one_of " \t")
 
 padded = p: ignore_then whitespace (then_ignore p whitespace)
 
 delimited_by = start: p: _end: ignore_then start (then_ignore p _end)
 
 separated_by = p: separator: alt (then p (repeated (ignore_then separator p))) (i: Ok (Cons Nil i))
+
+separated_by_at_least_one = p: separator: then p (repeated (ignore_then separator p))
 
 and_lazy = a: b: match a with
         True => b Unit,
@@ -247,22 +255,59 @@ parser_not = p: i: match p i with
 
 // =================== Date Parser =====================
 
+days = Cons 31
+    (Cons 0
+    (Cons 31
+    (Cons 30
+    (Cons 31
+    (Cons 30
+    (Cons 31
+    (Cons 31
+    (Cons 30
+    (Cons 31
+    (Cons 30
+    (Cons 31
+    Nil)))))))))))
+
+is_leap_year = y:
+    and_lazy (eq (rem y 4) 0)
+    (_: or_lazy (not (eq (rem y 100) 0))
+    (_: eq (rem y 400) 0))
+
+is_valid_date = y: m: d:
+    match m with
+        2 => match is_leap_year y with
+                True => and (le 1 d) (le d 29),
+                False => and (le 1 d) (le d 28),
+            end,
+        _ => and_lazy (and (le 1 m) (le m 12))
+            (_: let max_day = list_nth days (minus m 1)
+                in and (le 1 d) (le d max_day)),
+    end
+
+is_valid_time = h: m: s:
+    and_lazy (and (le 0 h) (le h 23))
+    (_: and_lazy (and (le 0 m) (le m 59))
+    (_: and (le 0 s) (le s 59)))
+
 data DateTime 2
 
 date_parser = i:
-    let d = repeated_with_count digit
+    let d = c: parser_map (parser_slice (repeated_with_count digit c)) str_to_num
     in let date = then (d 4)
-        (then (just "-")
+        (ignore_then (just "-")
         (then (d 2)
-        (then (just "-")
+        (ignore_then (just "-")
         (d 2))))
+    in let date = parser_filter date (Cons y (Cons m d): is_valid_date y m d)
     in let time = then (d 2)
-        (then (just ":")
+        (ignore_then (just ":")
         (then (d 2)
-        (then (just ":")
-        (then (d 2)
+        (ignore_then (just ":")
+        (then_ignore (d 2)
         (or_not (then (just ".")
         num))))))
+    in let time = parser_filter time (Cons h (Cons m s): is_valid_time h m s)
     in let add_t = t: p: parser_map (parser_slice p) (DateTime t)
     in let date_time = then date
             (then (one_of "Tt ")
@@ -283,43 +328,56 @@ date_parser = i:
 
 // =================== Num Parser ===================
 
-num_with_underscore = s:
-    let num = then num (repeated (ignore_then (just "_") (repeated digit)))
-    in parser_map num list_flatten s
+num_with_underscore = prefix: digit:
+    let num = parser_map (separated_by_at_least_one (repeated_at_least_one digit) (just "_")) list_flatten
+    in ignore_then (just prefix) num
+
+non_zero_digit = s: filter any (c: and (le_u8 '1' c) (le_u8 c '9')) s
 
 toml_num = s:
-    let num = parser_map num_with_underscore char_list_to_num
-    in let hex = repeated_at_least_one digit_hex
-    in let hex = then hex (repeated (ignore_then (just "_") (repeated digit_hex)))
-    in let hex = parser_map (ignore_then (just "0x") hex) (a: char_list_to_num_hex (list_flatten a))
-    in let oct = repeated_at_least_one digit_oct
-    in let oct = then oct (repeated (ignore_then (just "_") (repeated digit_oct)))
-    in let oct = parser_map (ignore_then (just "0o") oct) (a: char_list_to_num_oct (list_flatten a))
-    in let bin = repeated_at_least_one digit_bin
-    in let bin = then bin (repeated (ignore_then (just "_") (repeated digit_bin)))
-    in let bin = parser_map (ignore_then (just "0b") bin) (a: char_list_to_num_bin (list_flatten a))
-    in let num = alt
-        hex
+    let num = then
+        non_zero_digit
+        (parser_map
+            (then
+                (repeated digit)
+                (repeated (ignore_then (just "_") (repeated_at_least_one digit))))
+            list_flatten)
+    in let num = parser_map num char_list_to_num
+    in let hex = parser_map (num_with_underscore "0x" digit_hex) char_list_to_num_hex
+    in let oct = parser_map (num_with_underscore "0o" digit_oct) char_list_to_num_oct
+    in let bin = parser_map (num_with_underscore "0b" digit_bin) char_list_to_num_bin
+    in let num =
+        alt (ignore_then (or_not (just "+")) num)
+        (alt (ignore_then (just "-") (parser_map num (minus 0)))
+        (alt hex
         (alt oct
         (alt bin
-        (alt (ignore_then (or_not (just "+")) num)
-        (ignore_then (just "-") (parser_map num (minus 0))))))
+        (parser_map (then (or_not (one_of "+-")) (just "0")) (_: 0))))))
     in num s
 
 float = s:
-    let num = parser_slice num
+    let head_num = parser_map
+        (then
+            (parser_slice (then non_zero_digit (repeated digit)))
+            (repeated (ignore_then (just "_") (parser_slice num))))
+        concat_strings
+    in let head_num = alt head_num (just "0")
+    in let num_head = alt
+        (ignore_then (or_not (just "+")) head_num)
+        (parser_map (ignore_then (just "-") head_num) (append_str "-"))
+    in let num = parser_slice num
     in let num = parser_map
         (then num (repeated (ignore_then (just "_") num)))
         concat_strings
+    in let point_num = parser_map (ignore_then (just ".") num) (append_str ".")
     in let signed_num = alt
         (ignore_then (or_not (just "+")) num)
         (parser_map (ignore_then (just "-") num) (append_str "-"))
-    in let point_num = parser_map (ignore_then (just ".") num) (append_str ".")
     in let exponent = parser_map (ignore_then (alt (just "e") (just "E")) signed_num) (append_str "e")
     in let or_empty = p: parser_map (or_not p) (a: unwrap_or a "")
     in let float = parser_map
         (then
-            signed_num
+            num_head
             (alt
                 (parser_map
                     (then point_num (or_empty exponent))
@@ -334,6 +392,13 @@ float = s:
 // =================== Parser ===================
 
 data Num 1
+data TomlArray 1
+data StaticArray 1
+data Open 0
+data SemiOpen 0
+data Dotted 0
+data Closed 0
+data Table 2
 data Float 1
 data String 1
 data Define 2
@@ -371,70 +436,108 @@ i64_to_utf8_list = c:
             (Cons (tail_bytes c 0) Nil))),
     end
 
+validate_utf8 = head_filter: s:
+    let c1 = parser_map (filter any head_filter) intrinsic_u8_to_i64
+    in let tail = parser_map
+        (filter any (c: eq_u8 (bitwise_and_u8 c 0b11000000u8) 0b10000000u8))
+        (c: intrinsic_u8_to_i64 (bitwise_and_u8 c 0b00111111u8))
+    in let tails = a: parser_map
+        (repeated_with_count tail a)
+        (cs: fold 0 cs (acc: c: plus (left_shift acc 6) c))
+    in let cn = n: mask: tag: parser_map
+        (then
+            (filter any (c: eq_u8 (bitwise_and_u8 c mask) tag))
+            (tails n))
+        (Cons c b: plus
+            (left_shift
+                (intrinsic_u8_to_i64 (bitwise_and_u8 c (intrinsic_bitwise_not_u8 mask)))
+                (mul 6 n))
+            b)
+    in let p = alt c1
+        (alt (cn 1 0b11100000u8 0b11000000u8)
+        (alt (cn 2 0b11110000u8 0b11100000u8)
+        (cn 3 0b11111000u8 0b11110000u8)))
+    in filter p (a: not (and (le 0xD800 a) (le a 0xDFFF))) s
+
 concat_strings_to_array = ss: fold (array_new Unit) ss array_append
 
 concat_strings = ss: array_to_str (concat_strings_to_array ss)
 
-string = s:
-    let unicode_escape_4 =
-        ignore_then
-            (just "u")
-            (parser_map
-                (repeated_with_count digit_hex 4)
-                (a: i64_to_utf8_list
-                    (char_list_to_num_hex a)))
-    in let unicode_escape_8 =
-        ignore_then
-            (just "U")
-            (parser_map
-                (repeated_with_count digit_hex 8)
-                (a: i64_to_utf8_list
-                    (char_list_to_num_hex a)))
-    in let escape = alt (just "\\")
+new_line = s: parser_map (then (or_not (just "\r")) (just "\n")) (_: Unit) s
+
+escape = s:
+    let unicode = l:
+        parser_map
+            (filter
+                (parser_map (repeated_with_count digit_hex l) char_list_to_num_hex)
+                (a: or (le a 0xd7ff) (and (le 0xe000 a) (le a 0x10ffff))))
+            i64_to_utf8_list
+    in let unicode_escape_4 = ignore_then (just "u") (unicode 4)
+    in let unicode_escape_8 = ignore_then (just "U") (unicode 8)
+    in alt (just "\\")
         (alt (just "\"")
         (alt (parser_map (just "b") (_: "\x08"))
         (alt (parser_map (just "t") (_: "\t"))
         (alt (parser_map (just "n") (_: "\n"))
         (alt (parser_map (just "f") (_: "\x0c"))
-        (parser_map (just "r") (_: "\r")))))))
-    in let escape = alt
-        escape
+        (alt (parser_map (just "r") (_: "\r"))
         (parser_map (alt unicode_escape_4 unicode_escape_8) char_list_to_string)
-    in let is_not_multiline_content = c: or_lazy (eq_u8 c '\\')
-        (_: or_lazy (le_u8 c 8u8)
-        (_: or_lazy (eq_u8 c 0xBu8)
-        (_: or_lazy (eq_u8 c 0xCu8)
-        (_: or_lazy (and (le_u8 0xEu8 c) (le_u8 c 0x1Fu8))
-        (_: eq_u8 c 0x7Fu8)))))
-    in let is_not_string_content = c: or_lazy (eq_u8 c '"')
-        (_: or_lazy (eq_u8 c '\n')
-        (_: or_lazy (eq_u8 c '\r')
-        (_: is_not_multiline_content c)))
-    in let basic_string = parser_slice (filter any (c: not (is_not_string_content c)))
+        )))))) s
+
+is_literal_string_content = c:
+    or_lazy (and (le_u8 '(' c) (le_u8 c '~'))
+    (_: or_lazy (and (le_u8 ' ' c) (le_u8 c '&'))
+    (_: eq_u8 '\t' c))
+
+is_string_content = c:
+    or_lazy (and (le_u8 '#' c) (and (le_u8 c '~') (not (eq_u8 '\\' c))))
+    (_: or_lazy (or (eq_u8 ' ' c) (eq_u8 '!' c))
+    (_: eq_u8 '\t' c))
+
+is_literal_multiline_content = c:
+    or_lazy (and (le_u8 ' ' c) (le_u8 c '~'))
+    (_: or_lazy (or (eq_u8 '\n' c) (eq_u8 '\r' c))
+    (_: eq_u8 '\t' c))
+
+is_multiline_content = c:
+    or_lazy (and (le_u8 ' ' c) (and (le_u8 c '~') (not (eq_u8 '\\' c))))
+    (_: or_lazy (or (eq_u8 '\n' c) (eq_u8 '\r' c))
+    (_: eq_u8 '\t' c))
+
+short_string = s:
+    let basic_string = parser_slice (validate_utf8 is_string_content)
     in let basic_string = alt basic_string (ignore_then (just "\\") escape)
     in let basic_string = parser_map (repeated basic_string) concat_strings
     in let basic_string = delimited_by (just "\"") basic_string (just "\"")
-    in let multiline_string = parser_slice (and_is
-        (filter any (c: not (is_not_multiline_content c)))
-        (parser_not (then (just r#"""""#) (parser_not (just r#"""#)))))
+    in let literal_string = delimited_by
+        (just "'")
+        (parser_slice (repeated (validate_utf8 is_literal_string_content)))
+        (just "'")
+    in alt basic_string literal_string s
+
+long_string = s:
+    let multiline_string = parser_slice (and_is
+        (filter any is_multiline_content)
+        (parser_not (then (just r#"""""#) (alt (parser_not (just r#"""#)) (just r#"""""#)))))
     in let escape = alt escape
         (parser_map (then (repeated (one_of " \t"))
-                (then (just "\n")
-                (repeated (one_of " \t\n"))))
+                (then new_line
+                (repeated (alt (one_of " \t\n") (just "\r\n")))))
             (_: ""))
     in let multiline_string = alt multiline_string (ignore_then (just "\\") escape)
     in let multiline_string = parser_map (repeated multiline_string) concat_strings
-    in let multiline_string = delimited_by (then (just r#"""""#) (or_not (just "\n")))
+    in let multiline_string = delimited_by (then (just r#"""""#) (or_not new_line))
         multiline_string
         (just r#"""""#)
-    in let literal_string = delimited_by (just "'") (parser_slice (repeated (none_of r#"'"#))) (just "'")
     in let multi_literal_string = parser_slice (repeated (and_is
-        any
-        (parser_not (then (just "'''") (parser_not (just "'"))))))
-    in let multi_literal_string = delimited_by (then (just "'''") (or_not (just "\n")))
+        (validate_utf8 is_literal_multiline_content)
+        (parser_not (then (just "'''") (alt (parser_not (just "'")) (just "'''"))))))
+    in let multi_literal_string = delimited_by (then (just "'''") (or_not new_line))
         multi_literal_string
         (just "'''")
-    in alt multiline_string (alt basic_string (alt multi_literal_string literal_string)) s
+    in alt multiline_string multi_literal_string s
+
+string = s: alt long_string short_string s
 
 key = s: let is_ident_head = c: let c1 = and (le_u8 65u8 c) (le_u8 c 90u8)
         in let c2 = and (le_u8 97u8 c) (le_u8 c 122u8)
@@ -443,25 +546,30 @@ key = s: let is_ident_head = c: let c1 = and (le_u8 65u8 c) (le_u8 c 90u8)
     in let is_bare_key_char = c: or (is_ident_continue c) (eq_u8 45u8 c)
     in let bare_key = parser_slice (repeated_at_least_one (filter any is_bare_key_char))
     in let dot = filter any (c: eq_u8 c 46u8)
-    in separated_by (padded (alt string bare_key)) dot s
+    in separated_by (padded (alt short_string bare_key)) dot s
 
-comment = then (just "#") (repeated (none_of "\n"))
+is_comment_content = c:
+    or_lazy (and (le_u8 ' ' c) (le_u8 c '~'))
+    (_: eq_u8 '\t' c)
 
-comment_or_whitespace = repeated (alt (one_of " \n\r\t") comment)
+comment = s: then (just "#") (repeated (validate_utf8 is_comment_content)) s
+
+comment_or_whitespace = s: repeated (alt (one_of " \n\t") (alt comment (just "\r\n"))) s
+
+padded_r = p: ignore_then comment_or_whitespace (then_ignore p comment_or_whitespace)
 
 value = s:
     let string = parser_map string (a: String a)
     in let num = parser_map toml_num Num
-    in let padded_r = p: ignore_then comment_or_whitespace (then_ignore p comment_or_whitespace)
     in let list = delimited_by (just "[")
         (padded_r (separated_by value (padded_r (just ","))))
         (then (or_not (just ",")) (then comment_or_whitespace (just "]")))
-    in let list = parser_map list reverse
+    in let list = parser_map list StaticArray
     in let obj_inner = separated_by
         (then key (ignore_then (padded (just "=")) value))
         (padded (just ","))
     in let obj = delimited_by (just "{") (padded obj_inner) (just "}")
-    in let obj = parser_map obj (kvs: fold E kvs (acc: Cons k v: replace_value acc k v))
+    in let obj = parser_map obj (kvs: Table Closed (fold E kvs (acc: Cons k v: insert_value acc k v)))
     in let b_true = parser_map (just "true") (_: True)
     in let b_false = parser_map (just "false") (_: False)
     in alt string
@@ -477,7 +585,12 @@ parser = s: let equation = parser_map (then (then_ignore key (padded (just "="))
     in let base_key = parser_map (delimited_by (just "[") key (just "]")) BaseKey
     in let list_append = parser_map (delimited_by (just "[[") key (just "]]")) ListAppend
     in let pad = repeated (alt comment (one_of " \n\t"))
-    in let equations = ignore_then pad (repeated (then_ignore (alt equation (alt base_key list_append)) pad))
+    in let equations = padded_r
+        (separated_by
+            (alt equation (alt base_key list_append))
+            (then (repeated (alt (one_of " \t") comment))
+            (then new_line
+            comment_or_whitespace)))
     in equations s
 
 // =================== Construction ===================
@@ -490,27 +603,51 @@ insert = tree_insert str_cmp
 add_value_aux = key_h: key_t: obj: f:
     modify key_h obj (v: match v with
         Some a => add_value a key_t f,
-        None => fold (f None) (reverse key_t) (acc: k: insert k acc E),
+        None => fold (f None) (reverse key_t) (acc: k: Table Open (insert k acc E)),
     end)
 
 add_value = obj: key: f: match key with
         Cons key_h key_t => match obj with
-                Cons obj t => Cons (add_value_aux key_h key_t obj f) t,
-                obj => add_value_aux key_h key_t obj f,
+                TomlArray (Cons (Table Closed _) _)
+                | Table Closed _ => panic "closed table cannot be expanded",
+                TomlArray (Cons (Table s obj) t) =>
+                    TomlArray (Cons (Table s (add_value_aux key_h key_t obj f)) t),
+                StaticArray (Cons obj t) => panic "static array cannot be modified",
+                Table s obj => Table s (add_value_aux key_h key_t obj f),
             end,
         Nil => f (Some obj),
     end
 
-replace_value = obj: key: value: add_value obj key (old: value)
+insert_value = obj: key: value:
+    match key with
+        Cons key_h key_t => modify key_h obj (v: match v with
+            Some (Table (Closed | SemiOpen) a) => let _ = debug a in
+                panic "not an open table",
+            Some (Table s a) => Table s (insert_value a key_t value),
+            Some _ => panic "not a table",
+            None => fold value (reverse key_t) (acc: k: Table Dotted (insert k acc E)),
+        end),
+        Nil => panic "value already exists",
+    end
 
-replace_values = obj: ds:
-    fold obj ds (acc: Define key value: replace_value acc key value)
+insert_values = obj: ds:
+     (fold obj ds (acc: Define key value: insert_value acc key value))
 
-append_value = obj: key: value: add_value obj key (old: Cons value (unwrap_or old Nil))
+append_value = obj: key: value: add_value obj key (old:
+    match old with
+        None => TomlArray (Cons value Nil),
+        Some (StaticArray _) => panic "static array cannot be expanded",
+        Some (TomlArray l) => TomlArray (Cons value l),
+    end)
 
 collect_list_mode_acc = obj: base_key: tmp_obj: list_mode: match list_mode with
-        False => add_value obj base_key (old: replace_values (unwrap_or old E) tmp_obj),
-        True => append_value obj base_key (replace_values E tmp_obj),
+        False => add_value obj base_key (old: match old with
+                None => Table SemiOpen (insert_values E tmp_obj),
+                Some (Table Open a) => Table SemiOpen (insert_values a tmp_obj),
+                Some (Table _ _) => panic "closed table cannot be modified",
+                _ => panic "not a table",
+            end),
+        True => append_value obj base_key (Table SemiOpen (insert_values E tmp_obj)),
     end
 
 toml_to_obj_aux = Cons obj (Cons base_key (Cons tmp_obj list_mode)): line: match line with
@@ -523,7 +660,8 @@ toml_to_obj_aux = Cons obj (Cons base_key (Cons tmp_obj list_mode)): line: match
     end
 
 toml_to_obj = toml:
-    let Cons obj (Cons base_key (Cons tmp_obj list_mode)) = fold (Cons E (Cons Nil (Cons Nil False))) toml toml_to_obj_aux
+    let Cons obj (Cons base_key (Cons tmp_obj list_mode)) =
+        fold (Cons (Table Open E) (Cons Nil (Cons Nil False))) toml toml_to_obj_aux
     in collect_list_mode_acc obj base_key tmp_obj list_mode
 
 // =================== Object to String ===================
@@ -576,25 +714,31 @@ print_list = l: f: match l with
 data PrintList 1
 data WithType 2
 
-obj_to_string = obj: match obj with
+obj_to_string_with_tag = obj: match obj with
         Num n => WithType "integer" (PrintAnd "\"" (PrintAnd (i64_to_string n) "\"")),
         Float n => WithType "float" (PrintAnd "\"" (PrintAnd n "\"")),
         String s => WithType "string" (PrintStringEscaped s),
-        E | T _ _ _ _ _ => PrintTree obj,
-        Nil | Cons _ _ => PrintList (reverse obj),
+        Table _ t => PrintTree t,
+        StaticArray l => PrintList l,
+        TomlArray l => PrintList (reverse l),
         True => WithType "bool" r#""true""#,
         False => WithType "bool" r#""false""#,
         DateTime t a => WithType t (PrintAnd "\"" (PrintAnd a "\"")),
     end
 
-// obj_to_string = obj: match obj with
-//         Num n => i64_to_string n,
-//         String s => PrintStringEscaped s,
-//         E | T _ _ _ _ _ => PrintTree obj,
-//         Nil | Cons _ _ => PrintList (reverse obj),
-//         True => "true",
-//         False => "false",
-//     end
+obj_to_string_without_tag = obj: match obj with
+        Num n => i64_to_string n,
+        Float n => n,
+        String s => PrintStringEscaped s,
+        Table _ t => PrintTree t,
+        StaticArray l => PrintList l,
+        TomlArray l => PrintList (reverse l),
+        True => "true",
+        False => "false",
+        DateTime _ a => a,
+    end
+
+obj_to_string = obj_to_string_without_tag
 
 plus_u8 = a: b: intrinsic_i64_to_u8 (plus (intrinsic_u8_to_i64 a) (intrinsic_u8_to_i64 b))
 
@@ -693,11 +837,20 @@ print_fmt_ln = a: let _ = print_fmt a
 
 // =================== Main ===================
 
-main = _:
+run = _:
     let s = array_to_str (read_all Unit)
     in match parser s with
-        Err Unit => println "err",
-        Ok (Cons e _) => let t = toml_to_obj e
-            in let _ = print_fmt_ln (obj_to_string t)
-            in flush_buff Unit,
+        Err Unit => Err Unit,
+        Ok (Cons e rest) => match str_len rest with
+                0 => let t = toml_to_obj e
+                    in let _ = print_fmt_ln (obj_to_string t)
+                    in let _ = flush_buff Unit
+                    in Ok Unit,
+                _ => Err Unit,
+            end,
+    end
+
+main = _: match run Unit with
+        Err _ => panic "err",
+        Ok _ => Unit,
     end

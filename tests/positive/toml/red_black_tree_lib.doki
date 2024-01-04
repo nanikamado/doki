@@ -22,8 +22,8 @@ balance = t: match t with
 contains_key = cmp: x: t: match t with
         E => False,
         T _ k v l r => match cmp x k with
-                Lt => contains_key x l,
-                Gt => contains_key x r,
+                Lt => contains_key cmp x l,
+                Gt => contains_key cmp x r,
                 Eq => True,
             end,
     end
@@ -60,4 +60,9 @@ tree_to_list = acc: t: match t with
 color_to_string = c: match c with
         R => "R",
         B => "B",
+    end
+
+tree_map = f: t: match t with
+        E => E,
+        T color key value a b => T color key (f value) (tree_map f a) (tree_map f b),
     end
