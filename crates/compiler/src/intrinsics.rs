@@ -16,10 +16,14 @@ impl IntrinsicVariable {
             EqU8 => "intrinsic_eq_u8",
             BitAnd => "intrinsic_bitwise_and",
             BitOr => "intrinsic_bitwise_or",
+            BitNot => "intrinsic_bitwise_not",
             BitAndU8 => "intrinsic_bitwise_and_u8",
             BitOrU8 => "intrinsic_bitwise_or_u8",
+            BitNotU8 => "intrinsic_bitwise_not_u8",
             RightShift => "intrinsic_right_shift",
             RightShiftU8 => "intrinsic_right_shift_u8",
+            LeftShift => "intrinsic_left_shift",
+            LeftShiftU8 => "intrinsic_left_shift_u8",
             Write => "intrinsic_write",
             Mut => "intrinsic_mut",
             SetMut => "intrinsic_set",
@@ -47,6 +51,7 @@ impl IntrinsicVariable {
             SqrtF64 => "intrinsic_sqrt_f64",
             Exit => "intrinsic_exit",
             Debug => "intrinsic_debug",
+            Panic => "intrinsic_panic",
         }
     }
 }

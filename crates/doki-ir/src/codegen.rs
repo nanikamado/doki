@@ -92,11 +92,14 @@ struct diverge{{}};"
         if env.codegen_options.backtrace {
             write!(
                 f,
-                "__attribute__ ((__noreturn__)) static int panic(char* msg){{\
-                fprintf(stderr, \"error: %s\\nstack backtrace:\\n\", msg);\
+                "__attribute__ ((__noreturn__)) static int panic_without_msg(void){{\
+                fprintf(stderr, \"stack backtrace:\\n\");\
                 while(--trace_stack_top>=0)\
                 fprintf(stderr, \"%5d: %s\\n\", trace_stack_top, TRACE_STACK[trace_stack_top]);\
                 exit(1);}}\
+                __attribute__ ((__noreturn__)) static int panic(char* msg){{\
+                fprintf(stderr, \"error: %s\\n\", msg);\
+                panic_without_msg();}}\
                 static void trace_stack_push(char* span) {{\
                     if(trace_stack_top=={BACKTRACE_STACK_LIMIT})panic(\"stack overflow\");\
                     TRACE_STACK[trace_stack_top++]=span;\
@@ -106,7 +109,8 @@ struct diverge{{}};"
         } else {
             write!(
                 f,
-                "__attribute__ ((__noreturn__)) static int panic(char* msg){{\
+                "__attribute__ ((__noreturn__)) static int panic_without_msg(void){{exit(1);}}\
+                __attribute__ ((__noreturn__)) static int panic(char* msg){{\
                 fprintf(stderr, \"error: %s\\n\", msg);\
                 exit(1);}}\
                 "
@@ -457,7 +461,9 @@ impl DisplayWithEnv for PrimitiveDefPrint<'_> {
             Eq | EqF64 | EqU8 => write!(f, "return _0 == _1;"),
             BitOr | BitOrU8 => write!(f, "return _0 | _1;"),
             BitAnd | BitAndU8 => write!(f, "return _0 & _1;"),
+            BitNot | BitNotU8 => write!(f, "return ~_0;"),
             RightShift | RightShiftU8 => write!(f, "return _0 >> _1;"),
+            LeftShift | LeftShiftU8 => write!(f, "return _0 << _1;"),
             Write => write!(f, r#"array_write(_0,_1,_2);return intrinsic_unit();"#),
             Mut => {
                 let t = self.arg_ts[0];
@@ -491,6 +497,7 @@ impl DisplayWithEnv for PrimitiveDefPrint<'_> {
             F64StrLen => write!(f, "return snprintf(NULL,0,_1,_0)+1;"),
             SqrtF64 => write!(f, "return sqrt(_0);"),
             Exit => write!(f, "exit(_0);"),
+            Panic => write!(f, "panic_without_msg();"),
         }
     }
 }

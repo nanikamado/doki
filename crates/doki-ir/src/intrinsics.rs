@@ -24,8 +24,12 @@ pub enum IntrinsicVariable {
     BitAndU8,
     BitOr,
     BitOrU8,
+    BitNot,
+    BitNotU8,
     RightShift,
     RightShiftU8,
+    LeftShift,
+    LeftShiftU8,
     Percent,
     Write,
     Mut,
@@ -46,6 +50,7 @@ pub enum IntrinsicVariable {
     F64StrLen,
     SqrtF64,
     Exit,
+    Panic,
     Debug,
 }
 
@@ -60,12 +65,16 @@ impl IntrinsicVariable {
         use IntrinsicVariable::*;
         match self {
             Minus | Plus | Percent | Multi | Div | Lt | Eq | EqU8 | EqF64 | GetChar | U8ToI64
-            | BitAnd | BitOr | RightShift | ReadFile | F64StrLen => Some(IntrinsicTypeTag::I64),
+            | BitAnd | BitOr | BitNot | RightShift | LeftShift | ReadFile | F64StrLen => {
+                Some(IntrinsicTypeTag::I64)
+            }
             Write | SetMut | StoreU8 | StoreF64 | WriteF64 | Debug => Some(IntrinsicTypeTag::Unit),
             Mut => Some(IntrinsicTypeTag::Mut),
             Malloc | Stdout | Stdin => Some(IntrinsicTypeTag::Ptr),
-            LoadU8 | I64ToU8 | BitAndU8 | BitOrU8 | RightShiftU8 => Some(IntrinsicTypeTag::U8),
-            GetMut | Exit => None,
+            LoadU8 | I64ToU8 | BitAndU8 | BitOrU8 | RightShiftU8 | LeftShiftU8 | BitNotU8 => {
+                Some(IntrinsicTypeTag::U8)
+            }
+            GetMut | Exit | Panic => None,
             LoadF64 | PlusF64 | MinusF64 | DivF64 | LeF64 | LtF64 | MultiF64 | SqrtF64 => {
                 Some(IntrinsicTypeTag::F64)
             }
@@ -107,7 +116,7 @@ impl IntrinsicVariable {
                     vec![t],
                 )
             }
-            Exit => (),
+            Exit | Panic => (),
             _ => {
                 let ret_type = self.runtime_return_type().unwrap();
                 type_map.insert_normal(t, TypeId::Intrinsic(ret_type), Vec::new());
@@ -122,18 +131,20 @@ impl IntrinsicVariable {
         const PTR: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::Ptr));
         const MUT: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::Mut));
         const F64: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::F64));
+        const UNIT: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::Unit));
         match self {
-            Minus | Plus | Percent | Multi | Div | Lt | Eq | BitAnd | BitOr | RightShift => {
+            Minus | Plus | Percent | Multi | Div | Lt | Eq | BitAnd | BitOr | RightShift
+            | LeftShift => {
                 vec![I64, I64]
             }
             PlusF64 | MinusF64 | MultiF64 | DivF64 | LeF64 | LtF64 | EqF64 => {
                 vec![F64, F64]
             }
             EqU8 | BitAndU8 | BitOrU8 => vec![U8, U8],
-            RightShiftU8 => vec![U8, I64],
+            RightShiftU8 | LeftShiftU8 => vec![U8, I64],
             Write => vec![PTR, I64, I64],
-            Malloc | I64ToU8 | GetChar | Exit => vec![I64],
-            U8ToI64 => vec![U8],
+            Malloc | I64ToU8 | GetChar | Exit | BitNot => vec![I64],
+            U8ToI64 | BitNotU8 => vec![U8],
             Mut | Debug => vec![None],
             SetMut => vec![MUT, None],
             GetMut => vec![MUT],
@@ -142,6 +153,7 @@ impl IntrinsicVariable {
             StoreF64 => vec![PTR, I64, F64],
             ReadFile => vec![PTR, I64, I64, PTR, MUT],
             Stdout | Stdin => Vec::new(),
+            Panic => vec![UNIT],
             WriteF64 => vec![PTR, I64, F64, PTR],
             SqrtF64 => vec![F64],
             F64StrLen => vec![F64, PTR],
