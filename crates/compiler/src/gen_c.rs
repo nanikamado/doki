@@ -1,6 +1,6 @@
 use crate::intrinsics::IntrinsicVariableExt;
 use crate::AnalyzedSrc;
-use doki_ir::intrinsics::IntoEnumIterator;
+use doki_ir::intrinsics::{IntoEnumIterator, IntrinsicTypeTag};
 use doki_ir::{Block, CodegenOptions, ConstructorId, GlobalVariable, LocalVariable};
 use itertools::Itertools;
 use parser::{Ast, DataDecl, Expr, ExprWithSpan, Pattern, PatternWithSpan, Span};
@@ -224,6 +224,12 @@ impl<'a> Env<'a> {
             Expr::Ident(s) => {
                 if let Some(v) = self.local_variable_map.get(s) {
                     self.build_env.local_variable(ret, *v, block);
+                } else if s == "Unit" {
+                    self.build_env.intrinsic_construction(
+                        ret,
+                        doki_ir::intrinsics::IntrinsicConstructor::Unit,
+                        block,
+                    );
                 } else if let Some(v) = self.global_variable_map.get(s) {
                     self.build_env.global_variable(ret, *v, block);
                 } else {
@@ -427,6 +433,13 @@ impl<'a> Env<'a> {
                 self.build_env.local_variable(v, operand, block);
             }
             Pattern::Wildcard => (),
+            Pattern::Constructor {
+                name: "Unit",
+                fields: _,
+                span: _,
+            } => {
+                block.test_constructor(operand, doki_ir::TypeId::Intrinsic(IntrinsicTypeTag::Unit));
+            }
             Pattern::Constructor {
                 name,
                 fields,
