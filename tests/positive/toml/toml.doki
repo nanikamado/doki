@@ -135,15 +135,35 @@ none_of = s: i: match pop_str i with
             end,
     end
 
-then = p1: p2: i:
+then_with_f = f: p1: p2: i:
     match p1 i with
         Err e => Err e,
-        Ok (Cons s1 i) => parser_map p2 (Cons s1) i
+        Ok (Cons s1 i) => parser_map p2 (f s1) i
+    end
+
+then = then_with_f Cons
+
+then_with_state = p1: p2: acc: i:
+    match p1 acc i with
+        Err e => Err e,
+        Ok (Cons acc i) => p2 acc i
+    end
+
+stateless_ignored = p: acc: i:
+    match p i with
+        Err e => Err e,
+        Ok (Cons _ i) => Ok (Cons acc i),
     end
 
 alt = p1: p2: i:
     match p1 i with
         Err e => p2 i,
+        Ok a => Ok a,
+    end
+
+alt_with_state = p1: p2: acc: i:
+    match p1 acc i with
+        Err e => p2 acc i,
         Ok a => Ok a,
     end
 
@@ -181,13 +201,12 @@ digit_bin = filter any is_digit_bin
 
 num = repeated_at_least_one digit
 
-repeated_aux = acc: p: i: match p i with
-        Err _ => Cons acc i,
-        Ok (Cons a i) => repeated_aux (Cons a acc) p i,
+repeated_with_state = p: acc: i: match p acc i with
+        Err _ => Ok (Cons acc i),
+        Ok (Cons acc i) => repeated_with_state p acc i,
     end
 
-repeated = p: i: let Cons l i = repeated_aux Nil p i
-    in Ok (Cons (reverse l) i)
+repeated = p: parser_map (repeated_with_state (acc: parser_map p (a: Cons a acc)) Nil) reverse
 
 repeated_at_least_one = p: i: then p (repeated p) i
 
@@ -201,8 +220,8 @@ repeated_with_count = p: n: i: match n with
                         (Cons l i: Cons (Cons a l) i)),
     end
 
-then_ignore = a: b: parser_map (then a b) (Cons a _: a)
-ignore_then = a: b: parser_map (then a b) (Cons _ a: a)
+then_ignore = then_with_f (a: _: a)
+ignore_then = then_with_f (_: a: a)
 
 whitespace = repeated (one_of " \t")
 
@@ -210,9 +229,25 @@ padded = p: ignore_then whitespace (then_ignore p whitespace)
 
 delimited_by = start: p: _end: ignore_then start (then_ignore p _end)
 
-separated_by = p: separator: alt (then p (repeated (ignore_then separator p))) (i: Ok (Cons Nil i))
+separated_by_at_least_one_with_state = p: separator:
+    then_with_state
+        p
+        (repeated_with_state (then_with_state (stateless_ignored separator) p))
 
-separated_by_at_least_one = p: separator: then p (repeated (ignore_then separator p))
+separated_by_with_state = p: separator:
+    alt_with_state
+        (separated_by_at_least_one_with_state p separator)
+        (acc: i: Ok (Cons acc i))
+
+separated_by = p: separator:
+    parser_map
+        (separated_by_with_state (a: parser_map p (b: Cons b a)) separator Nil)
+        reverse
+
+separated_by_at_least_one = p: separator:
+    parser_map
+        (separated_by_at_least_one_with_state (a: parser_map p (b: Cons b a)) separator Nil)
+        reverse
 
 and_lazy = a: b: match a with
         True => b Unit,
@@ -557,6 +592,10 @@ comment = s: then (just "#") (repeated (validate_utf8 is_comment_content)) s
 comment_or_whitespace = s: repeated (alt (one_of " \n\t") (alt comment (just "\r\n"))) s
 
 padded_r = p: ignore_then comment_or_whitespace (then_ignore p comment_or_whitespace)
+padded_r_with_state = p:
+    then_with_state (stateless_ignored comment_or_whitespace)
+    (then_with_state p
+    (stateless_ignored comment_or_whitespace))
 
 value = s:
     let string = parser_map string (a: String a)
@@ -581,17 +620,20 @@ value = s:
         (alt b_true b_false))))))
         s
 
-parser = s: let equation = parser_map (then (then_ignore key (padded (just "="))) value) (Cons k v: Define k v)
+parse_line = s:
+    let equation = parser_map (then (then_ignore key (padded (just "="))) value) (Cons k v: Define k v)
     in let base_key = parser_map (delimited_by (just "[") key (just "]")) BaseKey
     in let list_append = parser_map (delimited_by (just "[[") key (just "]]")) ListAppend
-    in let pad = repeated (alt comment (one_of " \n\t"))
-    in let equations = padded_r
-        (separated_by
-            (alt equation (alt base_key list_append))
+    in alt equation (alt base_key list_append) s
+
+parser = f:
+    let equations = padded_r_with_state
+        (separated_by_with_state
+            (acc: parser_map parse_line (f acc))
             (then (repeated (alt (one_of " \t") comment))
             (then new_line
             comment_or_whitespace)))
-    in equations s
+    in equations
 
 // =================== Construction ===================
 
@@ -839,10 +881,12 @@ print_fmt_ln = a: let _ = print_fmt a
 
 run = _:
     let s = array_to_str (read_all Unit)
-    in match parser s with
+    in let acc = Cons (Table Open E) (Cons Nil (Cons Nil False))
+    in match parser toml_to_obj_aux acc s with
         Err Unit => Err Unit,
         Ok (Cons e rest) => match str_len rest with
-                0 => let t = toml_to_obj e
+                0 => let Cons obj (Cons base_key (Cons tmp_obj list_mode)) = e
+                    in let t = collect_list_mode_acc obj base_key tmp_obj list_mode
                     in let _ = print_fmt_ln (obj_to_string t)
                     in let _ = flush_buff Unit
                     in Ok Unit,
