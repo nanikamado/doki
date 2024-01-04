@@ -259,22 +259,6 @@ or_lazy = a: b: match a with
         True => True,
     end
 
-head_eq = s: i:
-    match Cons (pop_str s) (pop_str i) with
-        Cons Nil _ => True,
-        Cons (Cons s_h s_t) (Cons i_h i_t) => and_lazy (eq_u8 s_h i_h) (_: head_eq s_t i_t),
-        _ => False,
-    end
-
-until = s: i:
-    match head_eq s i with
-        True => Ok (Cons None i),
-        False => match pop_str i with
-                Nil => Err Unit,
-                Cons a i => until s i,
-            end,
-    end
-
 and_is = a: b: i: match a i with
         Err e => Err e,
         Ok a_r => match b i with
@@ -700,11 +684,6 @@ toml_to_obj_aux = Cons obj (Cons base_key (Cons tmp_obj list_mode)): line: match
         ListAppend next_base_key => let obj = collect_list_mode_acc obj base_key tmp_obj list_mode
                 in Cons obj (Cons next_base_key (Cons Nil True)),
     end
-
-toml_to_obj = toml:
-    let Cons obj (Cons base_key (Cons tmp_obj list_mode)) =
-        fold (Cons (Table Open E) (Cons Nil (Cons Nil False))) toml toml_to_obj_aux
-    in collect_list_mode_acc obj base_key tmp_obj list_mode
 
 // =================== Object to String ===================
 
