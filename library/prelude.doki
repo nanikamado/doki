@@ -61,7 +61,14 @@ fold = acc: l: f: match l with
         Cons a l => fold (f acc a) l f,
     end
 
-data Unit 0
+list_all = l: f: match l with
+        Nil => True,
+        Cons a l => match f a with
+                False => False,
+                True => list_all l f,
+            end,
+    end
+
 data True 0
 data False 0
 
@@ -83,6 +90,16 @@ or = a: b: match a with
 bool_to_string = a: match a with
         True => "True",
         False => "False",
+    end
+
+panic = msg:
+    let _ = print "error: "
+    in let _ = println msg
+    in intrinsic_panic Unit
+
+assert = a: match a with
+        True => Unit,
+        False => panic "assertion failed",
     end
 
 f64_to_str = a:
@@ -114,12 +131,23 @@ list_flatten_aux = acc: ls: match ls with
 
 list_flatten = ls: list_flatten_aux Nil (reverse ls)
 
+list_nth = Cons h t: n: match n with
+        0 => h,
+        _ => list_nth t (minus n 1),
+    end
+
 pop_str = Str d l p:
     match l with
         0 => Nil,
         _ => let c = intrinsic_load_u8 p d
             in let s = Str (plus d 1) (minus l 1) p
             in Cons c s,
+    end
+
+str_get = Str d l p: i:
+    match lt i l with
+        False => None,
+        True => Some (intrinsic_load_u8 p (plus d i)),
     end
 
 log10 = a: match a with
@@ -169,6 +197,8 @@ append_str = Str d1 l1 p1: Str d2 l2 p2:
     in let _ = ptr_copy p 0 p1 d1 l1
     in let _ = ptr_copy p l1 p2 d2 l2
     in Str 0 l p
+
+str_len = Str _ l _: l
 
 data None 0
 data Some 1
@@ -314,6 +344,18 @@ char_list_to_num_aux = acc: s: match s with
     end
 
 char_list_to_num = char_list_to_num_aux 0
+
+str_to_num_aux = acc: s: match pop_str s with
+        Nil => acc,
+        Cons c s => match and (le_u8 48u8 c) (le_u8 c 57u8) with
+            False => acc,
+            True => str_to_num_aux
+                    (plus (mul 10 acc) (minus (intrinsic_u8_to_i64 c) 48))
+                    s,
+        end,
+    end
+
+str_to_num = str_to_num_aux 0
 
 data Err 1
 data Ok 1
