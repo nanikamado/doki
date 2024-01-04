@@ -342,7 +342,7 @@ impl<'a> Env<'a> {
             } => {
                 if *name == "_" {
                     *p = Pattern::Wildcard
-                } else if self.data_decl_map.contains_key(name) {
+                } else if self.data_decl_map.contains_key(name) || *name == "Unit" {
                     for (f, _) in fields {
                         self.find_field_less_constructor(f);
                     }
