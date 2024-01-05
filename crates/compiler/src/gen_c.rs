@@ -27,6 +27,7 @@ fn build<'a>(
     src_files: &FxHashMap<&'a str, &'a str>,
     minimize_types: bool,
     codegen_options: CodegenOptions,
+    polymorphism_threshold: usize,
 ) -> Env<'a> {
     let utf8_to_utf16_ln_col_map = src_files
         .iter()
@@ -37,7 +38,7 @@ fn build<'a>(
         local_variable_map: Default::default(),
         global_variable_map: Default::default(),
         data_decl_map: Default::default(),
-        build_env: doki_ir::Env::new(minimize_types),
+        build_env: doki_ir::Env::new(minimize_types, polymorphism_threshold),
         local_variable_span_map: Default::default(),
         global_variable_span_map: Default::default(),
         str_constructor_id: Default::default(),
@@ -127,8 +128,15 @@ pub fn gen_c<'a>(
     src_files: &mut FxHashMap<&'a str, &'a str>,
     minimize_types: bool,
     codegen_options: CodegenOptions,
+    polymorphism_threshold: usize,
 ) -> impl Display + 'a {
-    let env = build(ast, src_files, minimize_types, codegen_options);
+    let env = build(
+        ast,
+        src_files,
+        minimize_types,
+        codegen_options,
+        polymorphism_threshold,
+    );
     let (entry_point, span) = env.entry_point.unwrap();
     let (ln, col) = env.utf8_to_utf16_ln_col_map[span.file_name][span.start];
     env.build_env
@@ -145,8 +153,15 @@ pub fn token_map<'a>(
     path: &str,
     src_files: &FxHashMap<&'a str, &'a str>,
     minimize_types: bool,
+    polymorphism_threshold: usize,
 ) -> AnalyzedSrc<'a> {
-    let env = build(ast, src_files, minimize_types, CodegenOptions::default());
+    let env = build(
+        ast,
+        src_files,
+        minimize_types,
+        CodegenOptions::default(),
+        polymorphism_threshold,
+    );
     let (entry_point, span) = env.entry_point.unwrap();
     let (ln, col) = env.utf8_to_utf16_ln_col_map[span.file_name][span.start];
     let ast = env

@@ -28,34 +28,37 @@ struct Args {
     command: Commands,
 }
 
+#[derive(Parser, Debug)]
+struct CommonArgs {
+    file: String,
+    #[arg(long)]
+    backtrace: bool,
+    #[arg(long)]
+    boehm: bool,
+    #[arg(long)]
+    check_address_boundary: bool,
+    #[arg(long, default_value = "100")]
+    polymorphism_threshold: usize,
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     #[command(alias("r"))]
     Run {
-        file: String,
+        #[command(flatten)]
+        common_args: CommonArgs,
         #[arg(long, default_value = "clang")]
         cc: String,
         #[arg(long, short('C'))]
         cc_options: Option<String>,
         #[arg(long)]
         unique_tmp: bool,
-        #[arg(long)]
-        backtrace: bool,
-        #[arg(long)]
-        boehm: bool,
-        #[arg(long)]
-        check_address_boundary: bool,
     },
     /// Output generated c code
     #[command(alias("c"))]
     EmitC {
-        file: String,
-        #[arg(long)]
-        backtrace: bool,
-        #[arg(long)]
-        boehm: bool,
-        #[arg(long)]
-        check_address_boundary: bool,
+        #[command(flatten)]
+        common_args: CommonArgs,
         #[arg(long)]
         type_comments: bool,
     },
@@ -66,6 +69,7 @@ enum Commands {
 fn compile<'a>(
     file_name: &'a str,
     no_type_minimization: bool,
+    polymorphism_threshold: usize,
     codegen_options: CodegenOptions,
     src_files: &mut FxHashMap<&'a str, &'a str>,
     arena: &'a mut Arena<String>,
@@ -76,6 +80,7 @@ fn compile<'a>(
             src_files,
             !no_type_minimization,
             codegen_options,
+            polymorphism_threshold,
         )),
         Err((file_name, e)) => {
             e.write(stderr(), file_name, src_files[file_name]).unwrap();
@@ -112,17 +117,22 @@ fn main() -> ExitCode {
     let mut src_files = FxHashMap::default();
     match args.command {
         Commands::Run {
-            file,
             cc,
             cc_options,
             unique_tmp,
-            backtrace,
-            boehm,
-            check_address_boundary,
+            common_args:
+                CommonArgs {
+                    file,
+                    backtrace,
+                    boehm,
+                    check_address_boundary,
+                    polymorphism_threshold,
+                },
         } => {
             let r = compile(
                 &file,
                 args.no_type_minimization,
+                polymorphism_threshold,
                 CodegenOptions {
                     backtrace,
                     boehm,
@@ -166,15 +176,20 @@ fn main() -> ExitCode {
             }
         }
         Commands::EmitC {
-            file,
-            backtrace,
-            boehm,
-            check_address_boundary,
             type_comments,
+            common_args:
+                CommonArgs {
+                    file,
+                    backtrace,
+                    boehm,
+                    check_address_boundary,
+                    polymorphism_threshold,
+                },
         } => {
             let r = compile(
                 &file,
                 args.no_type_minimization,
+                polymorphism_threshold,
                 CodegenOptions {
                     backtrace,
                     boehm,
@@ -195,7 +210,7 @@ fn main() -> ExitCode {
         Commands::LanguageServer => {
             #[cfg(feature = "language-server")]
             {
-                language_server::run(!args.no_type_minimization);
+                language_server::run(!args.no_type_minimization, 100);
                 ExitCode::SUCCESS
             }
             #[cfg(not(feature = "language-server"))]

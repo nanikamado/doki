@@ -21,9 +21,16 @@ pub fn token_map<'a>(
     src_files: &mut FxHashMap<&'a str, &'a str>,
     minimize_type: bool,
     arena: &'a Arena<String>,
+    polymorphism_threshold: usize,
 ) -> Result<AnalyzedSrc<'a>, (&'a str, ParseError<'a>)> {
     let ast = parse(path, src_files, arena)?;
-    Ok(gen_c::token_map(ast, path, src_files, minimize_type))
+    Ok(gen_c::token_map(
+        ast,
+        path,
+        src_files,
+        minimize_type,
+        polymorphism_threshold,
+    ))
 }
 
 pub fn parse<'a>(

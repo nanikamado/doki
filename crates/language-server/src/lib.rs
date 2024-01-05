@@ -27,6 +27,7 @@ struct Backend {
     client: Client,
     tokens: DashMap<Url, TokenCache>,
     minimize_type: bool,
+    polymorphism_threshold: usize,
 }
 
 #[tower_lsp::async_trait]
@@ -145,6 +146,7 @@ impl Backend {
             .log_message(MessageType::INFO, "compiling.")
             .await;
         let minimize_type = self.minimize_type;
+        let polymorphism_threshold = self.polymorphism_threshold;
         let uri_s = uri.path().to_string();
         if let Ok(Some(hover_map)) = tokio::task::spawn_blocking(move || {
             let arena = Arena::new();
@@ -153,6 +155,7 @@ impl Backend {
                 &mut FxHashMap::default(),
                 minimize_type,
                 &arena,
+                polymorphism_threshold,
             );
             drop(arena);
             m
@@ -178,12 +181,13 @@ impl Backend {
 }
 
 #[tokio::main]
-pub async fn run(minimize_type: bool) {
+pub async fn run(minimize_type: bool, polymorphism_threshold: usize) {
     let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
     let (service, socket) = LspService::new(|client| Backend {
         client,
         tokens: Default::default(),
         minimize_type,
+        polymorphism_threshold,
     });
     Server::new(stdin, stdout, socket).serve(service).await;
 }
@@ -193,8 +197,16 @@ fn make_hover_map<'a>(
     src_files: &mut FxHashMap<&'a str, &'a str>,
     minimize_type: bool,
     arena: &'a Arena<String>,
+    polymorphism_threshold: usize,
 ) -> Option<HoverMap> {
-    let r = compiler::token_map(file_name, src_files, minimize_type, arena).ok()?;
+    let r = compiler::token_map(
+        file_name,
+        src_files,
+        minimize_type,
+        arena,
+        polymorphism_threshold,
+    )
+    .ok()?;
     let (utf8_to_utf16_map, utf16_to_utf8_map) = make_map(src_files[file_name]);
     let mut span_map = r.span_map;
     let mut working_span_list: Vec<(Span, _)> = Vec::new();

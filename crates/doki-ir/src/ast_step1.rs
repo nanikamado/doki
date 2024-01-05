@@ -359,6 +359,7 @@ pub struct Env<'a> {
     field_len: Vec<usize>,
     constructor_names: ConstructorNames,
     codegen_options: CodegenOptions,
+    polymorphism_threshold: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -370,7 +371,7 @@ pub struct CodegenOptions {
 }
 
 impl<'a> Env<'a> {
-    pub fn new(minimize_types: bool) -> Self {
+    pub fn new(minimize_types: bool, polymorphism_threshold: usize) -> Self {
         Env {
             type_map: PaddedTypeMap::new(minimize_types),
             local_variable_types: Default::default(),
@@ -380,6 +381,7 @@ impl<'a> Env<'a> {
             field_len: Default::default(),
             constructor_names: Default::default(),
             codegen_options: Default::default(),
+            polymorphism_threshold,
         }
     }
 
@@ -601,7 +603,7 @@ impl<'a> Env<'a> {
                 let p = env.global_variable_types[&decl_id];
                 let mut replace_map = ReplaceMap::default();
                 env.type_map.clone_pointer(p, &mut replace_map);
-                if replace_map.len() >= 100 {
+                if replace_map.len() >= self.polymorphism_threshold {
                     use owo_colors::OwoColorize;
                     log::info!(
                         "     {} skipping polymorphism of `{}` because its type is too big",
