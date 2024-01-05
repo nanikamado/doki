@@ -647,8 +647,7 @@ add_value = obj: key: f: match key with
 insert_value = obj: key: value:
     match key with
         Cons key_h key_t => modify key_h obj (v: match v with
-            Some (Table (Closed | SemiOpen) a) => let _ = debug a in
-                panic "not an open table",
+            Some (Table (Closed | SemiOpen) a) => panic "not an open table",
             Some (Table s a) => Table s (insert_value a key_t value),
             Some _ => panic "not a table",
             None => fold value (reverse key_t) (acc: k: Table Dotted (insert k acc E)),
