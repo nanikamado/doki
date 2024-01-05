@@ -649,13 +649,13 @@ fn scc(
 ) -> Vec<Vec<GlobalVariable>> {
     let mut g = FxHashMap::default();
     let mut rg: FxHashMap<_, FxHashSet<_>> = FxHashMap::default();
-    for v in global_variables.keys() {
+    for (v_id, v) in global_variables.iter() {
         let mut ws = FxHashSet::default();
-        global_variables[v].value.collect_global_variables(&mut ws);
+        v.value.collect_global_variables(&mut ws);
         for w in &ws {
-            rg.entry(*w).or_default().insert(*v);
+            rg.entry(*w).or_default().insert(*v_id);
         }
-        g.insert(*v, ws);
+        g.insert(*v_id, ws);
     }
     rg.entry(entry_point).or_default();
     scc::scc(entry_point, &g, rg)
