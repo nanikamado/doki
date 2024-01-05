@@ -595,11 +595,19 @@ impl<'a> Env<'a> {
                     .insert(decl_id, unfixed_unreplicatable_pointers);
                 variable_decls.push(d);
             }
-            for &decl_id in &c {
+            let l = variable_decls.len();
+            for (&decl_id, d) in c.iter().zip_eq(&variable_decls[l - c.len()..l]) {
+                debug_assert_eq!(decl_id, d.decl_id);
                 let p = env.global_variable_types[&decl_id];
                 let mut replace_map = ReplaceMap::default();
                 env.type_map.clone_pointer(p, &mut replace_map);
                 if replace_map.len() >= 100 {
+                    use owo_colors::OwoColorize;
+                    log::info!(
+                        "     {} skipping polymorphism of `{}` because its type is too big",
+                        "Warning".yellow().bold(),
+                        d.name
+                    );
                     env.type_map.fix_pointer(p);
                 }
             }
