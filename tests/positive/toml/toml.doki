@@ -610,14 +610,14 @@ parse_line = s:
     in let list_append = parser_map (delimited_by (just "[[") key (just "]]")) ListAppend
     in alt equation (alt base_key list_append) s
 
-parser = f:
+parser = f: state: s:
     let equations = padded_r_with_state
         (separated_by_with_state
             (acc: parser_map parse_line (f acc))
             (then (repeated (alt (one_of " \t") comment))
             (then new_line
             comment_or_whitespace)))
-    in equations
+    in equations state s
 
 // =================== Construction ===================
 
