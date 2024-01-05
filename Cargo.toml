@@ -29,3 +29,4 @@ assert_cmd = "2.0.4"
 
 [features]
 display-fn-id = ["compiler/display-fn-id"]
+print-unused-global-variables = ["compiler/print-unused-global-variables"]

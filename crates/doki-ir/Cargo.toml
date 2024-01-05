@@ -18,3 +18,4 @@ log = "0.4.19"
 [features]
 default = []
 display-fn-id = []
+print-unused-global-variables = []

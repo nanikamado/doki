@@ -14,3 +14,4 @@ typed-arena = "2.0.2"
 
 [features]
 display-fn-id = ["doki-ir/display-fn-id"]
+print-unused-global-variables = ["doki-ir/print-unused-global-variables"]

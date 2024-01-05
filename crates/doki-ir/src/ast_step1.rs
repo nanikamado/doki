@@ -612,6 +612,17 @@ impl<'a> Env<'a> {
                 }
             }
         }
+        #[cfg(feature = "print-unused-global-variables")]
+        {
+            eprintln!("unused global variables:");
+            for d in self
+                .global_variables
+                .values()
+                .sorted_unstable_by_key(|d| d.decl_id)
+            {
+                eprintln!("    {}", d.name);
+            }
+        }
         env.current_scc_id = 0;
         env.block(&mut entry_block, false);
         let type_map = env.type_map;
