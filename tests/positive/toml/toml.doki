@@ -558,11 +558,13 @@ long_string = s:
 
 string = s: alt long_string short_string s
 
-key = s: let is_ident_head = c: let c1 = and (le_u8 65u8 c) (le_u8 c 90u8)
-        in let c2 = and (le_u8 97u8 c) (le_u8 c 122u8)
-        in or (or c1 c2) (eq_u8 95u8 c)
-    in let is_ident_continue = c: or (or (is_ident_head c) (is_digit c)) (eq_u8 c 39u8)
-    in let is_bare_key_char = c: or (is_ident_continue c) (eq_u8 45u8 c)
+key = s:
+    let is_bare_key_char = c:
+        or_lazy (and (le_u8 'a' c) (le_u8 c 'z'))
+        (_: or_lazy (and (le_u8 'A' c) (le_u8 c 'Z'))
+        (_: or_lazy (and (le_u8 '0' c) (le_u8 c '9'))
+        (_: or_lazy (eq_u8 '_' c)
+        (_: eq_u8 '-' c))))
     in let bare_key = parser_slice (repeated_at_least_one (filter any is_bare_key_char))
     in let dot = filter any (c: eq_u8 c 46u8)
     in separated_by (padded (alt short_string bare_key)) dot s
