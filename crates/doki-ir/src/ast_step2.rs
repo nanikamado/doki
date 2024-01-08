@@ -1838,7 +1838,7 @@ impl<'a, 'b> Env<'a, 'b> {
         if let Some((p, i, j)) = parent_of_p {
             let t = self.map.dereference_without_find(p);
             if let BoxPoint::Boxed(b) = &t.box_point {
-                if b[&i][j as usize].is_some() {
+                if b[&i][j as usize] == Some(true) {
                     return;
                 }
             }
@@ -1889,7 +1889,10 @@ impl<'a, 'b> Env<'a, 'b> {
             if let Some((p, i, j)) = parent_of_p {
                 let t = self.map.dereference_without_find_mut(p);
                 if let BoxPoint::Boxed(b) = &mut t.box_point {
-                    b.get_mut(&i).unwrap()[j as usize].get_or_insert(false);
+                    let a = &mut b.get_mut(&i).unwrap()[j as usize];
+                    if a.is_none() {
+                        *a = Some(false);
+                    }
                 }
             }
             return;
@@ -1935,7 +1938,10 @@ impl<'a, 'b> Env<'a, 'b> {
                         if let BoxPoint::Boxed(b) =
                             &mut self.map.dereference_without_find_mut(p).box_point
                         {
-                            b.get_mut(&id).unwrap()[j] = Some(false);
+                            let a = &mut b.get_mut(&id).unwrap()[j];
+                            if a.is_none() {
+                                *a = Some(false);
+                            }
                         }
                         self.collect_box_points(t);
                     }
@@ -1953,7 +1959,10 @@ impl<'a, 'b> Env<'a, 'b> {
         if let Some((p, i, j)) = parent_of_p {
             let t = self.map.dereference_without_find_mut(p);
             if let BoxPoint::Boxed(b) = &mut t.box_point {
-                b.get_mut(&i).unwrap()[j as usize].get_or_insert(false);
+                let a = &mut b.get_mut(&i).unwrap()[j as usize];
+                if a.is_none() {
+                    *a = Some(false);
+                }
             }
         }
     }
