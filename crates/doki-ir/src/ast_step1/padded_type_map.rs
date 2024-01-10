@@ -299,7 +299,7 @@ impl PaddedTypeMap {
         &self,
         f: &mut impl std::fmt::Write,
         p: TypePointer,
-        boxed: bool,
+        boxed: Option<bool>,
         visited_pointers: &FxHashSet<TypePointer>,
     ) -> Result<(), std::fmt::Error> {
         let mut visited_pointers = visited_pointers.clone();
@@ -307,7 +307,11 @@ impl PaddedTypeMap {
             return write!(
                 f,
                 r#"{{p:"{p}",type:rec{}}}"#,
-                if boxed { ",boxed:true" } else { "" }
+                match boxed {
+                    Some(true) => ",boxed:true",
+                    Some(false) => "",
+                    None => ",boxed:none",
+                }
             );
         } else {
             visited_pointers.insert(p);
@@ -355,7 +359,7 @@ impl PaddedTypeMap {
                                                 map: self,
                                                 p: *p,
                                                 visited_pointers: &visited_pointers,
-                                                boxed: boxed.unwrap(),
+                                                boxed: *boxed,
                                             })
                                         }
                                     )
@@ -365,11 +369,13 @@ impl PaddedTypeMap {
                         write!(f, "{m}")?;
                     }
                 }
-                let boxed_s = if boxed {
-                    assert!(!t.type_map.is_empty());
-                    ",boxed:true"
-                } else {
-                    ""
+                let boxed_s = match boxed {
+                    Some(true) => {
+                        assert!(!t.type_map.is_empty());
+                        ",boxed:true"
+                    }
+                    Some(false) => "",
+                    None => ",boxed:none",
                 };
                 let fixed = if t.fixed {
                     if t.type_map.is_empty() {
@@ -400,7 +406,7 @@ impl PaddedTypeMap {
                     map: self,
                     p: *p,
                     visited_pointers,
-                    boxed: false
+                    boxed: Some(false)
                 }))
             ))
         });
@@ -413,7 +419,7 @@ struct JsonDebugRec<'a> {
     pub map: &'a PaddedTypeMap,
     pub p: TypePointer,
     pub visited_pointers: &'a FxHashSet<TypePointer>,
-    pub boxed: bool,
+    pub boxed: Option<bool>,
 }
 
 #[cfg(debug_assertions)]
@@ -430,7 +436,8 @@ pub struct JsonDebug<'a>(pub &'a PaddedTypeMap, pub TypePointer);
 #[cfg(debug_assertions)]
 impl Display for JsonDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.json_debug(f, self.1, false, &FxHashSet::default())
+        self.0
+            .json_debug(f, self.1, Some(false), &FxHashSet::default())
     }
 }
 
