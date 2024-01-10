@@ -325,7 +325,8 @@ struct Env<'a, 'b> {
     normalizer_for_c_type: UnionFind<PointerForCType>,
     job_stack: Vec<Job>,
     fn_signatures_for_dummy_fns: FxHashMap<FxLambdaId, (LocalVariable, Vec<LocalVariable>)>,
-    pointers_box_point_collected: FxHashSet<TypePointer>,
+    collect_box_points_memo_for_fns: FxHashSet<TypePointer>,
+    collect_box_points_memo: FxHashSet<TypePointer>,
     printer_collector: PrinterCollector,
 }
 
@@ -416,7 +417,8 @@ impl<'a, 'b> Env<'a, 'b> {
             normalizer_for_c_type: Default::default(),
             job_stack: Vec::with_capacity(20),
             fn_signatures_for_dummy_fns: Default::default(),
-            pointers_box_point_collected: FxHashSet::default(),
+            collect_box_points_memo_for_fns: FxHashSet::default(),
+            collect_box_points_memo: FxHashSet::default(),
             printer_collector: Default::default(),
         }
     }
@@ -1445,7 +1447,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 };
             }
             let mut partitions = Default::default();
-            self.collect_pointers(p.p, &mut partitions);
+            self.collect_pointers_for_c_type(p.p, &mut partitions);
             let c_type_schemes = partitions
                 .keys()
                 .map(|p| (*p, self.get_c_type_scheme_from_pointer(*p)))
@@ -1782,7 +1784,11 @@ impl<'a, 'b> Env<'a, 'b> {
         }
     }
 
-    fn collect_pointers(&mut self, p: TypePointer, pointers: &mut FxHashMap<PointerForCType, u32>) {
+    fn collect_pointers_for_c_type(
+        &mut self,
+        p: TypePointer,
+        pointers: &mut FxHashMap<PointerForCType, u32>,
+    ) {
         let p = self.map.find_imm(p);
         let contains = pointers.insert(PointerForCType::from(p), 0).is_some();
         if contains {
@@ -1795,7 +1801,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 TypeId::Intrinsic(IntrinsicTypeTag::Fn) => {}
                 _ => {
                     for t in &args {
-                        self.collect_pointers(*t, pointers);
+                        self.collect_pointers_for_c_type(*t, pointers);
                     }
                     tag += 1;
                 }
@@ -1815,6 +1821,7 @@ impl<'a, 'b> Env<'a, 'b> {
     }
 
     pub fn collect_box_points(&mut self, p: TypePointer) {
+        let p = self.map.find_imm(p);
         self.collect_box_points_aux(
             p,
             None,
@@ -1823,6 +1830,23 @@ impl<'a, 'b> Env<'a, 'b> {
             &mut Default::default(),
             None,
         );
+        fn collect_pointers(
+            map: &PaddedTypeMap,
+            p: TypePointer,
+            pointers: &mut FxHashSet<TypePointer>,
+        ) {
+            let p = map.find_imm(p);
+            if !pointers.insert(p) {
+                return;
+            }
+            let terminal = map.dereference_without_find(p);
+            for args in terminal.type_map.values() {
+                for t in args {
+                    collect_pointers(map, *t, pointers);
+                }
+            }
+        }
+        collect_pointers(&self.map, p, &mut self.collect_box_points_memo);
     }
 
     fn collect_box_points_aux(
@@ -1835,6 +1859,18 @@ impl<'a, 'b> Env<'a, 'b> {
         mut divergent_stopper: Option<DivergentStopper>,
     ) {
         let p = self.map.find_imm(p);
+        if self.collect_box_points_memo.contains(&p) {
+            if let Some((p, i, j)) = parent_of_p {
+                let t = self.map.dereference_without_find_mut(p);
+                if let BoxPoint::Boxed(b) = &mut t.box_point {
+                    let e = &mut b.get_mut(&i).unwrap()[j as usize];
+                    if e.is_none() {
+                        *e = Some(false);
+                    }
+                }
+            }
+            return;
+        }
         if let Some((p, i, j)) = parent_of_p {
             let t = self.map.dereference_without_find(p);
             if let BoxPoint::Boxed(b) = &t.box_point {
@@ -1842,7 +1878,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     return;
                 }
             }
-        } else if !self.pointers_box_point_collected.insert(p) {
+        } else if !self.collect_box_points_memo_for_fns.insert(p) {
             return;
         }
         let terminal = self.map.dereference_without_find_mut(p);
@@ -1943,7 +1979,14 @@ impl<'a, 'b> Env<'a, 'b> {
                                 *a = Some(false);
                             }
                         }
-                        self.collect_box_points(t);
+                        self.collect_box_points_aux(
+                            t,
+                            None,
+                            &mut Default::default(),
+                            &mut Vec::with_capacity(5),
+                            &mut Default::default(),
+                            None,
+                        );
                     }
                 }
                 _ => {
