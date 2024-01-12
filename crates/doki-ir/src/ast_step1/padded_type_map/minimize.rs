@@ -1,4 +1,4 @@
-use super::{Diverged, FieldType, PaddedTypeMap, TypePointer};
+use super::{FieldType, PaddedTypeMap, TypePointer};
 use crate::util::dfa_minimization::Dfa;
 use crate::TypeId;
 use multimap::MultiMap;
@@ -49,7 +49,7 @@ fn collect_points(
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalRef {
     pub type_map: BTreeMap<TypeId, Vec<FieldType>>,
-    pub reference_point: Diverged,
+    pub reference_point: Option<bool>,
     pub fixed: bool,
 }
 

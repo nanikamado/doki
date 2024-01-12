@@ -19,14 +19,6 @@ pub enum TypeId {
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Copy, Hash)]
 pub struct TypePointer(u32);
 
-#[derive(Debug, PartialEq, Clone, Copy, Eq, PartialOrd, Ord, Hash, Default)]
-pub enum Diverged {
-    #[default]
-    NotSure,
-    Yes,
-    No,
-}
-
 #[derive(Debug, PartialEq, Clone, Copy, Eq, PartialOrd, Ord, Hash)]
 pub struct FieldType {
     pub p: TypePointer,
@@ -36,7 +28,7 @@ pub struct FieldType {
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Terminal {
     pub type_map: BTreeMap<TypeId, Vec<FieldType>>,
-    pub diverged: Diverged,
+    pub diverged: Option<bool>,
     pub fixed: bool,
 }
 
@@ -92,14 +84,14 @@ impl PaddedTypeMap {
                         pairs.push((*a, b));
                     }
                 } else {
-                    debug_assert_eq!(b_t.diverged, Diverged::NotSure);
+                    debug_assert!(b_t.diverged.is_none());
                     if fix_b {
                         fix.extend(b_normal.iter().map(|a| a.p));
                     }
                     a_t.type_map.insert(b_id, b_normal.clone());
                 }
             }
-            debug_assert_eq!(a_t.diverged, Diverged::NotSure);
+            debug_assert!(a_t.diverged.is_none());
             let fix_a = !a_t.fixed && b_t.fixed;
             for (a, b) in pairs {
                 self.union(a.p, b.p);
@@ -144,7 +136,7 @@ impl PaddedTypeMap {
 
     pub fn insert_lambda_id(&mut self, p: TypePointer, id: LambdaId, lambda_ctx: Vec<TypePointer>) {
         let t = self.dereference_mut(p);
-        debug_assert_eq!(t.diverged, Diverged::NotSure);
+        debug_assert!(t.diverged.is_none());
         t.type_map.insert(
             TypeId::Function(id),
             lambda_ctx
@@ -299,7 +291,7 @@ impl PaddedTypeMap {
             .collect();
         self.map[new_p.0 as usize] = Node::Terminal(Terminal {
             type_map,
-            diverged: Diverged::NotSure,
+            diverged: None,
             fixed: false,
         });
         new_p
@@ -365,19 +357,19 @@ impl PaddedTypeMap {
             Node::Terminal(t) => {
                 write!(f, r#"type_map:{{"#)?;
                 match &t.diverged {
-                    Diverged::NotSure => {
+                    None => {
                         self.json_debug_type_map(f, &t.type_map, &visited_pointers)?;
                         if !t.type_map.is_empty() {
                             write!(f, ",")?;
                         }
                         write!(f, r#"box_point:"not sure""#)?;
                     }
-                    Diverged::Yes => {
+                    Some(true) => {
                         self.json_debug_type_map(f, &t.type_map, &visited_pointers)?;
                         assert!(!t.type_map.is_empty());
                         write!(f, r#",box_point:"diverged""#)?;
                     }
-                    Diverged::No => {
+                    Some(false) => {
                         let m = t.type_map.iter().format_with(",", |(id, ps), f| {
                             f(&format_args!(
                                 r#"{id}:[{}]"#,

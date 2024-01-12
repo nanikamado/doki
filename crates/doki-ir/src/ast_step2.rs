@@ -14,8 +14,8 @@ use self::type_memo::TypeMemo;
 pub use self::type_memo::{DisplayTypeWithEnvStruct, DisplayTypeWithEnvStructOption, Type};
 use self::union_find::UnionFind;
 use crate::ast_step1::{
-    self, ConstructorNames, Diverged, FieldType, GlobalVariable, LambdaId, LocalVariableTypes,
-    PaddedTypeMap, ReplaceMap, TypeId, TypePointer,
+    self, ConstructorNames, FieldType, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
+    ReplaceMap, TypeId, TypePointer,
 };
 use crate::ast_step2::c_type::PointerModifier;
 use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
@@ -885,7 +885,7 @@ impl<'a, 'b> Env<'a, 'b> {
             local_variable_collector: &mut LocalVariableCollector<Types>,
         ) -> Vec<LocalVariable> {
             let t = &map.dereference_without_find(p);
-            debug_assert_eq!(t.diverged, Diverged::No);
+            debug_assert!(!t.diverged.unwrap());
             args.zip(&t.type_map[&type_id])
                 .map(|(a, b)| {
                     if b.boxed {
@@ -1146,7 +1146,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     None,
                 )?;
                 let t = &self.map.dereference(p);
-                debug_assert_eq!(t.diverged, Diverged::No);
+                debug_assert!(!t.diverged.unwrap());
                 let deref = t.type_map[&TypeId::UserDefined(*constructor)][*field as usize].boxed;
                 basic_block_env.assign(
                     v,
@@ -1249,7 +1249,7 @@ impl<'a, 'b> Env<'a, 'b> {
         self.c_type(PointerForCType::from(ot));
         let mut fs = Vec::new();
         let t = &self.map.dereference_without_find(ot);
-        debug_assert_eq!(t.diverged, Diverged::No);
+        debug_assert!(!t.diverged.unwrap());
         let type_map = &t.type_map;
         let Some(fn_type) = type_map
             .get(&TypeId::Intrinsic(IntrinsicTypeTag::Fn))
@@ -1428,14 +1428,8 @@ impl<'a, 'b> Env<'a, 'b> {
                 debug_assert!(self.map.is_terminal(t.p));
                 let r = partition_rev[p];
                 debug_assert!(self.map.is_terminal(r.p));
-                debug_assert_ne!(
-                    self.map.dereference_without_find(t.p).diverged,
-                    Diverged::NotSure
-                );
-                debug_assert_ne!(
-                    self.map.dereference_without_find(r.p).diverged,
-                    Diverged::NotSure
-                );
+                debug_assert!(self.map.dereference_without_find(t.p).diverged.is_some());
+                debug_assert!(self.map.dereference_without_find(r.p).diverged.is_some());
                 if *t != r {
                     self.normalizer_for_c_type.union(*t, r)
                 }
@@ -1561,7 +1555,7 @@ impl<'a, 'b> Env<'a, 'b> {
         trace: &mut FxHashMap<TypePointer, u32>,
     ) {
         let t = &self.map.dereference_without_find(p);
-        debug_assert_ne!(t.diverged, Diverged::NotSure);
+        debug_assert!(t.diverged.is_some());
         for (type_id, args) in t.type_map.clone() {
             match type_id {
                 TypeId::Intrinsic(tag) => match tag {
@@ -1594,8 +1588,7 @@ impl<'a, 'b> Env<'a, 'b> {
         debug_assert_eq!(p.modifier, PointerModifier::Normal);
         let p = self.map.find(p.p);
         let reference_point = self.map.dereference_without_find(p).diverged;
-        debug_assert_ne!(reference_point, Diverged::NotSure);
-        if reference_point == Diverged::Yes {
+        if reference_point.unwrap() {
             return CTypeForHashInner::Type(CTypeForHash(vec![CTypeForHashUnit::Diverge]));
         }
         if let Some(d) = trace.get(&p) {
@@ -1628,13 +1621,9 @@ impl<'a, 'b> Env<'a, 'b> {
         trace: &mut FxHashMap<TypePointer, u32>,
         tag: usize,
     ) -> CTypeForHashUnit {
-        let (type_id, args) = self
-            .map
-            .dereference_without_find(p)
-            .type_map
-            .iter()
-            .nth(tag)
-            .unwrap();
+        let t = self.map.dereference_without_find(p);
+        debug_assert!(t.diverged.is_some());
+        let (type_id, args) = t.type_map.iter().nth(tag).unwrap();
         let type_id = *type_id;
         let args = args.clone();
         match type_id {
@@ -1665,8 +1654,6 @@ impl<'a, 'b> Env<'a, 'b> {
         if let Some(t) = self.c_type_for_hash_memo_with_tag.get(&(p, tag)) {
             t.clone()
         } else {
-            let reference_point = &self.map.dereference_without_find(p).diverged;
-            debug_assert_ne!(*reference_point, Diverged::NotSure);
             let t = self.collect_hash_unit_with_tag(p, &mut Default::default(), tag as usize);
             let t = CTypeForHash(vec![t]);
             self.c_type_for_hash_memo_with_tag
@@ -1683,11 +1670,11 @@ impl<'a, 'b> Env<'a, 'b> {
         debug_assert_ne!(node.modifier, PointerModifier::Boxed);
         let t = &self.map.dereference_without_find(node.p);
         match t.diverged {
-            Diverged::NotSure => panic!(),
-            Diverged::Yes => {
+            None => panic!(),
+            Some(true) => {
                 return CTypeScheme::Diverge;
             }
-            Diverged::No => (),
+            Some(false) => (),
         }
         let mut ts = Vec::new();
         for (id, args) in &t.type_map {
@@ -1778,10 +1765,7 @@ impl<'a, 'b> Env<'a, 'b> {
 
     pub fn collect_box_points(&mut self, p: TypePointer) {
         let p = self.map.find_imm(p);
-        if !matches!(
-            self.map.dereference_without_find(p).diverged,
-            Diverged::NotSure
-        ) {
+        if self.map.dereference_without_find(p).diverged.is_some() {
             return;
         }
         fn pointer_to_node(
@@ -1796,7 +1780,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 return Some(*n);
             }
             let terminal = map.dereference_without_find(p);
-            if terminal.diverged != Diverged::NotSure {
+            if terminal.diverged.is_some() {
                 return None;
             }
             let n = g.add_node(p);
@@ -1830,7 +1814,7 @@ impl<'a, 'b> Env<'a, 'b> {
         let mut diverged_mut = Vec::new();
         pointer_to_node(&self.map, p, &mut p_to_n, &mut g, &mut diverged_mut);
         for p in diverged_mut {
-            self.map.dereference_without_find_mut(p).diverged = Diverged::Yes;
+            self.map.dereference_without_find_mut(p).diverged = Some(true);
         }
         for (p, n) in &p_to_n {
             while let Some(cycle) = find_negative_cycle(&g, *n) {
@@ -1869,20 +1853,20 @@ impl<'a, 'b> Env<'a, 'b> {
                         })
                         .collect();
                     let t = &mut self.map.dereference_without_find_mut(a);
-                    if t.diverged != Diverged::Yes {
+                    if t.diverged != Some(true) {
                         t.type_map = new_type_map;
                     }
                 } else {
                     for (a, b) in cycle.iter().circular_tuple_windows() {
                         g.remove_edge(g.find_edge(*a, *b).unwrap());
                         let a = *g.node_weight(*a).unwrap();
-                        self.map.dereference_without_find_mut(a).diverged = Diverged::Yes;
+                        self.map.dereference_without_find_mut(a).diverged = Some(true);
                     }
                 }
             }
             let t = &mut self.map.dereference_without_find_mut(*p);
-            if matches!(t.diverged, Diverged::NotSure) {
-                t.diverged = Diverged::No;
+            if t.diverged.is_none() {
+                t.diverged = Some(false);
             }
         }
     }

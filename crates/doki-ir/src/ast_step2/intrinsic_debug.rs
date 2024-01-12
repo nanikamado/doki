@@ -1,4 +1,4 @@
-use crate::ast_step1::{self, Diverged, FieldType, PaddedTypeMap, TypePointer};
+use crate::ast_step1::{self, FieldType, PaddedTypeMap, TypePointer};
 use crate::TypeId;
 use rustc_hash::FxHashMap;
 
@@ -22,10 +22,10 @@ impl PrinterCollector {
             return;
         }
         self.map.insert(a, Vec::new());
-        match &t.diverged {
-            Diverged::NotSure => panic!(),
-            Diverged::Yes => (),
-            Diverged::No => {
+        match t.diverged {
+            None => panic!(),
+            Some(true) => (),
+            Some(false) => {
                 let mut union_members = Vec::new();
                 for (tag, args) in t.type_map.clone() {
                     if tag == ast_step1::TypeId::Intrinsic(crate::intrinsics::IntrinsicTypeTag::Fn)

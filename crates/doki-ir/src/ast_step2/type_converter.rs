@@ -1,7 +1,7 @@
 use super::c_type::PointerForCType;
 use super::type_memo::TypeMemo;
 use super::{CType, Env};
-use crate::ast_step1::{self, Diverged, FieldType, PaddedTypeMap, TypePointer};
+use crate::ast_step1::{self, FieldType, PaddedTypeMap, TypePointer};
 use crate::TypeId;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
@@ -69,10 +69,10 @@ fn c_type_tag_count(
         0 => SingleOrUnion::Never,
         1 => {
             let (id, args) = terminal.type_map.into_iter().next().unwrap();
-            match terminal.diverged {
-                Diverged::NotSure => panic!(),
-                Diverged::Yes => SingleOrUnion::Never,
-                Diverged::No => SingleOrUnion::Single(id, args),
+            if terminal.diverged.unwrap() {
+                SingleOrUnion::Never
+            } else {
+                SingleOrUnion::Single(id, args)
             }
         }
         _ => SingleOrUnion::Union,
@@ -135,63 +135,55 @@ impl ConverterCollector {
                         .enumerate()
                         .find(|(_, (k, _))| **k == a_tag)
                         .unwrap();
-                    match &b_t.diverged {
-                        Diverged::NotSure => panic!(),
-                        Diverged::Yes => ConvertOp::Unexpected,
-                        Diverged::No => {
-                            let converters = a_args
-                                .iter()
-                                .copied()
-                                .zip_eq(args.iter().copied())
-                                .collect_vec()
-                                .into_iter()
-                                .map(|(a, b)| self.add_aux(a, b, env))
-                                .collect();
-                            ConvertOp::AddTag(tag as u32, converters)
-                        }
+                    if b_t.diverged.unwrap() {
+                        ConvertOp::Unexpected
+                    } else {
+                        let converters = a_args
+                            .iter()
+                            .copied()
+                            .zip_eq(args.iter().copied())
+                            .collect_vec()
+                            .into_iter()
+                            .map(|(a, b)| self.add_aux(a, b, env))
+                            .collect();
+                        ConvertOp::AddTag(tag as u32, converters)
                     }
                 }
                 (SingleOrUnion::Union, SingleOrUnion::Union) => {
                     let b_t = env.map.dereference_imm(b);
                     let a_t = env.map.dereference_imm(a);
-                    match (a_t.diverged, b_t.diverged) {
-                        (Diverged::NotSure, _)
-                        | (_, Diverged::NotSure)
-                        | (Diverged::Yes, _)
-                        | (_, Diverged::Yes) => panic!(),
-                        (Diverged::No, Diverged::No) => {
-                            let b_t: FxHashMap<_, _> = b_t
-                                .type_map
+                    debug_assert!(!b_t.diverged.unwrap());
+                    debug_assert!(!a_t.diverged.unwrap());
+                    let b_t: FxHashMap<_, _> = b_t
+                        .type_map
+                        .iter()
+                        .filter(|(id, _)| **id != FN_TAG)
+                        .enumerate()
+                        .map(|(i, (type_id, args))| (*type_id, (i, args.clone())))
+                        .collect();
+                    let ops = a_t
+                        .type_map
+                        .clone()
+                        .into_iter()
+                        .filter(|(id, _)| {
+                            *id != ast_step1::TypeId::Intrinsic(
+                                crate::intrinsics::IntrinsicTypeTag::Fn,
+                            )
+                        })
+                        .map(|(type_id, a_args)| {
+                            let (b_tag, b_args) = &b_t[&type_id];
+                            let convert_op = a_args
                                 .iter()
-                                .filter(|(id, _)| **id != FN_TAG)
-                                .enumerate()
-                                .map(|(i, (type_id, args))| (*type_id, (i, args.clone())))
-                                .collect();
-                            let ops = a_t
-                                .type_map
-                                .clone()
-                                .into_iter()
-                                .filter(|(id, _)| {
-                                    *id != ast_step1::TypeId::Intrinsic(
-                                        crate::intrinsics::IntrinsicTypeTag::Fn,
-                                    )
-                                })
-                                .map(|(type_id, a_args)| {
-                                    let (b_tag, b_args) = &b_t[&type_id];
-                                    let convert_op = a_args
-                                        .iter()
-                                        .zip(b_args)
-                                        .map(|(a, b)| self.add_aux(*a, *b, env))
-                                        .collect_vec();
-                                    UnionOp {
-                                        new_tag: *b_tag as u32,
-                                        convert_op,
-                                    }
-                                })
+                                .zip(b_args)
+                                .map(|(a, b)| self.add_aux(*a, *b, env))
                                 .collect_vec();
-                            ConvertOp::ReTag(ops)
-                        }
-                    }
+                            UnionOp {
+                                new_tag: *b_tag as u32,
+                                convert_op,
+                            }
+                        })
+                        .collect_vec();
+                    ConvertOp::ReTag(ops)
                 }
                 _ => panic!(),
             };

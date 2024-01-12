@@ -1,5 +1,5 @@
 use super::{TypeIdTag, TypeUnique};
-use crate::ast_step1::{self, ConstructorNames, PaddedTypeMap, TypeId, TypePointer};
+use crate::ast_step1::{ConstructorNames, PaddedTypeMap, TypeId, TypePointer};
 use crate::intrinsics::IntrinsicTypeTag;
 use crate::util::id_generator::IdGenerator;
 use itertools::Itertools;
@@ -84,7 +84,7 @@ impl TypeMemo {
         let mut ts = SmallVec::new();
         let terminal = map.dereference_without_find(p);
         let reference_point = terminal.diverged;
-        debug_assert_ne!(reference_point, ast_step1::Diverged::NotSure);
+        debug_assert!(reference_point.is_some());
         for (id, args) in terminal.type_map.clone() {
             let args = args
                 .iter()
@@ -126,7 +126,7 @@ impl TypeMemo {
         trace.insert(p, trace.len() as u32);
         let mut ts = SmallVec::new();
         let terminal = map.dereference_without_find(p);
-        debug_assert_ne!(terminal.diverged, ast_step1::Diverged::NotSure);
+        debug_assert!(terminal.diverged.is_some());
         for (id, args) in &terminal.type_map {
             let args = args
                 .iter()
