@@ -14,6 +14,7 @@ multimap = "0.9.0"
 smallvec = "1.11.0"
 owo-colors = "3.5.0"
 log = "0.4.19"
+petgraph = "0.6.4"
 
 [features]
 default = []

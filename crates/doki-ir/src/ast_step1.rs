@@ -3,7 +3,9 @@ mod padded_type_map;
 #[cfg(debug_assertions)]
 #[allow(unused)]
 pub use self::padded_type_map::JsonDebug;
-pub use self::padded_type_map::{BoxPoint, PaddedTypeMap, ReplaceMap, TypeId, TypePointer};
+pub use self::padded_type_map::{
+    Diverged, FieldType, PaddedTypeMap, ReplaceMap, TypeId, TypePointer,
+};
 use crate::intrinsics::{IntrinsicConstructor, IntrinsicTypeTag, IntrinsicVariable};
 use crate::util::scc;
 use itertools::Itertools;

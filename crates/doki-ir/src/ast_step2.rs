@@ -6,7 +6,7 @@ mod type_memo;
 mod union_find;
 
 use self::c_type::{CTypeEnv, CTypeScheme, PointerForCType};
-pub use self::intrinsic_debug::{FieldOp, PrinterCollector};
+pub use self::intrinsic_debug::PrinterCollector;
 pub use self::local_variable::{LocalVariable, LocalVariableCollector};
 use self::type_converter::ConverterCollector;
 pub use self::type_converter::{ConvertOp, ConvertOpRef};
@@ -14,8 +14,8 @@ use self::type_memo::TypeMemo;
 pub use self::type_memo::{DisplayTypeWithEnvStruct, DisplayTypeWithEnvStructOption, Type};
 use self::union_find::UnionFind;
 use crate::ast_step1::{
-    self, BoxPoint, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
-    ReplaceMap, TypeId, TypePointer,
+    self, ConstructorNames, Diverged, FieldType, GlobalVariable, LambdaId, LocalVariableTypes,
+    PaddedTypeMap, ReplaceMap, TypeId, TypePointer,
 };
 use crate::ast_step2::c_type::PointerModifier;
 use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
@@ -24,9 +24,11 @@ use crate::util::dfa_minimization::Dfa;
 use crate::util::id_generator;
 use crate::CodegenOptions;
 use itertools::Itertools;
-use rustc_hash::{FxHashMap, FxHashSet};
+use petgraph::algo::find_negative_cycle;
+use petgraph::graph::NodeIndex;
+use petgraph::Graph;
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::fmt::{Debug, Display};
 use std::iter::once;
 
@@ -325,8 +327,6 @@ struct Env<'a, 'b> {
     normalizer_for_c_type: UnionFind<PointerForCType>,
     job_stack: Vec<Job>,
     fn_signatures_for_dummy_fns: FxHashMap<FxLambdaId, (LocalVariable, Vec<LocalVariable>)>,
-    collect_box_points_memo_for_fns: FxHashSet<TypePointer>,
-    collect_box_points_memo: FxHashSet<TypePointer>,
     printer_collector: PrinterCollector,
 }
 
@@ -417,8 +417,6 @@ impl<'a, 'b> Env<'a, 'b> {
             normalizer_for_c_type: Default::default(),
             job_stack: Vec::with_capacity(20),
             fn_signatures_for_dummy_fns: Default::default(),
-            collect_box_points_memo_for_fns: FxHashSet::default(),
-            collect_box_points_memo: FxHashSet::default(),
             printer_collector: Default::default(),
         }
     }
@@ -833,21 +831,20 @@ impl<'a, 'b> Env<'a, 'b> {
         f: PossibleFunction,
         a: LocalVariable,
         ctx: LocalVariable,
-        ctx_box_point: &[Option<bool>],
         span: &str,
         basic_block_env: &mut BasicBlockEnv,
     ) {
         use Expr::*;
         let mut args = vec![a];
-        for (i, (c, b)) in f.ctx.iter().zip(ctx_box_point).enumerate() {
-            let l = self.new_variable(PointerForCType::from(*c));
+        for (i, c) in f.ctx.iter().enumerate() {
+            let l = self.new_variable(PointerForCType::from(c.p));
             basic_block_env.assign(
                 l,
                 BasicCall {
                     args: vec![ctx],
                     id: BasicFunction::FieldAccessor {
                         field: i as u32,
-                        boxed: b.unwrap(),
+                        boxed: c.boxed,
                     },
                 },
             );
@@ -887,12 +884,11 @@ impl<'a, 'b> Env<'a, 'b> {
             map: &PaddedTypeMap,
             local_variable_collector: &mut LocalVariableCollector<Types>,
         ) -> Vec<LocalVariable> {
-            let BoxPoint::Boxed(b) = &map.dereference_without_find(p).box_point else {
-                panic!()
-            };
-            args.zip(&b[&type_id])
-                .map(|(a, boxed)| {
-                    if boxed.unwrap() {
+            let t = &map.dereference_without_find(p);
+            debug_assert_eq!(t.diverged, Diverged::No);
+            args.zip(&t.type_map[&type_id])
+                .map(|(a, b)| {
+                    if b.boxed {
                         let t = local_variable_collector.get_type(a);
                         debug_assert!(!t.c_type.boxed);
                         let d = local_variable_collector.new_variable(Types {
@@ -1055,29 +1051,13 @@ impl<'a, 'b> Env<'a, 'b> {
                 let (possible_functions, tag_len) = self.get_possible_functions(f_t_p);
                 let f = self.get_defined_local_variable(*f, root_t);
                 let a = self.get_defined_local_variable(*a, root_t);
-                let BoxPoint::Boxed(box_point_of_f) =
-                    &self.map.dereference_without_find(f_t_p).box_point
-                else {
-                    panic!()
-                };
                 if possible_functions.is_empty() {
                     return Err(format!("not a function\n{err_msg}"));
                 }
                 if possible_functions.len() == 1 && tag_len == 1 {
                     let possible_function = possible_functions[0].clone();
-                    let tag = TypeId::Function(possible_function.original_lambda_id);
-                    let ctx_box_point = box_point_of_f[&tag].clone();
-                    self.fn_call(
-                        v,
-                        possible_function,
-                        a,
-                        f,
-                        &ctx_box_point,
-                        err_msg,
-                        basic_block_env,
-                    );
+                    self.fn_call(v, possible_function, a, f, err_msg, basic_block_env);
                 } else {
-                    let box_point_of_f = box_point_of_f.clone();
                     let skip = basic_block_env.new_label();
                     for possible_function in possible_functions {
                         let next = basic_block_env.new_label();
@@ -1101,16 +1081,7 @@ impl<'a, 'b> Env<'a, 'b> {
                                 check: false,
                             },
                         ));
-                        let tag = TypeId::Function(possible_function.original_lambda_id);
-                        self.fn_call(
-                            v,
-                            possible_function,
-                            a,
-                            new_f,
-                            &box_point_of_f[&tag],
-                            err_msg,
-                            basic_block_env,
-                        );
+                        self.fn_call(v, possible_function, a, new_f, err_msg, basic_block_env);
                         basic_block_env.end_current_block(EndInstruction::Goto { label: skip });
                         basic_block_env.current_basic_block = Some(next);
                     }
@@ -1174,13 +1145,9 @@ impl<'a, 'b> Env<'a, 'b> {
                     &mut basic_block_env.instructions,
                     None,
                 )?;
-                let deref = match &self.map.dereference(p).box_point {
-                    BoxPoint::NotSure => panic!(),
-                    BoxPoint::Diverging => false,
-                    BoxPoint::Boxed(pss) => {
-                        pss[&TypeId::UserDefined(*constructor)][*field as usize].unwrap()
-                    }
-                };
+                let t = &self.map.dereference(p);
+                debug_assert_eq!(t.diverged, Diverged::No);
+                let deref = t.type_map[&TypeId::UserDefined(*constructor)][*field as usize].boxed;
                 basic_block_env.assign(
                     v,
                     BasicCall {
@@ -1281,7 +1248,9 @@ impl<'a, 'b> Env<'a, 'b> {
         let ot = self.map.find(ot);
         self.c_type(PointerForCType::from(ot));
         let mut fs = Vec::new();
-        let type_map = &self.map.dereference_without_find(ot).type_map;
+        let t = &self.map.dereference_without_find(ot);
+        debug_assert_eq!(t.diverged, Diverged::No);
+        let type_map = &t.type_map;
         let Some(fn_type) = type_map
             .get(&TypeId::Intrinsic(IntrinsicTypeTag::Fn))
             .cloned()
@@ -1308,7 +1277,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     fn_type
                         .iter()
                         .chain(&ctx)
-                        .map(|a| self.get_type_for_hash(*a))
+                        .map(|a| self.get_type_for_hash(a.p))
                         .collect_vec(),
                 );
                 let e = self
@@ -1341,8 +1310,7 @@ impl<'a, 'b> Env<'a, 'b> {
                         i: StructId(ct),
                         boxed: false,
                     },
-                    original_lambda_id,
-                    ctx: ctx.clone(),
+                    ctx,
                 });
             }
         }
@@ -1461,12 +1429,12 @@ impl<'a, 'b> Env<'a, 'b> {
                 let r = partition_rev[p];
                 debug_assert!(self.map.is_terminal(r.p));
                 debug_assert_ne!(
-                    self.map.dereference_without_find(t.p).box_point,
-                    BoxPoint::NotSure
+                    self.map.dereference_without_find(t.p).diverged,
+                    Diverged::NotSure
                 );
                 debug_assert_ne!(
-                    self.map.dereference_without_find(r.p).box_point,
-                    BoxPoint::NotSure
+                    self.map.dereference_without_find(r.p).diverged,
+                    Diverged::NotSure
                 );
                 if *t != r {
                     self.normalizer_for_c_type.union(*t, r)
@@ -1571,15 +1539,13 @@ impl<'a, 'b> Env<'a, 'b> {
 
     fn collect_args(
         &mut self,
-        args: &[TypePointer],
-        boxing: &[Option<bool>],
+        args: &[FieldType],
         trace: &mut FxHashMap<TypePointer, u32>,
     ) -> Vec<CTypeForHashInner> {
         args.iter()
-            .zip(boxing)
-            .map(|(p, boxed)| {
-                let t = self.c_type_for_hash_inner_aux(*p, trace);
-                if boxed.unwrap() {
+            .map(|p| {
+                let t = self.c_type_for_hash_inner_aux(p.p, trace);
+                if p.boxed {
                     CTypeForHashInner::Type(CTypeForHash(vec![CTypeForHashUnit::Ref(t)]))
                 } else {
                     t
@@ -1591,12 +1557,12 @@ impl<'a, 'b> Env<'a, 'b> {
     fn collect_hash_unit(
         &mut self,
         p: TypePointer,
-        boxing: &BTreeMap<TypeId, Vec<Option<bool>>>,
         ts: &mut Vec<CTypeForHashUnit>,
         trace: &mut FxHashMap<TypePointer, u32>,
     ) {
-        let type_map = self.map.dereference_without_find(p).type_map.clone();
-        for (type_id, args) in type_map {
+        let t = &self.map.dereference_without_find(p);
+        debug_assert_ne!(t.diverged, Diverged::NotSure);
+        for (type_id, args) in t.type_map.clone() {
             match type_id {
                 TypeId::Intrinsic(tag) => match tag {
                     IntrinsicTypeTag::Ptr => ts.push(CTypeForHashUnit::Ptr),
@@ -1606,12 +1572,12 @@ impl<'a, 'b> Env<'a, 'b> {
                     IntrinsicTypeTag::Unit => ts.push(CTypeForHashUnit::Aggregate(Vec::new())),
                     IntrinsicTypeTag::Fn => {}
                     IntrinsicTypeTag::Mut => {
-                        let t = self.c_type_for_hash_inner_aux(args[0], trace);
+                        let t = self.c_type_for_hash_inner_aux(args[0].p, trace);
                         ts.push(CTypeForHashUnit::Ref(t));
                     }
                 },
                 TypeId::UserDefined(_) | TypeId::Function(_) => {
-                    let args = self.collect_args(&args, &boxing[&type_id], trace);
+                    let args = self.collect_args(&args, trace);
                     ts.push(CTypeForHashUnit::Aggregate(args));
                 }
             }
@@ -1627,9 +1593,9 @@ impl<'a, 'b> Env<'a, 'b> {
         let p = self.normalizer_for_c_type.find(PointerForCType::from(p));
         debug_assert_eq!(p.modifier, PointerModifier::Normal);
         let p = self.map.find(p.p);
-        let reference_point = self.map.dereference_without_find(p).box_point.clone();
-        debug_assert_ne!(reference_point, BoxPoint::NotSure);
-        if reference_point == BoxPoint::Diverging {
+        let reference_point = self.map.dereference_without_find(p).diverged;
+        debug_assert_ne!(reference_point, Diverged::NotSure);
+        if reference_point == Diverged::Yes {
             return CTypeForHashInner::Type(CTypeForHash(vec![CTypeForHashUnit::Diverge]));
         }
         if let Some(d) = trace.get(&p) {
@@ -1637,10 +1603,7 @@ impl<'a, 'b> Env<'a, 'b> {
         }
         trace.insert(p, trace.len() as u32);
         let mut ts = Vec::new();
-        let BoxPoint::Boxed(reference_point) = reference_point else {
-            panic!()
-        };
-        self.collect_hash_unit(p, &reference_point, &mut ts, trace);
+        self.collect_hash_unit(p, &mut ts, trace);
         let t = CTypeForHash(ts);
         CTypeForHashInner::Type(t)
     }
@@ -1662,7 +1625,6 @@ impl<'a, 'b> Env<'a, 'b> {
     fn collect_hash_unit_with_tag(
         &mut self,
         p: TypePointer,
-        boxing: &BTreeMap<TypeId, Vec<Option<bool>>>,
         trace: &mut FxHashMap<TypePointer, u32>,
         tag: usize,
     ) -> CTypeForHashUnit {
@@ -1684,12 +1646,12 @@ impl<'a, 'b> Env<'a, 'b> {
                 IntrinsicTypeTag::Unit => CTypeForHashUnit::Aggregate(Vec::new()),
                 IntrinsicTypeTag::Fn => panic!(),
                 IntrinsicTypeTag::Mut => {
-                    let t = self.c_type_for_hash_inner_aux(args[0], trace);
+                    let t = self.c_type_for_hash_inner_aux(args[0].p, trace);
                     CTypeForHashUnit::Ref(t)
                 }
             },
             TypeId::UserDefined(_) | TypeId::Function(_) => {
-                let args = self.collect_args(&args, &boxing[&type_id], trace);
+                let args = self.collect_args(&args, trace);
                 CTypeForHashUnit::Aggregate(args)
             }
         }
@@ -1703,14 +1665,9 @@ impl<'a, 'b> Env<'a, 'b> {
         if let Some(t) = self.c_type_for_hash_memo_with_tag.get(&(p, tag)) {
             t.clone()
         } else {
-            let reference_point = &self.map.dereference_without_find(p).box_point;
-            let boxing = match reference_point {
-                BoxPoint::Diverging => return CTypeForHash(vec![CTypeForHashUnit::Diverge]),
-                BoxPoint::Boxed(boxing) => boxing.clone(),
-                BoxPoint::NotSure => panic!(),
-            };
-            let t =
-                self.collect_hash_unit_with_tag(p, &boxing, &mut Default::default(), tag as usize);
+            let reference_point = &self.map.dereference_without_find(p).diverged;
+            debug_assert_ne!(*reference_point, Diverged::NotSure);
+            let t = self.collect_hash_unit_with_tag(p, &mut Default::default(), tag as usize);
             let t = CTypeForHash(vec![t]);
             self.c_type_for_hash_memo_with_tag
                 .insert((p, tag), t.clone());
@@ -1724,15 +1681,16 @@ impl<'a, 'b> Env<'a, 'b> {
     ) -> CTypeScheme<PointerForCType> {
         debug_assert!(self.map.is_terminal(node.p));
         debug_assert_ne!(node.modifier, PointerModifier::Boxed);
-        let reference_point = &self.map.dereference_without_find(node.p).box_point;
-        let boxing = match reference_point {
-            BoxPoint::Diverging => return CTypeScheme::Diverge,
-            BoxPoint::Boxed(boxing) => boxing.clone(),
-            BoxPoint::NotSure => panic!(),
-        };
+        let t = &self.map.dereference_without_find(node.p);
+        match t.diverged {
+            Diverged::NotSure => panic!(),
+            Diverged::Yes => {
+                return CTypeScheme::Diverge;
+            }
+            Diverged::No => (),
+        }
         let mut ts = Vec::new();
-        let type_map = self.map.dereference(node.p).type_map.clone();
-        for (id, args) in type_map {
+        for (id, args) in &t.type_map {
             match id {
                 TypeId::Intrinsic(tag) => match tag {
                     IntrinsicTypeTag::Ptr => ts.push(CTypeScheme::Ptr),
@@ -1743,23 +1701,21 @@ impl<'a, 'b> Env<'a, 'b> {
                     IntrinsicTypeTag::Fn => (),
                     IntrinsicTypeTag::Mut => {
                         ts.push(CTypeScheme::Mut(PointerForCType::from(
-                            self.map.find_imm(args[0]),
+                            self.map.find_imm(args[0].p),
                         )));
                     }
                 },
                 TypeId::UserDefined(_) | TypeId::Function(_) => {
                     ts.push(CTypeScheme::Aggregate(
                         args.iter()
-                            .copied()
-                            .zip(&boxing[&id])
-                            .map(|(p, boxed)| {
-                                let modifier = if boxed.unwrap() {
+                            .map(|p| {
+                                let modifier = if p.boxed {
                                     PointerModifier::Boxed
                                 } else {
                                     PointerModifier::Normal
                                 };
                                 PointerForCType {
-                                    p: self.map.find_imm(p),
+                                    p: self.map.find_imm(p.p),
                                     modifier,
                                 }
                             })
@@ -1801,7 +1757,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 TypeId::Intrinsic(IntrinsicTypeTag::Fn) => {}
                 _ => {
                     for t in &args {
-                        self.collect_pointers_for_c_type(*t, pointers);
+                        self.collect_pointers_for_c_type(t.p, pointers);
                     }
                     tag += 1;
                 }
@@ -1822,190 +1778,111 @@ impl<'a, 'b> Env<'a, 'b> {
 
     pub fn collect_box_points(&mut self, p: TypePointer) {
         let p = self.map.find_imm(p);
-        self.collect_box_points_aux(
-            p,
-            None,
-            &mut Default::default(),
-            &mut Vec::with_capacity(5),
-            &mut Default::default(),
-            None,
-        );
-        fn collect_pointers(
+        if !matches!(
+            self.map.dereference_without_find(p).diverged,
+            Diverged::NotSure
+        ) {
+            return;
+        }
+        fn pointer_to_node(
             map: &PaddedTypeMap,
             p: TypePointer,
-            pointers: &mut FxHashSet<TypePointer>,
-        ) {
+            p_to_n: &mut FxHashMap<TypePointer, NodeIndex>,
+            g: &mut Graph<TypePointer, f64>,
+            diverged_mut: &mut Vec<TypePointer>,
+        ) -> Option<NodeIndex> {
             let p = map.find_imm(p);
-            if !pointers.insert(p) {
-                return;
+            if let Some(n) = p_to_n.get(&p) {
+                return Some(*n);
             }
             let terminal = map.dereference_without_find(p);
-            for args in terminal.type_map.values() {
-                for t in args {
-                    collect_pointers(map, *t, pointers);
-                }
+            if terminal.diverged != Diverged::NotSure {
+                return None;
             }
-        }
-        collect_pointers(&self.map, p, &mut self.collect_box_points_memo);
-    }
-
-    fn collect_box_points_aux(
-        &mut self,
-        p: TypePointer,
-        parent_of_p: Option<(TypePointer, TypeId, u32)>,
-        trace_map: &mut FxHashSet<TypePointer>,
-        non_union_trace: &mut Vec<TypePointer>,
-        direct_trace: &mut FxHashSet<TypePointer>,
-        mut divergent_stopper: Option<DivergentStopper>,
-    ) {
-        let p = self.map.find_imm(p);
-        if self.collect_box_points_memo.contains(&p) {
-            if let Some((p, i, j)) = parent_of_p {
-                let t = self.map.dereference_without_find_mut(p);
-                if let BoxPoint::Boxed(b) = &mut t.box_point {
-                    let e = &mut b.get_mut(&i).unwrap()[j as usize];
-                    if e.is_none() {
-                        *e = Some(false);
-                    }
-                }
-            }
-            return;
-        }
-        if let Some((p, i, j)) = parent_of_p {
-            let t = self.map.dereference_without_find(p);
-            if let BoxPoint::Boxed(b) = &t.box_point {
-                if b[&i][j as usize] == Some(true) {
-                    return;
-                }
-            }
-        } else if !self.collect_box_points_memo_for_fns.insert(p) {
-            return;
-        }
-        let terminal = self.map.dereference_without_find_mut(p);
-        if terminal.box_point == BoxPoint::NotSure {
-            let pss: BTreeMap<_, _> = terminal
-                .type_map
-                .iter()
-                .map(|(id, fields)| (*id, fields.iter().map(|_| None).collect_vec()))
-                .collect();
-            terminal.box_point = BoxPoint::Boxed(pss)
-        }
-        let type_map = terminal.type_map.clone();
-        let normal_len = type_map.len()
-            - type_map
-                .get(&TypeId::Intrinsic(IntrinsicTypeTag::Fn))
-                .is_some() as usize;
-        let is_union = normal_len > 1;
-        if is_union {
-            if let Some((p, union_index, field)) = parent_of_p {
-                divergent_stopper = Some(DivergentStopper {
-                    p,
-                    union_index,
-                    field,
-                });
-            }
-        }
-        if trace_map.contains(&p) {
-            if non_union_trace.contains(&p) {
-                for u in non_union_trace {
-                    self.map.dereference_without_find_mut(*u).box_point = BoxPoint::Diverging;
-                }
-            } else if direct_trace.contains(&p) {
-                let DivergentStopper {
-                    p,
-                    union_index,
-                    field,
-                } = divergent_stopper.unwrap();
-                let terminal = self.map.dereference_without_find_mut(p);
-                if let BoxPoint::Boxed(pss) = &mut terminal.box_point {
-                    debug_assert!(!matches!(union_index, TypeId::Intrinsic(_)));
-                    pss.get_mut(&union_index).unwrap()[field as usize] = Some(true);
-                };
-            }
-            if let Some((p, i, j)) = parent_of_p {
-                let t = self.map.dereference_without_find_mut(p);
-                if let BoxPoint::Boxed(b) = &mut t.box_point {
-                    let a = &mut b.get_mut(&i).unwrap()[j as usize];
-                    if a.is_none() {
-                        *a = Some(false);
-                    }
-                }
-            }
-            return;
-        }
-        let mut new_trace;
-        let non_union_trace = if is_union {
-            new_trace = Vec::new();
-            &mut new_trace
-        } else {
-            non_union_trace.push(p);
-            non_union_trace
-        };
-        trace_map.insert(p);
-        direct_trace.insert(p);
-        for (id, ts) in type_map {
-            match id {
-                TypeId::UserDefined(_) | TypeId::Function(_) => {
-                    for (j, t) in ts.into_iter().enumerate() {
-                        self.collect_box_points_aux(
-                            t,
-                            Some((p, id, j as u32)),
-                            trace_map,
-                            non_union_trace,
-                            direct_trace,
-                            divergent_stopper,
-                        );
-                    }
-                }
-                TypeId::Intrinsic(IntrinsicTypeTag::Mut) => {
-                    for (j, t) in ts.into_iter().enumerate() {
-                        self.collect_box_points_aux(
-                            t,
-                            Some((p, id, j as u32)),
-                            trace_map,
-                            non_union_trace,
-                            &mut Default::default(),
-                            None,
-                        );
-                    }
-                }
-                TypeId::Intrinsic(IntrinsicTypeTag::Fn) => {
-                    for (j, t) in ts.into_iter().enumerate() {
-                        if let BoxPoint::Boxed(b) =
-                            &mut self.map.dereference_without_find_mut(p).box_point
+            let n = g.add_node(p);
+            p_to_n.insert(p, n);
+            for (id, args) in &terminal.type_map {
+                match id {
+                    TypeId::Intrinsic(id) => {
+                        for a in args {
+                            pointer_to_node(map, a.p, p_to_n, g, diverged_mut);
+                        }
+                        if matches!(id, IntrinsicTypeTag::Mut)
+                            && terminal.type_map.len() == 1
+                            && p == map.find_imm(args[0].p)
                         {
-                            let a = &mut b.get_mut(&id).unwrap()[j];
-                            if a.is_none() {
-                                *a = Some(false);
+                            diverged_mut.push(p)
+                        }
+                    }
+                    _ => {
+                        for a in args {
+                            if let Some(to) = pointer_to_node(map, a.p, p_to_n, g, diverged_mut) {
+                                g.update_edge(n, to, -1.);
                             }
                         }
-                        self.collect_box_points_aux(
-                            t,
-                            None,
-                            &mut Default::default(),
-                            &mut Vec::with_capacity(5),
-                            &mut Default::default(),
-                            None,
-                        );
                     }
                 }
-                _ => {
-                    debug_assert!(ts.is_empty());
+            }
+            Some(n)
+        }
+        let mut g = Graph::new();
+        let mut p_to_n = FxHashMap::default();
+        let mut diverged_mut = Vec::new();
+        pointer_to_node(&self.map, p, &mut p_to_n, &mut g, &mut diverged_mut);
+        for p in diverged_mut {
+            self.map.dereference_without_find_mut(p).diverged = Diverged::Yes;
+        }
+        for (p, n) in &p_to_n {
+            while let Some(cycle) = find_negative_cycle(&g, *n) {
+                if let Some(pos) = cycle
+                    .iter()
+                    .position(|c| self.map.len_for_c_type(*g.node_weight(*c).unwrap()) > 1)
+                {
+                    let a = if pos == 0 {
+                        *cycle.last().unwrap()
+                    } else {
+                        cycle[pos - 1]
+                    };
+                    let b = cycle[pos];
+                    g.remove_edge(g.find_edge(a, b).unwrap());
+                    let a = *g.node_weight(a).unwrap();
+                    let b = *g.node_weight(b).unwrap();
+                    debug_assert!(self.map.is_terminal(b));
+                    let t = self.map.dereference_without_find(a);
+                    let new_type_map = t
+                        .type_map
+                        .iter()
+                        .map(|(id, args)| {
+                            (
+                                *id,
+                                args.iter()
+                                    .map(|a| {
+                                        let p = self.map.find_imm(a.p);
+                                        debug_assert!(!(p == b && a.boxed));
+                                        FieldType {
+                                            p,
+                                            boxed: a.boxed || p == b,
+                                        }
+                                    })
+                                    .collect(),
+                            )
+                        })
+                        .collect();
+                    let t = &mut self.map.dereference_without_find_mut(a);
+                    if t.diverged != Diverged::Yes {
+                        t.type_map = new_type_map;
+                    }
+                } else {
+                    for (a, b) in cycle.iter().circular_tuple_windows() {
+                        g.remove_edge(g.find_edge(*a, *b).unwrap());
+                        let a = *g.node_weight(*a).unwrap();
+                        self.map.dereference_without_find_mut(a).diverged = Diverged::Yes;
+                    }
                 }
             }
-        }
-        if !is_union {
-            non_union_trace.pop().unwrap();
-        }
-        trace_map.remove(&p);
-        direct_trace.remove(&p);
-        if let Some((p, i, j)) = parent_of_p {
-            let t = self.map.dereference_without_find_mut(p);
-            if let BoxPoint::Boxed(b) = &mut t.box_point {
-                let a = &mut b.get_mut(&i).unwrap()[j as usize];
-                if a.is_none() {
-                    *a = Some(false);
-                }
+            let t = &mut self.map.dereference_without_find_mut(*p);
+            if matches!(t.diverged, Diverged::NotSure) {
+                t.diverged = Diverged::No;
             }
         }
     }
@@ -2015,9 +1892,8 @@ impl<'a, 'b> Env<'a, 'b> {
 struct PossibleFunction {
     tag: u32,
     lambda_id: FxLambdaId,
-    original_lambda_id: LambdaId,
     c_type: CType,
-    ctx: Vec<TypePointer>,
+    ctx: Vec<FieldType>,
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -2056,13 +1932,6 @@ impl Display for GlobalVariableId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct DivergentStopper {
-    p: TypePointer,
-    union_index: TypeId,
-    field: u32,
 }
 
 impl From<LocalVariable> for VariableId {

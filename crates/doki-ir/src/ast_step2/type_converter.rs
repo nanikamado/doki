@@ -1,7 +1,7 @@
 use super::c_type::PointerForCType;
 use super::type_memo::TypeMemo;
 use super::{CType, Env};
-use crate::ast_step1::{self, BoxPoint, PaddedTypeMap, TypePointer};
+use crate::ast_step1::{self, Diverged, FieldType, PaddedTypeMap, TypePointer};
 use crate::TypeId;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
@@ -50,7 +50,7 @@ const FN_TAG: ast_step1::TypeId =
 
 enum SingleOrUnion {
     Never,
-    Single(TypeId, Vec<(TypePointer, bool)>),
+    Single(TypeId, Vec<FieldType>),
     Union,
 }
 
@@ -68,25 +68,11 @@ fn c_type_tag_count(
     {
         0 => SingleOrUnion::Never,
         1 => {
-            let (id, args) = terminal.type_map.iter().next().unwrap();
-            let terminal = map.dereference_without_find(p);
-            match &terminal.box_point {
-                BoxPoint::NotSure => panic!(),
-                BoxPoint::Diverging => SingleOrUnion::Never,
-                BoxPoint::Boxed(box_point) => SingleOrUnion::Single(
-                    *id,
-                    args.iter()
-                        .copied()
-                        .zip_eq(
-                            box_point
-                                .values()
-                                .next()
-                                .unwrap()
-                                .iter()
-                                .map(|a| a.unwrap()),
-                        )
-                        .collect(),
-                ),
+            let (id, args) = terminal.type_map.into_iter().next().unwrap();
+            match terminal.diverged {
+                Diverged::NotSure => panic!(),
+                Diverged::Yes => SingleOrUnion::Never,
+                Diverged::No => SingleOrUnion::Single(id, args),
             }
         }
         _ => SingleOrUnion::Union,
@@ -149,18 +135,14 @@ impl ConverterCollector {
                         .enumerate()
                         .find(|(_, (k, _))| **k == a_tag)
                         .unwrap();
-                    match &b_t.box_point {
-                        BoxPoint::NotSure => panic!(),
-                        BoxPoint::Diverging => ConvertOp::Unexpected,
-                        BoxPoint::Boxed(box_point) => {
+                    match &b_t.diverged {
+                        Diverged::NotSure => panic!(),
+                        Diverged::Yes => ConvertOp::Unexpected,
+                        Diverged::No => {
                             let converters = a_args
                                 .iter()
                                 .copied()
-                                .zip_eq(
-                                    args.iter()
-                                        .copied()
-                                        .zip_eq(box_point[&a_tag].iter().map(|a| a.unwrap())),
-                                )
+                                .zip_eq(args.iter().copied())
                                 .collect_vec()
                                 .into_iter()
                                 .map(|(a, b)| self.add_aux(a, b, env))
@@ -172,51 +154,28 @@ impl ConverterCollector {
                 (SingleOrUnion::Union, SingleOrUnion::Union) => {
                     let b_t = env.map.dereference_imm(b);
                     let a_t = env.map.dereference_imm(a);
-                    match (a_t.box_point.clone(), b_t.box_point.clone()) {
-                        (BoxPoint::NotSure, _)
-                        | (_, BoxPoint::NotSure)
-                        | (BoxPoint::Diverging, _)
-                        | (_, BoxPoint::Diverging) => panic!(),
-                        (BoxPoint::Boxed(a_box_point), BoxPoint::Boxed(b_box_point)) => {
+                    match (a_t.diverged, b_t.diverged) {
+                        (Diverged::NotSure, _)
+                        | (_, Diverged::NotSure)
+                        | (Diverged::Yes, _)
+                        | (_, Diverged::Yes) => panic!(),
+                        (Diverged::No, Diverged::No) => {
                             let b_t: FxHashMap<_, _> = b_t
                                 .type_map
                                 .iter()
                                 .filter(|(id, _)| **id != FN_TAG)
                                 .enumerate()
-                                .map(|(i, (type_id, args))| {
-                                    (
-                                        *type_id,
-                                        (
-                                            i,
-                                            args.iter()
-                                                .copied()
-                                                .zip_eq(
-                                                    b_box_point[type_id].iter().map(|a| a.unwrap()),
-                                                )
-                                                .collect_vec(),
-                                        ),
-                                    )
-                                })
+                                .map(|(i, (type_id, args))| (*type_id, (i, args.clone())))
                                 .collect();
                             let ops = a_t
                                 .type_map
-                                .iter()
+                                .clone()
+                                .into_iter()
                                 .filter(|(id, _)| {
-                                    **id != ast_step1::TypeId::Intrinsic(
+                                    *id != ast_step1::TypeId::Intrinsic(
                                         crate::intrinsics::IntrinsicTypeTag::Fn,
                                     )
                                 })
-                                .map(|(k, v)| {
-                                    (
-                                        *k,
-                                        v.iter()
-                                            .copied()
-                                            .zip_eq(a_box_point[k].iter().map(|a| a.unwrap()))
-                                            .collect_vec(),
-                                    )
-                                })
-                                .collect_vec()
-                                .into_iter()
                                 .map(|(type_id, a_args)| {
                                     let (b_tag, b_args) = &b_t[&type_id];
                                     let convert_op = a_args
@@ -244,15 +203,15 @@ impl ConverterCollector {
 
     fn add_aux(
         &mut self,
-        (a, a_boxed): (TypePointer, bool),
-        (b, b_boxed): (TypePointer, bool),
+        a: FieldType,
+        b: FieldType,
         env: &mut Env<'_, '_>,
     ) -> (u32, ConvertOpRef) {
-        let c = self.add(a, b, env);
-        let r = match (a_boxed, b_boxed) {
-            (true, true) => ConvertOpRef::RemainRef(env.c_type(PointerForCType::from(b))),
+        let c = self.add(a.p, b.p, env);
+        let r = match (a.boxed, b.boxed) {
+            (true, true) => ConvertOpRef::RemainRef(env.c_type(PointerForCType::from(b.p))),
             (true, false) => ConvertOpRef::Deref,
-            (false, true) => ConvertOpRef::AddRef(env.c_type(PointerForCType::from(b))),
+            (false, true) => ConvertOpRef::AddRef(env.c_type(PointerForCType::from(b.p))),
             (false, false) => ConvertOpRef::None,
         };
         (c, r)

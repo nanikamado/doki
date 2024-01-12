@@ -1,6 +1,6 @@
 use super::Env;
-use crate::ast_step1::TypePointer;
-use crate::ast_step2::{CType, FieldOp, PrinterCollector};
+use crate::ast_step1::{FieldType, TypePointer};
+use crate::ast_step2::{CType, PrinterCollector};
 use crate::codegen::Dis;
 use crate::intrinsics::IntrinsicTypeTag;
 use crate::TypeId;
@@ -12,7 +12,7 @@ fn print_tag_args(
     f: &mut std::fmt::Formatter<'_>,
     tag: TypeId,
     arg: impl Display,
-    fields: &[FieldOp],
+    fields: &[FieldType],
     env: Env,
 ) -> std::fmt::Result {
     match tag {

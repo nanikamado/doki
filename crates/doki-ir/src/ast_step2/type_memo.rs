@@ -83,33 +83,25 @@ impl TypeMemo {
         self.trace.insert(p, self.trace.len());
         let mut ts = SmallVec::new();
         let terminal = map.dereference_without_find(p);
-        let reference_point = terminal.box_point.clone();
-        let box_point = match reference_point {
-            ast_step1::BoxPoint::Diverging => None,
-            ast_step1::BoxPoint::Boxed(pss) => Some(pss),
-            ast_step1::BoxPoint::NotSure => panic!(),
-        };
-        let set_refed = |t: TypeInner, boxed: Option<bool>| {
-            if boxed.unwrap() {
-                match t {
-                    TypeInner::RecursionPoint { i, .. } => {
-                        TypeInner::RecursionPoint { i, refed: true }
-                    }
-                    TypeInner::Type(t) => TypeInner::Type(Type { refed: true, ..t }),
-                }
-            } else {
-                t
-            }
-        };
+        let reference_point = terminal.diverged;
+        debug_assert_ne!(reference_point, ast_step1::Diverged::NotSure);
         for (id, args) in terminal.type_map.clone() {
-            let args = args.iter().map(|t| self.get_type_inner(*t, map));
-            let args = if let Some(box_point) = &box_point {
-                args.zip_eq(&box_point[&id])
-                    .map(|(t, boxed)| set_refed(t, *boxed))
-                    .collect()
-            } else {
-                args.collect()
-            };
+            let args = args
+                .iter()
+                .map(|t| {
+                    let a = self.get_type_inner(t.p, map);
+                    if t.boxed {
+                        match a {
+                            TypeInner::RecursionPoint { i, .. } => {
+                                TypeInner::RecursionPoint { i, refed: true }
+                            }
+                            TypeInner::Type(t) => TypeInner::Type(Type { refed: true, ..t }),
+                        }
+                    } else {
+                        a
+                    }
+                })
+                .collect();
             ts.push(TypeUnit { id, args })
         }
         TypeInner::Type(Type {
@@ -134,34 +126,24 @@ impl TypeMemo {
         trace.insert(p, trace.len() as u32);
         let mut ts = SmallVec::new();
         let terminal = map.dereference_without_find(p);
-        let set_refed = |t: TypeInner, boxed: Option<bool>| {
-            if boxed.unwrap() {
-                match t {
-                    TypeInner::RecursionPoint { i, .. } => {
-                        TypeInner::RecursionPoint { i, refed: true }
-                    }
-                    TypeInner::Type(t) => TypeInner::Type(Type { refed: true, ..t }),
-                }
-            } else {
-                t
-            }
-        };
-        let box_point = match &terminal.box_point {
-            ast_step1::BoxPoint::Diverging => None,
-            ast_step1::BoxPoint::Boxed(pss) => Some(pss),
-            ast_step1::BoxPoint::NotSure => panic!("p = {p}, terminal = {terminal:?}"),
-        };
+        debug_assert_ne!(terminal.diverged, ast_step1::Diverged::NotSure);
         for (id, args) in &terminal.type_map {
             let args = args
                 .iter()
-                .map(|t| TypeMemo::get_type_inner_for_hash(*t, trace, map));
-            let args = if let Some(box_point) = box_point {
-                args.zip_eq(&box_point[id])
-                    .map(|(t, boxed)| set_refed(t, *boxed))
-                    .collect()
-            } else {
-                args.collect()
-            };
+                .map(|t| {
+                    let a = TypeMemo::get_type_inner_for_hash(t.p, trace, map);
+                    if t.boxed {
+                        match a {
+                            TypeInner::RecursionPoint { i, .. } => {
+                                TypeInner::RecursionPoint { i, refed: true }
+                            }
+                            TypeInner::Type(t) => TypeInner::Type(Type { refed: true, ..t }),
+                        }
+                    } else {
+                        a
+                    }
+                })
+                .collect();
             ts.push(TypeUnit { id: *id, args })
         }
         TypeInner::Type(Type {

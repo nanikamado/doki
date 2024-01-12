@@ -1,4 +1,4 @@
-use super::{BoxPoint, PaddedTypeMap, TypePointer};
+use super::{Diverged, FieldType, PaddedTypeMap, TypePointer};
 use crate::util::dfa_minimization::Dfa;
 use crate::TypeId;
 use multimap::MultiMap;
@@ -41,20 +41,20 @@ fn collect_points(
     let type_map = terminal.type_map.clone();
     for (_, ps) in type_map {
         for p in ps {
-            collect_points(p, map, points)
+            collect_points(p.p, map, points)
         }
     }
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
-pub struct TerminalRef<'a> {
-    pub type_map: BTreeMap<TypeId, Vec<TypePointer>>,
-    pub reference_point: &'a BoxPoint,
+pub struct TerminalRef {
+    pub type_map: BTreeMap<TypeId, Vec<FieldType>>,
+    pub reference_point: Diverged,
     pub fixed: bool,
 }
 
 impl Dfa for PaddedTypeMap {
-    type Transition<'a> = TerminalRef<'a>;
+    type Transition<'a> = TerminalRef;
     type Node = TypePointer;
 
     fn get<'a>(
@@ -69,14 +69,17 @@ impl Dfa for PaddedTypeMap {
             .map(|(id, ps)| {
                 let ps = ps
                     .iter()
-                    .map(|p| TypePointer(points[&self.find_imm(*p)]))
+                    .map(|p| FieldType {
+                        p: TypePointer(points[&self.find_imm(p.p)]),
+                        boxed: p.boxed,
+                    })
                     .collect();
                 (*id, ps)
             })
             .collect();
         TerminalRef {
             type_map,
-            reference_point: &t.box_point,
+            reference_point: t.diverged,
             fixed: t.fixed,
         }
     }
