@@ -28,5 +28,5 @@ main = _: let test0 = not (contains 0 E)
     in let test2 = not (contains 3 t)
     in println match and test0 (and test1 test2) with
         True => "ok",
-        False => "ng",
+        False => "failed",
     end
