@@ -138,7 +138,8 @@ pub enum Expr {
     F64(f64),
     U8(u8),
     Str(String),
-    Ident(VariableId),
+    GlobalIdent(GlobalVariableId),
+    LocalIdent(LocalVariable),
     Call {
         args: Vec<LocalVariable>,
         f: FxLambdaId,
@@ -168,12 +169,6 @@ pub enum BasicFunction {
     DebugPrint { p: TypePointer },
     Construction,
     FieldAccessor { field: u32, boxed: bool },
-}
-
-#[derive(Debug, PartialEq, Hash, Clone, Copy, Eq)]
-pub enum VariableId {
-    Local(LocalVariable),
-    Global(GlobalVariableId),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -1029,8 +1024,8 @@ impl<'a, 'b> Env<'a, 'b> {
                 basic_block_env.assign(v, e)
             }
             ast_step1::Expr::LocalIdent(d) => {
-                let l = VariableId::Local(self.get_defined_local_variable(*d, root_t));
-                basic_block_env.assign(v, Ident(l));
+                let l = self.get_defined_local_variable(*d, root_t);
+                basic_block_env.assign(v, LocalIdent(l));
             }
             ast_step1::Expr::GlobalIdent(d, r, p) => {
                 let p1 = self.map.clone_pointer(*p, replace_map);
@@ -1042,8 +1037,8 @@ impl<'a, 'b> Env<'a, 'b> {
                     let p2 = self.map.clone_pointer(*p, &mut r);
                     assert_eq!(p1, p2);
                 }
-                let l = VariableId::Global(self.monomorphize_decl(*d, p1, r));
-                basic_block_env.assign(v, Ident(l));
+                let l = self.monomorphize_decl(*d, p1, r);
+                basic_block_env.assign(v, GlobalIdent(l));
             }
             ast_step1::Expr::Call { f, a, err_msg } => {
                 let f_t = self.local_variable_types_old.get(*f);
@@ -1918,8 +1913,8 @@ impl Display for GlobalVariableId {
     }
 }
 
-impl From<LocalVariable> for VariableId {
-    fn from(value: LocalVariable) -> Self {
-        Self::Local(value)
-    }
-}
+// impl From<LocalVariable> for VariableId {
+//     fn from(value: LocalVariable) -> Self {
+//         Self::Local(value)
+//     }
+// }

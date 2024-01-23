@@ -1,6 +1,4 @@
-use crate::ast_step2::{
-    Ast, BasicBlock, EndInstruction, Expr, Function, FxLambdaId, Instruction, VariableId,
-};
+use crate::ast_step2::{Ast, BasicBlock, EndInstruction, Expr, Function, FxLambdaId, Instruction};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -123,7 +121,7 @@ fn eliminate_from_basic_block<'a>(
                 bb.instructions.pop();
                 for (p, a) in f.parameters.iter().zip_eq(args) {
                     bb.instructions
-                        .push(Instruction::Assign(*p, Expr::Ident(VariableId::Local(a))));
+                        .push(Instruction::Assign(*p, Expr::LocalIdent(a)));
                 }
                 bb.end_instruction = EndInstruction::Goto { label: f.label };
             } else if cycle.contains(&f) {
@@ -131,7 +129,7 @@ fn eliminate_from_basic_block<'a>(
                 let called_fn = &functions[&f];
                 for (p, a) in called_fn.parameters.iter().zip_eq(args) {
                     bb.instructions
-                        .push(Instruction::Assign(*p, Expr::Ident(VariableId::Local(a))));
+                        .push(Instruction::Assign(*p, Expr::LocalIdent(a)));
                 }
                 bb.end_instruction = EndInstruction::Goto { label: *free_label };
                 inlining_queue.push_back((f, *free_label));

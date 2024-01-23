@@ -4,7 +4,7 @@ use crate::ast_step1::{ConstructorId, ConstructorNames};
 use crate::ast_step2::c_type::CTypeScheme;
 use crate::ast_step2::{
     self, Ast, CType, ConvertOpRef, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId,
-    Instruction, LocalVariable, LocalVariableCollector, StructId, Tester, Types, VariableId,
+    Instruction, LocalVariable, LocalVariableCollector, StructId, Tester, Types,
 };
 use crate::intrinsics::IntrinsicVariable;
 use crate::util::collector::Collector;
@@ -648,17 +648,13 @@ fn collect_local_variables_in_block(b: &FunctionBody, vs: &mut FxHashSet<LocalVa
 
 fn collect_local_variables_in_expr(e: &Expr, vs: &mut FxHashSet<LocalVariable>) {
     match e {
-        Expr::I64(_)
-        | Expr::F64(_)
-        | Expr::U8(_)
-        | Expr::Str(_)
-        | Expr::Ident(VariableId::Global(_)) => (),
+        Expr::I64(_) | Expr::F64(_) | Expr::U8(_) | Expr::Str(_) | Expr::GlobalIdent(_) => (),
         Expr::Call { args, .. } | Expr::BasicCall { args, .. } => {
             for a in args {
                 collect_local_variables_in_variable(*a, vs);
             }
         }
-        Expr::Ident(VariableId::Local(a))
+        Expr::LocalIdent(a)
         | Expr::Ref(a)
         | Expr::Deref(a)
         | Expr::Downcast { value: a, .. }
@@ -797,7 +793,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
                     write!(fmt, "\"{}\"", StringEscape(a))
                 }
             }
-            Expr::Ident(VariableId::Global(i)) => {
+            Expr::GlobalIdent(i) => {
                 #[cfg(debug_assertions)]
                 if let Some(d) = env.cloned_variables.get(i) {
                     debug_assert_eq!(**t, d.c_t)
@@ -806,7 +802,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 }
                 i.fmt_with_env(env, fmt)
             }
-            Expr::Ident(VariableId::Local(i)) => i.fmt_with_env(env, fmt),
+            Expr::LocalIdent(i) => i.fmt_with_env(env, fmt),
             Expr::Call {
                 args,
                 f,
