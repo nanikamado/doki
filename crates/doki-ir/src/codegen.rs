@@ -656,7 +656,6 @@ fn collect_local_variables_in_expr(e: &Expr, vs: &mut FxHashSet<LocalVariable>) 
         }
         Expr::LocalIdent(a)
         | Expr::Ref(a)
-        | Expr::Deref(a)
         | Expr::Downcast { value: a, .. }
         | Expr::Upcast { value: a, .. } => collect_local_variables_in_variable(*a, vs),
     }
@@ -875,7 +874,6 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 debug_assert!(t.boxed);
                 write!(fmt, "ref_{}({})", env.refed_types[&t.i], Dis(v, env))
             }
-            Expr::Deref(v) => write!(fmt, "*{}", Dis(v, env)),
         }
     }
 }

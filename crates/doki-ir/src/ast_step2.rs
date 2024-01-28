@@ -160,7 +160,6 @@ pub enum Expr {
         check: bool,
     },
     Ref(LocalVariable),
-    Deref(LocalVariable),
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Eq)]
