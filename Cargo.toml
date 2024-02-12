@@ -17,7 +17,6 @@ tempfile = "3.5.0"
 language-server = { path = "crates/language-server", optional = true }
 backtrace-on-stack-overflow = { version = "0.3.0", optional = true }
 owo-colors = "3.5.0"
-predicates = "3.0.3"
 simplelog = "0.12.1"
 log = "0.4.19"
 typed-arena = "2.0.2"
