@@ -1709,7 +1709,7 @@ impl<'a, 'b> Env<'a, 'b> {
             }
             let n = g.add_node(p);
             p_to_n.insert(p, n);
-            for (id, (args, _boxed)) in &terminal.type_map {
+            for (id, (args, boxed)) in &terminal.type_map {
                 match id {
                     TypeId::Intrinsic(id) => {
                         for a in args {
@@ -1723,6 +1723,7 @@ impl<'a, 'b> Env<'a, 'b> {
                         }
                     }
                     _ => {
+                        debug_assert!(!boxed);
                         for a in args {
                             if let Some(to) = pointer_to_node(map, *a, p_to_n, g, diverged_mut) {
                                 g.update_edge(n, to, -1.);
