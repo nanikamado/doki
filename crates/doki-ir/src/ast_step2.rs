@@ -9,12 +9,12 @@ use self::c_type::{CTypeEnv, CTypeScheme, PointerForCType};
 pub use self::intrinsic_debug::PrinterCollector;
 pub use self::local_variable::{LocalVariable, LocalVariableCollector};
 use self::type_converter::ConverterCollector;
-pub use self::type_converter::{ConvertOp, ConvertOpRef};
+pub use self::type_converter::{ConvertOp, ConvertOpRef, UnionOp};
 use self::type_memo::TypeMemo;
 pub use self::type_memo::{DisplayTypeWithEnvStruct, DisplayTypeWithEnvStructOption, Type};
 use self::union_find::UnionFind;
 use crate::ast_step1::{
-    self, ConstructorNames, FieldType, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
+    self, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
     ReplaceMap, TypeId, TypePointer,
 };
 use crate::ast_step2::c_type::PointerModifier;
@@ -65,7 +65,6 @@ pub struct StructId(pub usize);
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct CType {
     pub i: StructId,
-    pub boxed: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -158,8 +157,8 @@ pub enum Expr {
         tag: u32,
         value: LocalVariable,
         check: bool,
+        boxed: bool,
     },
-    Ref(LocalVariable),
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Eq)]
@@ -167,7 +166,7 @@ pub enum BasicFunction {
     Intrinsic { v: IntrinsicVariable, id: u32 },
     DebugPrint { p: TypePointer },
     Construction,
-    FieldAccessor { field: u32, boxed: bool },
+    FieldAccessor { field: u32 },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -239,9 +238,11 @@ impl<'a> Ast<'a> {
         let printer_c_type = memo
             .printer_collector
             .inner()
-            .clone()
             .keys()
-            .map(|p| (*p, memo.c_type(PointerForCType::from(*p))))
+            .copied()
+            .collect_vec()
+            .into_iter()
+            .map(|p| (p, memo.c_type(PointerForCType::from(p))))
             .collect();
         let functions = memo
             .functions
@@ -385,8 +386,10 @@ impl<'a, 'b> Env<'a, 'b> {
         constructor_names: ConstructorNames,
     ) -> Self {
         let mut c_type_memo_from_hash: Collector<_> = Default::default();
-        c_type_memo_from_hash
-            .get_or_insert(CTypeForHash(vec![CTypeForHashUnit::Aggregate(Vec::new())]));
+        c_type_memo_from_hash.get_or_insert(CTypeForHash(vec![(
+            CTypeForHashUnit::Aggregate(Vec::new()),
+            false,
+        )]));
         let c_type_definitions = vec![CTypeScheme::Aggregate(Vec::new())];
         Env {
             variable_decls,
@@ -710,7 +713,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     .clone_pointer(self.local_variable_types_old.get(*a), replace_map);
                 let operand = self.get_defined_local_variable(*a, root_t);
                 match self.get_tag_normal(p, *id) {
-                    GetTagNormalResult::Tagged(tag) => {
+                    GetTagNormalResult::Tagged { tag, boxed: _ } => {
                         basic_block_env.instructions.push(Instruction::Test {
                             tester: Tester::Tag { tag },
                             operand,
@@ -786,7 +789,7 @@ impl<'a, 'b> Env<'a, 'b> {
     ) -> Result<LocalVariable, String> {
         let a = self.get_defined_local_variable(a, root_t);
         match self.get_tag_normal(p, type_id) {
-            GetTagNormalResult::Tagged(tag) => {
+            GetTagNormalResult::Tagged { tag, boxed } => {
                 if let Some(catch_label) = catch_label {
                     instructions.push(Instruction::Test {
                         tester: Tester::Tag { tag },
@@ -799,6 +802,7 @@ impl<'a, 'b> Env<'a, 'b> {
                         tag,
                         value: a,
                         check: catch_label.is_none(),
+                        boxed,
                     },
                     PointerForCType {
                         p,
@@ -831,15 +835,12 @@ impl<'a, 'b> Env<'a, 'b> {
         use Expr::*;
         let mut args = vec![a];
         for (i, c) in f.ctx.iter().enumerate() {
-            let l = self.new_variable(PointerForCType::from(c.p));
+            let l = self.new_variable(PointerForCType::from(*c));
             basic_block_env.assign(
                 l,
                 BasicCall {
                     args: vec![ctx],
-                    id: BasicFunction::FieldAccessor {
-                        field: i as u32,
-                        boxed: c.boxed,
-                    },
+                    id: BasicFunction::FieldAccessor { field: i as u32 },
                 },
             );
             args.push(l);
@@ -870,39 +871,6 @@ impl<'a, 'b> Env<'a, 'b> {
         basic_block_env: &mut BasicBlockEnv,
         only_fn: bool,
     ) -> Result<(), String> {
-        fn box_construction_args(
-            args: impl Iterator<Item = LocalVariable>,
-            p: TypePointer,
-            type_id: TypeId,
-            basic_block_env: &mut BasicBlockEnv,
-            map: &PaddedTypeMap,
-            local_variable_collector: &mut LocalVariableCollector<Types>,
-        ) -> Vec<LocalVariable> {
-            let t = &map.dereference_without_find(p);
-            debug_assert!(!t.diverged.unwrap());
-            args.zip(&t.type_map[&type_id])
-                .map(|(a, b)| {
-                    if b.boxed {
-                        let t = local_variable_collector.get_type(a);
-                        debug_assert!(!t.c_type.boxed);
-                        let d = local_variable_collector.new_variable(Types {
-                            type_for_display: None,
-                            c_type: CType {
-                                i: t.c_type.i,
-                                boxed: true,
-                            },
-                            type_pointer: None,
-                        });
-                        basic_block_env
-                            .instructions
-                            .push(Instruction::Assign(d, Expr::Ref(a)));
-                        d
-                    } else {
-                        a
-                    }
-                })
-                .collect()
-        }
         use Expr::*;
         if only_fn
             && !matches!(
@@ -942,16 +910,8 @@ impl<'a, 'b> Env<'a, 'b> {
                 );
                 if !only_fn {
                     let type_id = TypeId::Function(*lambda_id);
-                    let context = box_construction_args(
-                        parameters.iter().copied(),
-                        p,
-                        type_id,
-                        basic_block_env,
-                        &self.map,
-                        &mut self.local_variable_collector,
-                    );
                     let l = BasicCall {
-                        args: context,
+                        args: parameters.clone(),
                         id: BasicFunction::Construction,
                     };
                     let e = self.add_tags_to_expr(l, p, type_id, &mut basic_block_env.instructions);
@@ -1073,6 +1033,7 @@ impl<'a, 'b> Env<'a, 'b> {
                                 tag: possible_function.tag,
                                 value: f,
                                 check: false,
+                                boxed: possible_function.boxed,
                             },
                         ));
                         self.fn_call(v, possible_function, a, new_f, err_msg, basic_block_env);
@@ -1090,15 +1051,10 @@ impl<'a, 'b> Env<'a, 'b> {
                 id: ast_step1::BasicFunction::Construction(id),
             } => {
                 let type_id = TypeId::UserDefined(*id);
-                let args = box_construction_args(
-                    args.iter()
-                        .map(|a| *self.local_variable_replace_map.get(&(*a, root_t)).unwrap()),
-                    p,
-                    type_id,
-                    basic_block_env,
-                    &self.map,
-                    &mut self.local_variable_collector,
-                );
+                let args = args
+                    .iter()
+                    .map(|a| *self.local_variable_replace_map.get(&(*a, root_t)).unwrap())
+                    .collect();
                 let l = BasicCall {
                     args,
                     id: BasicFunction::Construction,
@@ -1141,15 +1097,11 @@ impl<'a, 'b> Env<'a, 'b> {
                 )?;
                 let t = &self.map.dereference(p);
                 debug_assert!(!t.diverged.unwrap());
-                let deref = t.type_map[&TypeId::UserDefined(*constructor)][*field as usize].boxed;
                 basic_block_env.assign(
                     v,
                     BasicCall {
                         args: vec![a],
-                        id: BasicFunction::FieldAccessor {
-                            field: *field,
-                            boxed: deref,
-                        },
+                        id: BasicFunction::FieldAccessor { field: *field },
                     },
                 )
             }
@@ -1203,7 +1155,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 let ct_p = if let Some(rt) = id.runtime_return_type() {
                     match self.get_tag_normal(p, TypeId::Intrinsic(rt)) {
                         GetTagNormalResult::NotTagged => PointerForCType::from(p),
-                        GetTagNormalResult::Tagged(tag) => PointerForCType {
+                        GetTagNormalResult::Tagged { tag, boxed: _ } => PointerForCType {
                             p,
                             modifier: PointerModifier::UnionMember(tag),
                         },
@@ -1245,7 +1197,7 @@ impl<'a, 'b> Env<'a, 'b> {
         let t = &self.map.dereference_without_find(ot);
         debug_assert!(!t.diverged.unwrap());
         let type_map = &t.type_map;
-        let Some(fn_type) = type_map
+        let Some((fn_type, _fn_boxed)) = type_map
             .get(&TypeId::Intrinsic(IntrinsicTypeTag::Fn))
             .cloned()
         else {
@@ -1256,7 +1208,7 @@ impl<'a, 'b> Env<'a, 'b> {
             TypeId::Intrinsic(IntrinsicTypeTag::Fn)
         );
         let type_map_len = type_map.len();
-        for (tag, (id, ctx)) in type_map
+        for (tag, (id, (ctx, ctx_boxed))) in type_map
             .iter()
             .take(type_map_len - 1)
             .map(|(id, ctx)| (*id, ctx.clone()))
@@ -1271,7 +1223,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     fn_type
                         .iter()
                         .chain(&ctx)
-                        .map(|a| self.get_type_for_hash(a.p))
+                        .map(|a| self.get_type_for_hash(*a))
                         .collect_vec(),
                 );
                 let e = self
@@ -1300,11 +1252,9 @@ impl<'a, 'b> Env<'a, 'b> {
                 fs.push(PossibleFunction {
                     tag: tag as u32,
                     lambda_id: id,
-                    c_type: CType {
-                        i: StructId(ct),
-                        boxed: false,
-                    },
+                    c_type: CType { i: StructId(ct) },
                     ctx,
+                    boxed: ctx_boxed,
                 });
             }
         }
@@ -1319,7 +1269,6 @@ impl<'a, 'b> Env<'a, 'b> {
                 Some(t)
             }
             PointerModifier::UnionMember(_) => None,
-            PointerModifier::Boxed => None,
         }
     }
 
@@ -1347,7 +1296,7 @@ impl<'a, 'b> Env<'a, 'b> {
         instructions: &mut Vec<Instruction>,
     ) -> Expr {
         match self.get_tag_normal(p, id) {
-            GetTagNormalResult::Tagged(tag) => {
+            GetTagNormalResult::Tagged { tag, boxed: _ } => {
                 let value = self.new_variable(PointerForCType {
                     p,
                     modifier: PointerModifier::UnionMember(tag),
@@ -1367,23 +1316,26 @@ impl<'a, 'b> Env<'a, 'b> {
         let mut tag = 0;
         let mut result = None;
         let terminal = self.map.dereference(ot);
-        let mut ids = terminal.type_map.keys();
-        for id in &mut ids {
+        let mut ids = terminal.type_map.iter();
+        for (id, (_, boxed)) in &mut ids {
             if let TypeId::Intrinsic(IntrinsicTypeTag::Fn) = id {
                 break;
             } else if *id == type_id {
                 debug_assert!(result.is_none());
-                result = Some(tag);
+                result = Some((tag, boxed));
             }
             tag += 1;
         }
         debug_assert!(ids.next().is_none());
         match result {
-            Some(tag_of_t) => {
+            Some((tag_of_t, boxed)) => {
                 if tag == 1 {
                     GetTagNormalResult::NotTagged
                 } else {
-                    GetTagNormalResult::Tagged(tag_of_t as u32)
+                    GetTagNormalResult::Tagged {
+                        tag: tag_of_t as u32,
+                        boxed: *boxed,
+                    }
                 }
             }
             None => GetTagNormalResult::Impossible,
@@ -1391,91 +1343,82 @@ impl<'a, 'b> Env<'a, 'b> {
     }
 
     pub fn c_type(&mut self, p: PointerForCType) -> CType {
-        debug_assert_ne!(p.modifier, PointerModifier::Boxed);
         let p = self.normalizer_for_c_type.find(PointerForCType {
             p: self.map.find(p.p),
             ..p
         });
         if let Some(t) = self.c_type_memo.get(&p) {
-            *t
-        } else {
-            debug_assert!(!self.normalizer_for_c_type.contains(p));
-            self.collect_box_points(p.p);
-            self.map.minimize(p.p);
-            if let Some(t) = self.c_type_from_memo(p) {
-                return CType {
-                    i: StructId(t),
-                    boxed: false,
-                };
-            }
-            let mut partitions = Default::default();
-            self.collect_pointers_for_c_type(p.p, &mut partitions);
-            let c_type_schemes = partitions
-                .keys()
-                .map(|p| (*p, self.get_c_type_scheme_from_pointer(*p)))
-                .collect();
-            let (partitions, c_type_defs) = CTypeEnv(&c_type_schemes).split_partitions(partitions);
-            let partition_rev: FxHashMap<_, _> = partitions.iter().map(|(k, v)| (*v, *k)).collect();
-            let c_type_defs_rev: FxHashMap<_, _> =
-                c_type_defs.iter().map(|(k, v)| (*v, k)).collect();
-            for (t, p) in &partitions {
-                debug_assert!(self.map.is_terminal(t.p));
-                let r = partition_rev[p];
-                debug_assert!(self.map.is_terminal(r.p));
-                debug_assert!(self.map.dereference_without_find(t.p).diverged.is_some());
-                debug_assert!(self.map.dereference_without_find(r.p).diverged.is_some());
-                if *t != r {
-                    self.normalizer_for_c_type.union(*t, r)
-                }
-            }
-            let mut new_c_type_defs = Vec::new();
-            for (g, t) in &partition_rev {
-                let t = self.normalizer_for_c_type.find(*t);
-                let for_hash = self.c_type_for_hash(t);
-                if let Some(c_type) = self.c_type_memo_from_hash.get(&for_hash) {
-                    self.c_type_memo.insert(
-                        t,
-                        CType {
-                            i: StructId(c_type),
-                            boxed: false,
-                        },
-                    );
-                } else {
-                    let c_type = self.c_type_memo_from_hash.get_or_insert(for_hash);
-                    self.c_type_memo.insert(
-                        t,
-                        CType {
-                            i: StructId(c_type),
-                            boxed: false,
-                        },
-                    );
-                    let d = c_type_defs_rev[g];
-                    debug_assert_eq!(
-                        matches!(c_type_schemes[&t], CTypeScheme::Union(_)),
-                        matches!(d, CTypeScheme::Union(_))
-                    );
-                    new_c_type_defs.push(d);
-                }
-            }
-            for d in new_c_type_defs {
-                let d = d.replace_ref(|a| {
-                    let boxed = a.boxed;
-                    let a = partition_rev[&(a.i.0 as u32)];
-                    let a = self.normalizer_for_c_type.find(a);
-                    let for_hash = self.c_type_for_hash(a);
-                    CType {
-                        i: StructId(self.c_type_memo_from_hash.get(&for_hash).unwrap()),
-                        boxed,
-                    }
-                });
-                self.c_type_definitions.push(d);
-            }
-            debug_assert_eq!(
-                self.c_type_memo_from_hash.len(),
-                self.c_type_definitions.len()
-            );
-            self.c_type_memo[&self.normalizer_for_c_type.find(p)]
+            return *t;
         }
+        debug_assert!(!self.normalizer_for_c_type.contains(p));
+        self.collect_box_points(p.p);
+        self.map.minimize(p.p);
+        debug_assert!(!self.c_type_memo.contains_key(&p));
+        if let Some(t) = self.c_type_from_memo(p) {
+            return CType { i: StructId(t) };
+        }
+        let mut partitions = Default::default();
+        self.collect_pointers_for_c_type(p.p, &mut partitions);
+        let c_type_schemes = partitions
+            .keys()
+            .map(|p| (*p, self.get_c_type_scheme_from_pointer(*p)))
+            .collect();
+        let (partitions, c_type_defs) = CTypeEnv(&c_type_schemes).split_partitions(partitions);
+        let partition_rev: FxHashMap<_, _> = partitions.iter().map(|(k, v)| (*v, *k)).collect();
+        let c_type_defs_rev: FxHashMap<_, _> = c_type_defs.iter().map(|(k, v)| (*v, k)).collect();
+        for (t, p) in &partitions {
+            debug_assert!(self.map.is_terminal(t.p));
+            let r = partition_rev[p];
+            debug_assert!(self.map.is_terminal(r.p));
+            debug_assert!(self.map.dereference_without_find(t.p).diverged.is_some());
+            debug_assert!(self.map.dereference_without_find(r.p).diverged.is_some());
+            if *t != r {
+                self.normalizer_for_c_type.union(*t, r)
+            }
+        }
+        let mut new_c_type_defs = Vec::new();
+        for (g, t) in &partition_rev {
+            let t = self.normalizer_for_c_type.find(*t);
+            let for_hash = self.c_type_for_hash(t);
+            if let Some(c_type) = self.c_type_memo_from_hash.get(&for_hash) {
+                self.c_type_memo.insert(
+                    t,
+                    CType {
+                        i: StructId(c_type),
+                    },
+                );
+            } else {
+                let c_type = self.c_type_memo_from_hash.get_or_insert(for_hash.clone());
+                self.c_type_memo.insert(
+                    t,
+                    CType {
+                        i: StructId(c_type),
+                    },
+                );
+                let d = c_type_defs_rev[g];
+                debug_assert_eq!(
+                    matches!(c_type_schemes[&t], CTypeScheme::Union(_)),
+                    matches!(d, CTypeScheme::Union(_))
+                );
+                new_c_type_defs.push(d);
+            }
+        }
+        for d in new_c_type_defs {
+            let d = d.replace_ref(|a| {
+                let a = partition_rev[&(a.i.0 as u32)];
+                let a = self.normalizer_for_c_type.find(a);
+                let for_hash = self.c_type_for_hash(a);
+                CType {
+                    i: StructId(self.c_type_memo_from_hash.get(&for_hash).unwrap()),
+                }
+            });
+            self.c_type_definitions.push(d);
+        }
+        debug_assert_eq!(
+            self.c_type_memo_from_hash.len(),
+            self.c_type_definitions.len()
+        );
+        self.c_type_memo[&self.normalizer_for_c_type.find(p)]
     }
 
     fn c_type_for_hash(&mut self, p: PointerForCType) -> CTypeForHash {
@@ -1487,10 +1430,6 @@ impl<'a, 'b> Env<'a, 'b> {
         match p.modifier {
             PointerModifier::Normal => self.c_type_for_hash_inner(p.p),
             PointerModifier::UnionMember(tag) => self.c_type_for_hash_inner_with_tag(p.p, tag),
-            PointerModifier::Boxed => {
-                let t = self.c_type_for_hash_inner(p.p);
-                CTypeForHash(vec![CTypeForHashUnit::Ref(CTypeForHashInner::Type(t))])
-            }
         }
     }
 
@@ -1516,58 +1455,47 @@ impl<'a, 'b> Env<'a, 'b> {
                     .get(&(p, tag))
                     .and_then(|t| self.c_type_memo_from_hash.get(t))
             }
-            PointerModifier::Boxed => self.c_type_for_hash_memo.get(&p.p).and_then(|t| {
-                let t = CTypeForHash(vec![CTypeForHashUnit::Ref(CTypeForHashInner::Type(
-                    t.clone(),
-                ))]);
-                self.c_type_memo_from_hash.get(&t)
-            }),
         }
     }
 
     fn collect_args(
         &mut self,
-        args: &[FieldType],
+        args: &[TypePointer],
         trace: &mut FxHashMap<TypePointer, u32>,
     ) -> Vec<CTypeForHashInner> {
         args.iter()
-            .map(|p| {
-                let t = self.c_type_for_hash_inner_aux(p.p, trace);
-                if p.boxed {
-                    CTypeForHashInner::Type(CTypeForHash(vec![CTypeForHashUnit::Ref(t)]))
-                } else {
-                    t
-                }
-            })
+            .map(|p| self.c_type_for_hash_inner_aux(*p, trace))
             .collect()
     }
 
     fn collect_hash_unit(
         &mut self,
         p: TypePointer,
-        ts: &mut Vec<CTypeForHashUnit>,
+        ts: &mut Vec<(CTypeForHashUnit, bool)>,
         trace: &mut FxHashMap<TypePointer, u32>,
     ) {
         let t = &self.map.dereference_without_find(p);
         debug_assert!(t.diverged.is_some());
-        for (type_id, args) in t.type_map.clone() {
-            match type_id {
+        for (type_id, (args, boxed)) in t.type_map.clone() {
+            if let Some(t) = match type_id {
                 TypeId::Intrinsic(tag) => match tag {
-                    IntrinsicTypeTag::Ptr => ts.push(CTypeForHashUnit::Ptr),
-                    IntrinsicTypeTag::I64 => ts.push(CTypeForHashUnit::I64),
-                    IntrinsicTypeTag::F64 => ts.push(CTypeForHashUnit::F64),
-                    IntrinsicTypeTag::U8 => ts.push(CTypeForHashUnit::U8),
-                    IntrinsicTypeTag::Unit => ts.push(CTypeForHashUnit::Aggregate(Vec::new())),
-                    IntrinsicTypeTag::Fn => {}
+                    IntrinsicTypeTag::Ptr => Some(CTypeForHashUnit::Ptr),
+                    IntrinsicTypeTag::I64 => Some(CTypeForHashUnit::I64),
+                    IntrinsicTypeTag::F64 => Some(CTypeForHashUnit::F64),
+                    IntrinsicTypeTag::U8 => Some(CTypeForHashUnit::U8),
+                    IntrinsicTypeTag::Unit => Some(CTypeForHashUnit::Aggregate(Vec::new())),
+                    IntrinsicTypeTag::Fn => None,
                     IntrinsicTypeTag::Mut => {
-                        let t = self.c_type_for_hash_inner_aux(args[0].p, trace);
-                        ts.push(CTypeForHashUnit::Ref(t));
+                        let t = self.c_type_for_hash_inner_aux(args[0], trace);
+                        Some(CTypeForHashUnit::Ref(t))
                     }
                 },
                 TypeId::UserDefined(_) | TypeId::Function(_) => {
-                    let args = self.collect_args(&args, trace);
-                    ts.push(CTypeForHashUnit::Aggregate(args));
+                    let args = CTypeForHashUnit::Aggregate(self.collect_args(&args, trace));
+                    Some(args)
                 }
+            } {
+                ts.push((t, boxed));
             }
         }
     }
@@ -1583,7 +1511,7 @@ impl<'a, 'b> Env<'a, 'b> {
         let p = self.map.find(p.p);
         let reference_point = self.map.dereference_without_find(p).diverged;
         if reference_point.unwrap() {
-            return CTypeForHashInner::Type(CTypeForHash(vec![CTypeForHashUnit::Diverge]));
+            return CTypeForHashInner::Type(CTypeForHash(vec![(CTypeForHashUnit::Diverge, false)]));
         }
         if let Some(d) = trace.get(&p) {
             return CTypeForHashInner::Index(trace.len() as u32 - *d - 1);
@@ -1617,7 +1545,7 @@ impl<'a, 'b> Env<'a, 'b> {
     ) -> CTypeForHashUnit {
         let t = self.map.dereference_without_find(p);
         debug_assert!(t.diverged.is_some());
-        let (type_id, args) = t.type_map.iter().nth(tag).unwrap();
+        let (type_id, (args, _)) = t.type_map.iter().nth(tag).unwrap();
         let type_id = *type_id;
         let args = args.clone();
         match type_id {
@@ -1629,7 +1557,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 IntrinsicTypeTag::Unit => CTypeForHashUnit::Aggregate(Vec::new()),
                 IntrinsicTypeTag::Fn => panic!(),
                 IntrinsicTypeTag::Mut => {
-                    let t = self.c_type_for_hash_inner_aux(args[0].p, trace);
+                    let t = self.c_type_for_hash_inner_aux(args[0], trace);
                     CTypeForHashUnit::Ref(t)
                 }
             },
@@ -1649,7 +1577,7 @@ impl<'a, 'b> Env<'a, 'b> {
             t.clone()
         } else {
             let t = self.collect_hash_unit_with_tag(p, &mut Default::default(), tag as usize);
-            let t = CTypeForHash(vec![t]);
+            let t = CTypeForHash(vec![(t, false)]);
             self.c_type_for_hash_memo_with_tag
                 .insert((p, tag), t.clone());
             t
@@ -1661,7 +1589,6 @@ impl<'a, 'b> Env<'a, 'b> {
         node: PointerForCType,
     ) -> CTypeScheme<PointerForCType> {
         debug_assert!(self.map.is_terminal(node.p));
-        debug_assert_ne!(node.modifier, PointerModifier::Boxed);
         let t = &self.map.dereference_without_find(node.p);
         match t.diverged {
             None => panic!(),
@@ -1671,7 +1598,11 @@ impl<'a, 'b> Env<'a, 'b> {
             Some(false) => (),
         }
         let mut ts = Vec::new();
-        for (id, args) in &t.type_map {
+        let mut bs = Vec::new();
+        for (id, (args, boxed)) in &t.type_map {
+            if !matches!(id, TypeId::Intrinsic(IntrinsicTypeTag::Fn)) {
+                bs.push(*boxed);
+            }
             match id {
                 TypeId::Intrinsic(tag) => match tag {
                     IntrinsicTypeTag::Ptr => ts.push(CTypeScheme::Ptr),
@@ -1682,23 +1613,16 @@ impl<'a, 'b> Env<'a, 'b> {
                     IntrinsicTypeTag::Fn => (),
                     IntrinsicTypeTag::Mut => {
                         ts.push(CTypeScheme::Mut(PointerForCType::from(
-                            self.map.find_imm(args[0].p),
+                            self.map.find_imm(args[0]),
                         )));
                     }
                 },
                 TypeId::UserDefined(_) | TypeId::Function(_) => {
                     ts.push(CTypeScheme::Aggregate(
                         args.iter()
-                            .map(|p| {
-                                let modifier = if p.boxed {
-                                    PointerModifier::Boxed
-                                } else {
-                                    PointerModifier::Normal
-                                };
-                                PointerForCType {
-                                    p: self.map.find_imm(p.p),
-                                    modifier,
-                                }
+                            .map(|p| PointerForCType {
+                                modifier: PointerModifier::Normal,
+                                p: self.map.find_imm(*p),
                             })
                             .collect(),
                     ));
@@ -1711,10 +1635,16 @@ impl<'a, 'b> Env<'a, 'b> {
             ts.pop().unwrap()
         } else {
             CTypeScheme::Union(
-                (0..ts.len() as u32)
-                    .map(|i| PointerForCType {
-                        modifier: PointerModifier::UnionMember(i),
-                        p: node.p,
+                bs.iter()
+                    .enumerate()
+                    .map(|(i, boxed)| {
+                        (
+                            PointerForCType {
+                                modifier: PointerModifier::UnionMember(i as u32),
+                                p: node.p,
+                            },
+                            *boxed,
+                        )
                     })
                     .collect(),
             )
@@ -1733,12 +1663,12 @@ impl<'a, 'b> Env<'a, 'b> {
         }
         let terminal = self.map.dereference_without_find(p);
         let mut tag = 0;
-        for (id, args) in terminal.type_map.clone() {
+        for (id, (args, _boxed)) in terminal.type_map.clone() {
             match id {
                 TypeId::Intrinsic(IntrinsicTypeTag::Fn) => {}
                 _ => {
                     for t in &args {
-                        self.collect_pointers_for_c_type(t.p, pointers);
+                        self.collect_pointers_for_c_type(*t, pointers);
                     }
                     tag += 1;
                 }
@@ -1779,22 +1709,22 @@ impl<'a, 'b> Env<'a, 'b> {
             }
             let n = g.add_node(p);
             p_to_n.insert(p, n);
-            for (id, args) in &terminal.type_map {
+            for (id, (args, _boxed)) in &terminal.type_map {
                 match id {
                     TypeId::Intrinsic(id) => {
                         for a in args {
-                            pointer_to_node(map, a.p, p_to_n, g, diverged_mut);
+                            pointer_to_node(map, *a, p_to_n, g, diverged_mut);
                         }
                         if matches!(id, IntrinsicTypeTag::Mut)
                             && terminal.type_map.len() == 1
-                            && p == map.find_imm(args[0].p)
+                            && p == map.find_imm(args[0])
                         {
                             diverged_mut.push(p)
                         }
                     }
                     _ => {
                         for a in args {
-                            if let Some(to) = pointer_to_node(map, a.p, p_to_n, g, diverged_mut) {
+                            if let Some(to) = pointer_to_node(map, *a, p_to_n, g, diverged_mut) {
                                 g.update_edge(n, to, -1.);
                             }
                         }
@@ -1816,12 +1746,12 @@ impl<'a, 'b> Env<'a, 'b> {
                     .iter()
                     .position(|c| self.map.len_for_c_type(*g.node_weight(*c).unwrap()) > 1)
                 {
-                    let a = if pos == 0 {
-                        *cycle.last().unwrap()
+                    let a = cycle[pos];
+                    let b = if pos + 1 == cycle.len() {
+                        *cycle.first().unwrap()
                     } else {
-                        cycle[pos - 1]
+                        cycle[pos + 1]
                     };
-                    let b = cycle[pos];
                     g.remove_edge(g.find_edge(a, b).unwrap());
                     let a = *g.node_weight(a).unwrap();
                     let b = *g.node_weight(b).unwrap();
@@ -1830,20 +1760,10 @@ impl<'a, 'b> Env<'a, 'b> {
                     let new_type_map = t
                         .type_map
                         .iter()
-                        .map(|(id, args)| {
-                            (
-                                *id,
-                                args.iter()
-                                    .map(|a| {
-                                        let p = self.map.find_imm(a.p);
-                                        debug_assert!(!(p == b && a.boxed));
-                                        FieldType {
-                                            p,
-                                            boxed: a.boxed || p == b,
-                                        }
-                                    })
-                                    .collect(),
-                            )
+                        .map(|(id, (args, boxed))| {
+                            let args = args.iter().map(|a| self.map.find_imm(*a)).collect_vec();
+                            let boxed = *boxed || args.contains(&b);
+                            (*id, (args, boxed))
                         })
                         .collect();
                     let t = &mut self.map.dereference_without_find_mut(a);
@@ -1871,7 +1791,8 @@ struct PossibleFunction {
     tag: u32,
     lambda_id: FxLambdaId,
     c_type: CType,
-    ctx: Vec<FieldType>,
+    ctx: Vec<TypePointer>,
+    boxed: bool,
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1881,7 +1802,7 @@ enum CTypeForHashInner {
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct CTypeForHash(Vec<CTypeForHashUnit>);
+struct CTypeForHash(Vec<(CTypeForHashUnit, bool)>);
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum CTypeForHashUnit {
@@ -1897,7 +1818,7 @@ enum CTypeForHashUnit {
 pub enum GetTagNormalResult {
     NotTagged,
     Impossible,
-    Tagged(u32),
+    Tagged { tag: u32, boxed: bool },
 }
 
 impl Display for FxLambdaId {

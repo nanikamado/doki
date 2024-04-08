@@ -19,15 +19,9 @@ pub enum TypeId {
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Copy, Hash)]
 pub struct TypePointer(u32);
 
-#[derive(Debug, PartialEq, Clone, Copy, Eq, PartialOrd, Ord, Hash)]
-pub struct FieldType {
-    pub p: TypePointer,
-    pub boxed: bool,
-}
-
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Terminal {
-    pub type_map: BTreeMap<TypeId, Vec<FieldType>>,
+    pub type_map: BTreeMap<TypeId, (Vec<TypePointer>, bool)>,
     pub diverged: Option<bool>,
     pub fixed: bool,
 }
@@ -78,24 +72,24 @@ impl PaddedTypeMap {
             debug_assert_eq!(a_t.diverged, b_t.diverged);
             let fix_b = a_t.fixed && !b_t.fixed;
             let mut fix = Vec::new();
-            for (b_id, b_normal) in b_t.type_map {
-                if let Some(a_normal) = a_t.type_map.get(&b_id) {
+            for (b_id, (b_normal, b_boxed)) in b_t.type_map {
+                if let Some((a_normal, a_boxed)) = a_t.type_map.get_mut(&b_id) {
+                    *a_boxed |= b_boxed;
                     for (a, b) in a_normal.iter().zip(b_normal) {
                         pairs.push((*a, b));
                     }
                 } else {
                     debug_assert!(b_t.diverged.is_none());
                     if fix_b {
-                        fix.extend(b_normal.iter().map(|a| a.p));
+                        fix.extend(b_normal.iter().copied());
                     }
-                    a_t.type_map.insert(b_id, b_normal.clone());
+                    a_t.type_map.insert(b_id, (b_normal, b_boxed));
                 }
             }
             debug_assert!(a_t.diverged.is_none());
             let fix_a = !a_t.fixed && b_t.fixed;
             for (a, b) in pairs {
-                self.union(a.p, b.p);
-                debug_assert_eq!(a.boxed, b.boxed);
+                self.union(a, b);
             }
             if fix_a {
                 self.fix_pointer(a);
@@ -119,17 +113,17 @@ impl PaddedTypeMap {
             };
             debug_assert_eq!(a_t.diverged, b_t.diverged);
             debug_assert_eq!(a_t.fixed, b_t.fixed);
+            debug_assert_eq!(a_t.type_map.len(), b_t.type_map.len());
             for (a, b) in a_t
                 .type_map
                 .values()
-                .flatten()
+                .flat_map(|(a, _)| a)
                 .copied()
                 .collect_vec()
                 .into_iter()
-                .zip_eq(b_t.type_map.values().flatten())
+                .zip_eq(b_t.type_map.values().flat_map(|(a, _)| a))
             {
-                self.union_without_insertion(a.p, b.p);
-                debug_assert_eq!(a.boxed, b.boxed);
+                self.union_without_insertion(a, *b);
             }
         }
     }
@@ -137,39 +131,24 @@ impl PaddedTypeMap {
     pub fn insert_lambda_id(&mut self, p: TypePointer, id: LambdaId, lambda_ctx: Vec<TypePointer>) {
         let t = self.dereference_mut(p);
         debug_assert!(t.diverged.is_none());
-        t.type_map.insert(
-            TypeId::Function(id),
-            lambda_ctx
-                .iter()
-                .map(|a| FieldType {
-                    p: *a,
-                    boxed: false,
-                })
-                .collect(),
-        );
+        t.type_map
+            .insert(TypeId::Function(id), (lambda_ctx.clone(), false));
         if t.fixed {
-            for p in lambda_ctx {
-                self.fix_pointer(p)
+            for p in &lambda_ctx {
+                self.fix_pointer(*p)
             }
         }
     }
 
     pub fn insert_normal(&mut self, p: TypePointer, id: TypeId, args: Vec<TypePointer>) {
         let t = self.dereference_mut(p);
-        if let Some(t) = t.type_map.get(&id) {
+        if let Some((t, boxed)) = t.type_map.get(&id) {
+            debug_assert!(!boxed);
             for (a, b) in t.clone().into_iter().zip(args) {
-                self.union(a.p, b);
+                self.union(a, b);
             }
         } else {
-            t.type_map.insert(
-                id,
-                args.iter()
-                    .map(|a| FieldType {
-                        p: *a,
-                        boxed: false,
-                    })
-                    .collect(),
-            );
+            t.type_map.insert(id, (args.clone(), false));
             if t.fixed {
                 for p in args {
                     self.fix_pointer(p)
@@ -209,7 +188,7 @@ impl PaddedTypeMap {
         self.dereference_without_find(p)
             .type_map
             .get(&TypeId::Intrinsic(IntrinsicTypeTag::Fn))
-            .map(|f| (f[0].p, f[1].p))
+            .map(|(f, _)| (f[0], f[1]))
             .unwrap_or_else(|| {
                 let a = self.new_pointer();
                 let b = self.new_pointer();
@@ -275,18 +254,12 @@ impl PaddedTypeMap {
         let type_map = t
             .type_map
             .into_iter()
-            .map(|(id, t)| {
+            .map(|(id, (t, boxed))| {
                 let t = t
                     .iter()
-                    .map(|p| {
-                        debug_assert!(!p.boxed);
-                        FieldType {
-                            p: self.clone_pointer(p.p, replace_map),
-                            boxed: false,
-                        }
-                    })
+                    .map(|p| self.clone_pointer(*p, replace_map))
                     .collect_vec();
-                (id, t)
+                (id, (t, boxed))
             })
             .collect();
         self.map[new_p.0 as usize] = Node::Terminal(Terminal {
@@ -308,9 +281,9 @@ impl PaddedTypeMap {
         }
         terminal.fixed = true;
         let type_map = terminal.type_map.values().cloned().collect_vec();
-        for ps in type_map {
+        for (ps, _) in type_map {
             for p in ps {
-                self.fix_pointer(p.p)
+                self.fix_pointer(p)
             }
         }
     }
@@ -324,32 +297,24 @@ impl PaddedTypeMap {
     pub fn json_debug(
         &self,
         f: &mut impl std::fmt::Write,
-        p: FieldType,
+        p: TypePointer,
         visited_pointers: &FxHashSet<TypePointer>,
     ) -> Result<(), std::fmt::Error> {
         let mut visited_pointers = visited_pointers.clone();
-        if visited_pointers.contains(&p.p) {
-            return write!(
-                f,
-                r#"{{p:"{}",type:rec{}}}"#,
-                p.p,
-                if p.boxed { ",boxed:true" } else { "" }
-            );
+        if visited_pointers.contains(&p) {
+            return write!(f, r#"{{p:"{}",type:rec}}"#, p,);
         } else {
-            visited_pointers.insert(p.p);
+            visited_pointers.insert(p);
         }
-        write!(f, r#"{{p:"{}","#, p.p)?;
-        match &self.map[p.p.0 as usize] {
+        write!(f, r#"{{p:"{}","#, p)?;
+        match &self.map[p.0 as usize] {
             Node::Pointer(p2) => {
                 write!(
                     f,
                     r#"pointer:{}}}"#,
                     JsonDebugRec {
                         map: self,
-                        p: FieldType {
-                            p: *p2,
-                            boxed: false
-                        },
+                        p: *p2,
                         visited_pointers: &visited_pointers,
                     }
                 )
@@ -370,22 +335,9 @@ impl PaddedTypeMap {
                         write!(f, r#",box_point:"diverged""#)?;
                     }
                     Some(false) => {
-                        let m = t.type_map.iter().format_with(",", |(id, ps), f| {
-                            f(&format_args!(
-                                r#"{id}:[{}]"#,
-                                ps.iter().format_with(",", |p, f| {
-                                    f(&JsonDebugRec {
-                                        map: self,
-                                        p: *p,
-                                        visited_pointers: &visited_pointers,
-                                    })
-                                })
-                            ))
-                        });
-                        write!(f, "{m}")?;
+                        self.json_debug_type_map(f, &t.type_map, &visited_pointers)?;
                     }
                 }
-                let boxed_s = if p.boxed { ",boxed:true" } else { "" };
                 let fixed = if t.fixed {
                     if t.type_map.is_empty() {
                         "fixed:true"
@@ -395,7 +347,7 @@ impl PaddedTypeMap {
                 } else {
                     ""
                 };
-                write!(f, r#"{boxed_s}{fixed}}}}}"#)
+                write!(f, r#"{fixed}}}}}"#)
             }
             Node::Null => write!(f, r#"type:null}}"#),
         }
@@ -405,18 +357,22 @@ impl PaddedTypeMap {
     fn json_debug_type_map(
         &self,
         f: &mut impl std::fmt::Write,
-        type_map: &BTreeMap<TypeId, Vec<FieldType>>,
+        type_map: &BTreeMap<TypeId, (Vec<TypePointer>, bool)>,
         visited_pointers: &FxHashSet<TypePointer>,
     ) -> Result<(), std::fmt::Error> {
-        let m = type_map.iter().format_with(",", |(id, ps), f| {
-            f(&format_args!(
-                r#"{id}:[{}]"#,
-                ps.iter().format_with(",", |p, f| f(&JsonDebugRec {
+        let m = type_map.iter().format_with(",", |(id, (ps, boxed)), f| {
+            let ps = ps.iter().format_with(",", |p, f| {
+                f(&JsonDebugRec {
                     map: self,
                     p: *p,
                     visited_pointers,
-                }))
-            ))
+                })
+            });
+            if *boxed {
+                f(&format_args!(r#"{id}:{{type:box,value:[{}]}}"#, ps))
+            } else {
+                f(&format_args!(r#"{id}:[{}]"#, ps))
+            }
         });
         write!(f, "{m}")
     }
@@ -425,7 +381,7 @@ impl PaddedTypeMap {
 #[cfg(debug_assertions)]
 struct JsonDebugRec<'a> {
     pub map: &'a PaddedTypeMap,
-    pub p: FieldType,
+    pub p: TypePointer,
     pub visited_pointers: &'a FxHashSet<TypePointer>,
 }
 
@@ -442,14 +398,7 @@ pub struct JsonDebug<'a>(pub &'a PaddedTypeMap, pub TypePointer);
 #[cfg(debug_assertions)]
 impl Display for JsonDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.json_debug(
-            f,
-            FieldType {
-                p: self.1,
-                boxed: false,
-            },
-            &FxHashSet::default(),
-        )
+        self.0.json_debug(f, self.1, &FxHashSet::default())
     }
 }
 

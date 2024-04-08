@@ -1,18 +1,23 @@
-use crate::ast_step1::{self, FieldType, PaddedTypeMap, TypePointer};
+use crate::ast_step1::{self, PaddedTypeMap, TypePointer};
 use crate::TypeId;
 use rustc_hash::FxHashMap;
 
 #[derive(Debug, Default)]
 pub struct PrinterCollector {
-    map: FxHashMap<TypePointer, Vec<(TypeId, Vec<FieldType>)>>,
+    map: FxHashMap<TypePointer, PrinterCollectorValue>,
+}
+
+#[derive(Debug, Default)]
+pub struct PrinterCollectorValue {
+    pub union_members: Vec<(TypeId, (Vec<TypePointer>, bool))>,
 }
 
 impl PrinterCollector {
-    pub fn into_inner(self) -> FxHashMap<TypePointer, Vec<(TypeId, Vec<FieldType>)>> {
+    pub fn into_inner(self) -> FxHashMap<TypePointer, PrinterCollectorValue> {
         self.map
     }
 
-    pub fn inner(&self) -> &FxHashMap<TypePointer, Vec<(TypeId, Vec<FieldType>)>> {
+    pub fn inner(&self) -> &FxHashMap<TypePointer, PrinterCollectorValue> {
         &self.map
     }
 
@@ -21,7 +26,7 @@ impl PrinterCollector {
         if self.map.contains_key(&a) {
             return;
         }
-        self.map.insert(a, Vec::new());
+        self.map.insert(a, Default::default());
         match t.diverged {
             None => panic!(),
             Some(true) => (),
@@ -32,12 +37,12 @@ impl PrinterCollector {
                     {
                         continue;
                     }
-                    for a in &args {
-                        self.add(a.p, map);
+                    for a in &args.0 {
+                        self.add(*a, map);
                     }
                     union_members.push((tag, args));
                 }
-                self.map.insert(a, union_members);
+                self.map.insert(a, PrinterCollectorValue { union_members });
             }
         }
     }

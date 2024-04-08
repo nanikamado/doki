@@ -11,7 +11,7 @@ pub enum CTypeScheme<T> {
     F64,
     Ptr,
     Aggregate(Vec<T>),
-    Union(Vec<T>),
+    Union(Vec<(T, bool)>),
     Mut(T),
     Diverge,
 }
@@ -28,7 +28,6 @@ pub struct PointerForCType {
 pub enum PointerModifier {
     Normal,
     UnionMember(u32),
-    Boxed,
 }
 
 impl PointerForCType {
@@ -53,24 +52,8 @@ impl Dfa for CTypeEnv<'_> {
         node: Self::Node,
         points: &FxHashMap<Self::Node, u32>,
     ) -> Self::Transition<'a> {
-        debug_assert_ne!(PointerModifier::Boxed, node.modifier);
-        self.0[&node].replace_ref(|a| {
-            if a.modifier == PointerModifier::Boxed {
-                CType {
-                    i: StructId(
-                        points[&PointerForCType {
-                            modifier: PointerModifier::Normal,
-                            p: a.p,
-                        }] as usize,
-                    ),
-                    boxed: true,
-                }
-            } else {
-                CType {
-                    i: StructId(points[a] as usize),
-                    boxed: false,
-                }
-            }
+        self.0[&node].replace_ref(|a| CType {
+            i: StructId(points[a] as usize),
         })
     }
 }
@@ -89,7 +72,9 @@ impl<T> CTypeScheme<T> {
             CTypeScheme::F64 => CTypeScheme::F64,
             CTypeScheme::Ptr => CTypeScheme::Ptr,
             CTypeScheme::Aggregate(rs) => CTypeScheme::Aggregate(rs.iter().map(&mut f).collect()),
-            CTypeScheme::Union(ts) => CTypeScheme::Union(ts.iter().map(&mut f).collect()),
+            CTypeScheme::Union(ts) => {
+                CTypeScheme::Union(ts.iter().map(|(t, b)| (f(t), *b)).collect())
+            }
             CTypeScheme::Mut(r) => CTypeScheme::Mut(f(r)),
             CTypeScheme::Diverge => CTypeScheme::Diverge,
         }

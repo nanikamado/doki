@@ -1,7 +1,8 @@
 use super::c_type::PointerForCType;
 use super::type_memo::TypeMemo;
 use super::{CType, Env};
-use crate::ast_step1::{self, FieldType, PaddedTypeMap, TypePointer};
+use crate::ast_step1::{self, PaddedTypeMap, TypePointer};
+use crate::ast_step2::c_type::PointerModifier;
 use crate::TypeId;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
@@ -9,7 +10,9 @@ use rustc_hash::FxHashMap;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UnionOp {
     pub new_tag: u32,
-    pub convert_op: Vec<(u32, ConvertOpRef)>,
+    pub convert_op: Vec<u32>,
+    pub ref_op: ConvertOpRef,
+    pub unit_c_type: CType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -17,22 +20,20 @@ pub enum ConvertOp {
     Unknown,
     Id,
     Unexpected,
-    Struct(Vec<(u32, ConvertOpRef)>),
+    Struct(Vec<u32>, ConvertOpRef),
     ReTag(Vec<UnionOp>),
-    AddTag(u32, Vec<(u32, ConvertOpRef)>),
+    AddTag(UnionOp),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ConvertOpRef {
-    None,
-    RemainRef(CType),
-    AddRef(CType),
-    Deref,
+pub struct ConvertOpRef {
+    pub from_boxed: bool,
+    pub to_boxed: bool,
 }
 
 impl ConvertOpRef {
     pub fn is_add_ref(&self) -> bool {
-        matches!(self, ConvertOpRef::AddRef(_))
+        !self.from_boxed && self.to_boxed
     }
 }
 
@@ -50,7 +51,7 @@ const FN_TAG: ast_step1::TypeId =
 
 enum SingleOrUnion {
     Never,
-    Single(TypeId, Vec<FieldType>),
+    Single(TypeId, Vec<TypePointer>),
     Union,
 }
 
@@ -68,10 +69,11 @@ fn c_type_tag_count(
     {
         0 => SingleOrUnion::Never,
         1 => {
-            let (id, args) = terminal.type_map.into_iter().next().unwrap();
+            let (id, (args, boxed)) = terminal.type_map.into_iter().next().unwrap();
             if terminal.diverged.unwrap() {
                 SingleOrUnion::Never
             } else {
+                debug_assert!(!boxed);
                 SingleOrUnion::Single(id, args)
             }
         }
@@ -110,31 +112,36 @@ impl ConverterCollector {
             let b_len = c_type_tag_count(b, &mut env.type_memo, &mut env.map);
             let op = match (a_len, b_len) {
                 (SingleOrUnion::Never, _) => ConvertOp::Unexpected,
-                (SingleOrUnion::Single(_, a_args), SingleOrUnion::Single(_, b)) => {
+                (SingleOrUnion::Single(_, a_args), SingleOrUnion::Single(_, b_args)) => {
                     if a_args.is_empty() {
-                        debug_assert!(b.is_empty());
+                        debug_assert!(b_args.is_empty());
                         ConvertOp::Id
                     } else {
                         let converters = a_args
                             .iter()
-                            .zip_eq(b)
-                            .map(|(a, b)| self.add_aux(*a, b, env))
+                            .zip_eq(b_args)
+                            .map(|(a, b)| self.add(*a, b, env))
                             .collect_vec();
-                        if converters.iter().all(|(a, p)| *a == 0 && !p.is_add_ref()) {
+                        if converters.iter().all(|a| *a == 0) {
                             ConvertOp::Id
                         } else {
-                            ConvertOp::Struct(converters)
+                            let r = ConvertOpRef {
+                                from_boxed: false,
+                                to_boxed: false,
+                            };
+                            ConvertOp::Struct(converters, r)
                         }
                     }
                 }
                 (SingleOrUnion::Single(a_tag, a_args), SingleOrUnion::Union) => {
                     let b_t = env.map.dereference_imm(b);
-                    let (tag, (_, args)) = b_t
+                    let (tag, (_, (args, b_boxed))) = b_t
                         .type_map
                         .iter()
                         .enumerate()
                         .find(|(_, (k, _))| **k == a_tag)
                         .unwrap();
+                    let b_boxed = *b_boxed;
                     if b_t.diverged.unwrap() {
                         ConvertOp::Unexpected
                     } else {
@@ -144,9 +151,21 @@ impl ConverterCollector {
                             .zip_eq(args.iter().copied())
                             .collect_vec()
                             .into_iter()
-                            .map(|(a, b)| self.add_aux(a, b, env))
+                            .map(|(a, b)| self.add(a, b, env))
                             .collect();
-                        ConvertOp::AddTag(tag as u32, converters)
+                        let r = ConvertOpRef {
+                            from_boxed: false,
+                            to_boxed: b_boxed,
+                        };
+                        ConvertOp::AddTag(UnionOp {
+                            new_tag: tag as u32,
+                            convert_op: converters,
+                            ref_op: r,
+                            unit_c_type: env.c_type(PointerForCType {
+                                modifier: PointerModifier::UnionMember(tag as u32),
+                                p: b,
+                            }),
+                        })
                     }
                 }
                 (SingleOrUnion::Union, SingleOrUnion::Union) => {
@@ -170,16 +189,25 @@ impl ConverterCollector {
                                 crate::intrinsics::IntrinsicTypeTag::Fn,
                             )
                         })
-                        .map(|(type_id, a_args)| {
-                            let (b_tag, b_args) = &b_t[&type_id];
+                        .map(|(type_id, (a_args, a_boxed))| {
+                            let (b_tag, (b_args, b_boxed)) = &b_t[&type_id];
                             let convert_op = a_args
                                 .iter()
                                 .zip(b_args)
-                                .map(|(a, b)| self.add_aux(*a, *b, env))
+                                .map(|(a, b)| self.add(*a, *b, env))
                                 .collect_vec();
+                            let ref_op = ConvertOpRef {
+                                from_boxed: a_boxed,
+                                to_boxed: *b_boxed,
+                            };
                             UnionOp {
                                 new_tag: *b_tag as u32,
                                 convert_op,
+                                ref_op,
+                                unit_c_type: env.c_type(PointerForCType {
+                                    modifier: PointerModifier::UnionMember(*b_tag as u32),
+                                    p: b,
+                                }),
                             }
                         })
                         .collect_vec();
@@ -191,21 +219,5 @@ impl ConverterCollector {
             e.op = op;
             e.id
         }
-    }
-
-    fn add_aux(
-        &mut self,
-        a: FieldType,
-        b: FieldType,
-        env: &mut Env<'_, '_>,
-    ) -> (u32, ConvertOpRef) {
-        let c = self.add(a.p, b.p, env);
-        let r = match (a.boxed, b.boxed) {
-            (true, true) => ConvertOpRef::RemainRef(env.c_type(PointerForCType::from(b.p))),
-            (true, false) => ConvertOpRef::Deref,
-            (false, true) => ConvertOpRef::AddRef(env.c_type(PointerForCType::from(b.p))),
-            (false, false) => ConvertOpRef::None,
-        };
-        (c, r)
     }
 }

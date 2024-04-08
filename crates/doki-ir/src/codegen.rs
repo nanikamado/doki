@@ -4,7 +4,7 @@ use crate::ast_step1::{ConstructorId, ConstructorNames};
 use crate::ast_step2::c_type::CTypeScheme;
 use crate::ast_step2::{
     self, Ast, CType, ConvertOpRef, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId,
-    Instruction, LocalVariable, LocalVariableCollector, StructId, Tester, Types,
+    Instruction, LocalVariable, LocalVariableCollector, StructId, Tester, Types, UnionOp,
 };
 use crate::intrinsics::IntrinsicVariable;
 use crate::util::collector::Collector;
@@ -21,10 +21,7 @@ pub struct Codegen<'a>(pub Ast<'a>);
 impl Display for Codegen<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let ast = &self.0;
-        let unit_t = CType {
-            i: StructId(0),
-            boxed: false,
-        };
+        let unit_t = CType { i: StructId(0) };
         let mut refed_types = Collector::default();
         let sorted = sort_aggregates(&ast.c_type_definitions, &mut refed_types);
         let refed_types = refed_types.as_raw();
@@ -39,10 +36,7 @@ impl Display for Codegen<'_> {
             codegen_options: ast.codegen_options,
         };
         let structs = sorted.iter().format_with("", |(i, t), f| {
-            let i = CType {
-                i: *i,
-                boxed: false,
-            };
+            let i = CType { i: *i };
             match t {
                 CTypeScheme::Aggregate(ts) => f(&format_args!(
                     "{}{{{}}};",
@@ -54,8 +48,12 @@ impl Display for Codegen<'_> {
                 CTypeScheme::Union(ts) => f(&format_args!(
                     "union u{0}{{{1}}};{2}{{int tag;union u{0} value;}};",
                     i.i.0,
-                    ts.iter().enumerate().format_with("", |(i, t), f| {
-                        f(&format_args!("{} _{i};", Dis(t, env)))
+                    ts.iter().enumerate().format_with("", |(i, (t, boxed)), f| {
+                        f(&format_args!(
+                            "{} {}_{i};",
+                            Dis(t, env),
+                            if *boxed { "*" } else { "" }
+                        ))
                     }),
                     Dis(&i, env),
                 )),
@@ -226,13 +224,7 @@ static void snprintf_f64_array(array_t a, int64_t len, double l, const char* for
                             *tmp = a;
                             return tmp;
                         }}",
-                    Dis(
-                        &CType {
-                            i: *t,
-                            boxed: false
-                        },
-                        env
-                    ),
+                    Dis(&CType { i: *t }, env),
                 ))
             })
         )?;
@@ -301,9 +293,9 @@ static void snprintf_f64_array(array_t a, int64_t len, double l, const char* for
                 ast_step2::ConvertOp::Unknown => panic!(),
                 ast_step2::ConvertOp::Id => write!(f, "return _0;"),
                 ast_step2::ConvertOp::Unexpected => write!(f, r#"panic("unexpected");"#),
-                ast_step2::ConvertOp::Struct(ops) => {
-                    write!(f, "return ({})", Dis(&c.c_type_to, env),)?;
-                    struct_converter(f, "_0", ops, env)?;
+                ast_step2::ConvertOp::Struct(ops, ref_op) => {
+                    write!(f, "return ")?;
+                    struct_converter(f, "_0", ops, ref_op, c.c_type_to, env)?;
                     write!(f, ";")
                 }
                 ast_step2::ConvertOp::ReTag(ts) => {
@@ -316,16 +308,32 @@ static void snprintf_f64_array(array_t a, int64_t len, double l, const char* for
                             Dis(&c.c_type_to, env),
                             t.new_tag
                         )?;
-                        struct_converter(f, format_args!("_0.value._{i}"), &t.convert_op, env)?;
+                        struct_converter(
+                            f,
+                            format_args!("_0.value._{i}"),
+                            &t.convert_op,
+                            &t.ref_op,
+                            t.unit_c_type,
+                            env,
+                        )?;
                         write!(f, "}}}};")?;
                         write!(f, "break;")?;
                     }
                     write!(f, r#"default:panic("unexpected");"#)?;
                     write!(f, "}}")
                 }
-                ast_step2::ConvertOp::AddTag(tag, ops) => {
-                    write!(f, "return ({}){{{tag},{{._{tag}=", Dis(&c.c_type_to, env))?;
-                    struct_converter(f, "_0", ops, env)?;
+                ast_step2::ConvertOp::AddTag(UnionOp {
+                    new_tag,
+                    convert_op,
+                    ref_op,
+                    unit_c_type,
+                }) => {
+                    write!(
+                        f,
+                        "return ({}){{{new_tag},{{._{new_tag}=",
+                        Dis(&c.c_type_to, env)
+                    )?;
+                    struct_converter(f, "_0", convert_op, ref_op, *unit_c_type, env)?;
                     write!(f, "}}}};")
                 }
             }?;
@@ -374,48 +382,58 @@ static {0} init_{1}(void){{\
         fn struct_converter(
             f: &mut std::fmt::Formatter<'_>,
             param: impl Display,
-            ops: &[(u32, ConvertOpRef)],
+            ops: &[u32],
+            ref_op: &ConvertOpRef,
+            c_type: CType,
             env: Env,
         ) -> std::fmt::Result {
-            if ops.iter().all(|(c, r)| *c == 0 && !r.is_add_ref()) {
+            if ref_op.to_boxed {
+                let r = env.refed_types[&c_type.i];
+                write!(f, "ref_{r}(")?;
+                if ref_op.from_boxed {
+                    struct_converter_without_ref_op(
+                        f,
+                        format_args!("(*{param})"),
+                        ops,
+                        c_type,
+                        env,
+                    )?;
+                } else {
+                    struct_converter_without_ref_op(f, param, ops, c_type, env)?;
+                }
+                write!(f, ")")?;
+            } else if ref_op.from_boxed {
+                struct_converter_without_ref_op(
+                    f,
+                    format_args!("(*{param})"),
+                    ops,
+                    c_type,
+                    env,
+                )?;
+            } else {
+                struct_converter_without_ref_op(f, param, ops, c_type, env)?;
+            }
+            Ok(())
+        }
+        fn struct_converter_without_ref_op(
+            f: &mut std::fmt::Formatter<'_>,
+            param: impl Display,
+            ops: &[u32],
+            c_type: CType,
+            env: Env,
+        ) -> std::fmt::Result {
+            if ops.iter().all(|c| *c == 0) {
                 write!(f, "{param}")
             } else {
                 write!(
                     f,
-                    "{{{}}}",
-                    ops.iter().enumerate().format_with(",", |(i, (c, r)), f| {
+                    "({}){{{}}}",
+                    Dis(&c_type, env),
+                    ops.iter().enumerate().format_with(",", |(i, c), f| {
                         if *c == 0 {
-                            match r {
-                                ConvertOpRef::None => f(&format_args!("{param}._{i}")),
-                                ConvertOpRef::RemainRef(t) => f(&format_args!(
-                                    "ref_{}(*{param}._{i})",
-                                    env.refed_types[&t.i]
-                                )),
-                                ConvertOpRef::Deref => f(&format_args!("*{param}._{i}")),
-                                ConvertOpRef::AddRef(t) => match env.refed_types.get(&t.i) {
-                                    Some(t) => f(&format_args!("ref_{}({param}._{i})", t)),
-                                    _ => f(&format_args!("/*u={t:?}*/ref_none",)),
-                                },
-                            }
+                            f(&format_args!("{param}._{i}"))
                         } else {
-                            match r {
-                                ConvertOpRef::None => {
-                                    f(&format_args!("converter_{}({param}._{i})", c))
-                                }
-                                ConvertOpRef::Deref => {
-                                    f(&format_args!("converter_{}(*{param}._{i})", c))
-                                }
-                                ConvertOpRef::RemainRef(t) => f(&format_args!(
-                                    "ref_{}(converter_{}(*{param}._{i}))",
-                                    env.refed_types[&t.i], c
-                                )),
-                                ConvertOpRef::AddRef(t) => match env.refed_types.get(&t.i) {
-                                    Some(t) => {
-                                        f(&format_args!("ref_{}(converter_{}({param}._{i}))", t, c))
-                                    }
-                                    _ => f(&format_args!("/*t={t:?}*/ref_none",)),
-                                },
-                            }
+                            f(&format_args!("converter_{}({param}._{i})", c))
                         }
                     })
                 )
@@ -510,10 +528,7 @@ fn sort_aggregates<'a>(
     let mut sorted = Vec::with_capacity(c_type_definitions.len());
     for (i, _) in c_type_definitions.iter().enumerate() {
         sort_aggregates_rec(
-            CType {
-                i: StructId(i),
-                boxed: false,
-            },
+            CType { i: StructId(i) },
             c_type_definitions,
             &mut done,
             &mut sorted,
@@ -530,15 +545,6 @@ fn sort_aggregates_rec<'a>(
     sorted: &mut Vec<(StructId, &'a CTypeScheme<CType>)>,
     refed_types: &mut Collector<StructId>,
 ) {
-    if i.boxed {
-        refed_types.get_or_insert(i.i);
-        #[cfg(debug_assertions)]
-        {
-            let a = &h[i.i.0];
-            assert!(matches!(a, Union(_)))
-        }
-        return;
-    }
     if done.contains(&i.i) {
         return;
     }
@@ -546,9 +552,19 @@ fn sort_aggregates_rec<'a>(
     let a = &h[i.i.0];
     use ast_step2::c_type::CTypeScheme::*;
     match a {
-        Aggregate(is) | Union(is) => {
+        Aggregate(is) => {
             for i in is {
                 sort_aggregates_rec(*i, h, done, sorted, refed_types);
+            }
+            sorted.push((i.i, a));
+        }
+        Union(is) => {
+            for (i, boxed) in is {
+                if *boxed {
+                    refed_types.get_or_insert(i.i);
+                } else {
+                    sort_aggregates_rec(*i, h, done, sorted, refed_types);
+                }
             }
             sorted.push((i.i, a));
         }
@@ -654,10 +670,9 @@ fn collect_local_variables_in_expr(e: &Expr, vs: &mut FxHashSet<LocalVariable>) 
                 collect_local_variables_in_variable(*a, vs);
             }
         }
-        Expr::LocalIdent(a)
-        | Expr::Ref(a)
-        | Expr::Downcast { value: a, .. }
-        | Expr::Upcast { value: a, .. } => collect_local_variables_in_variable(*a, vs),
+        Expr::LocalIdent(a) | Expr::Downcast { value: a, .. } | Expr::Upcast { value: a, .. } => {
+            collect_local_variables_in_variable(*a, vs)
+        }
     }
 }
 
@@ -834,45 +849,61 @@ impl DisplayWithEnv for (&Expr, &CType) {
                             args.iter().format_with(",", |a, f| f(&Dis(a, env)))
                         )
                     }
-                    FieldAccessor { field, boxed } => {
+                    FieldAccessor { field } => {
                         debug_assert_eq!(args.len(), 1);
-                        if *boxed {
-                            write!(fmt, "*")?;
-                        }
                         write!(fmt, "{}._{field}", Dis(&args[0], env))
                     }
                 }
             }
             Expr::Upcast { tag, value } => {
-                write!(
-                    fmt,
-                    "({}){{{tag},(union u{}){{._{tag}={}}}}}",
-                    Dis(*t, env),
-                    t.i.0,
-                    Dis(value, env)
-                )
+                let CTypeScheme::Union(ts) = &env.c_type_definitions[t.i.0] else {
+                    panic!()
+                };
+                let (prev_t, boxed) = ts[*tag as usize];
+                if boxed {
+                    write!(
+                        fmt,
+                        "({}){{{tag},(union u{}){{._{tag}=ref_{}({})}}}}",
+                        Dis(*t, env),
+                        t.i.0,
+                        env.refed_types[&prev_t.i],
+                        Dis(value, env)
+                    )
+                } else {
+                    write!(
+                        fmt,
+                        "({}){{{tag},(union u{}){{._{tag}={}}}}}",
+                        Dis(*t, env),
+                        t.i.0,
+                        Dis(value, env)
+                    )
+                }
             }
             Expr::Downcast {
                 tag,
                 value,
                 check: true,
+                boxed,
             } => {
                 write!(
                     fmt,
-                    "({0}.tag=={tag}||panic(\"failed to downcast\"),{0}.value._{tag})",
-                    Dis(value, env)
+                    "({0}.tag=={tag}||panic(\"failed to downcast\"),{1}{0}.value._{tag})",
+                    Dis(value, env),
+                    if *boxed { "*" } else { "" }
                 )
             }
             Expr::Downcast {
                 tag,
                 value,
                 check: false,
+                boxed,
             } => {
-                write!(fmt, "{0}.value._{tag}", Dis(value, env))
-            }
-            Expr::Ref(v) => {
-                debug_assert!(t.boxed);
-                write!(fmt, "ref_{}({})", env.refed_types[&t.i], Dis(v, env))
+                write!(
+                    fmt,
+                    "{}{}.value._{tag}",
+                    if *boxed { "*" } else { "" },
+                    Dis(value, env)
+                )
             }
         }
     }
@@ -955,14 +986,13 @@ impl DisplayWithEnv for CType {
             CTypeScheme::U8 => write!(f, "uint8_t"),
             CTypeScheme::F64 => write!(f, "double"),
             CTypeScheme::Ptr => write!(f, "array_t"),
-            CTypeScheme::Aggregate(_) => write!(f, "struct t{}", self.i.0),
+            CTypeScheme::Aggregate(_) => {
+                write!(f, "struct t{}", self.i.0)
+            }
             CTypeScheme::Union(_) => write!(f, "struct t{}", self.i.0),
             CTypeScheme::Mut(t) => write!(f, "{}*", Dis(&t, env)),
             CTypeScheme::Diverge => write!(f, "struct diverge"),
         }?;
-        if self.boxed {
-            write!(f, "*")?
-        }
         Ok(())
     }
 }

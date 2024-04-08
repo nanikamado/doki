@@ -25,6 +25,7 @@ pub enum TypeInner {
 pub struct TypeUnit {
     id: TypeId,
     args: SmallVec<[TypeInner; 2]>,
+    boxed: bool,
 }
 
 impl From<TypeUnit> for Type {
@@ -85,24 +86,9 @@ impl TypeMemo {
         let terminal = map.dereference_without_find(p);
         let reference_point = terminal.diverged;
         debug_assert!(reference_point.is_some());
-        for (id, args) in terminal.type_map.clone() {
-            let args = args
-                .iter()
-                .map(|t| {
-                    let a = self.get_type_inner(t.p, map);
-                    if t.boxed {
-                        match a {
-                            TypeInner::RecursionPoint { i, .. } => {
-                                TypeInner::RecursionPoint { i, refed: true }
-                            }
-                            TypeInner::Type(t) => TypeInner::Type(Type { refed: true, ..t }),
-                        }
-                    } else {
-                        a
-                    }
-                })
-                .collect();
-            ts.push(TypeUnit { id, args })
+        for (id, (args, boxed)) in terminal.type_map.clone() {
+            let args = args.iter().map(|t| self.get_type_inner(*t, map)).collect();
+            ts.push(TypeUnit { id, args, boxed })
         }
         TypeInner::Type(Type {
             ts: Rc::new(ts),
@@ -127,24 +113,16 @@ impl TypeMemo {
         let mut ts = SmallVec::new();
         let terminal = map.dereference_without_find(p);
         debug_assert!(terminal.diverged.is_some());
-        for (id, args) in &terminal.type_map {
+        for (id, (args, boxed)) in &terminal.type_map {
             let args = args
                 .iter()
-                .map(|t| {
-                    let a = TypeMemo::get_type_inner_for_hash(t.p, trace, map);
-                    if t.boxed {
-                        match a {
-                            TypeInner::RecursionPoint { i, .. } => {
-                                TypeInner::RecursionPoint { i, refed: true }
-                            }
-                            TypeInner::Type(t) => TypeInner::Type(Type { refed: true, ..t }),
-                        }
-                    } else {
-                        a
-                    }
-                })
+                .map(|t| TypeMemo::get_type_inner_for_hash(*t, trace, map))
                 .collect();
-            ts.push(TypeUnit { id: *id, args })
+            ts.push(TypeUnit {
+                id: *id,
+                args,
+                boxed: *boxed,
+            })
         }
         TypeInner::Type(Type {
             ts: Rc::new(ts),

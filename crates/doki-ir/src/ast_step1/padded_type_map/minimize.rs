@@ -1,4 +1,4 @@
-use super::{FieldType, PaddedTypeMap, TypePointer};
+use super::{PaddedTypeMap, TypePointer};
 use crate::util::dfa_minimization::Dfa;
 use crate::TypeId;
 use multimap::MultiMap;
@@ -39,16 +39,16 @@ fn collect_points(
     points.insert(p, 0);
     let terminal = map.dereference_without_find(p);
     let type_map = terminal.type_map.clone();
-    for (_, ps) in type_map {
+    for (_, (ps, _)) in type_map {
         for p in ps {
-            collect_points(p.p, map, points)
+            collect_points(p, map, points)
         }
     }
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalRef {
-    pub type_map: BTreeMap<TypeId, Vec<FieldType>>,
+    pub type_map: BTreeMap<TypeId, (Vec<TypePointer>, bool)>,
     pub reference_point: Option<bool>,
     pub fixed: bool,
 }
@@ -66,15 +66,12 @@ impl Dfa for PaddedTypeMap {
         let type_map = t
             .type_map
             .iter()
-            .map(|(id, ps)| {
+            .map(|(id, (ps, boxed))| {
                 let ps = ps
                     .iter()
-                    .map(|p| FieldType {
-                        p: TypePointer(points[&self.find_imm(p.p)]),
-                        boxed: p.boxed,
-                    })
+                    .map(|p| TypePointer(points[&self.find_imm(*p)]))
                     .collect();
-                (*id, ps)
+                (*id, (ps, *boxed))
             })
             .collect();
         TerminalRef {
