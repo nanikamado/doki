@@ -1,4 +1,4 @@
-use crate::ast_step1::{self, PaddedTypeMap, TypePointer};
+use crate::ir1::{self, PaddedTypeMap, TypePointer};
 use crate::TypeId;
 use std::fmt::Display;
 use strum::EnumIter;
@@ -124,7 +124,7 @@ impl IntrinsicVariable {
         }
     }
 
-    pub fn runtime_arg_type_restriction(self) -> Vec<Option<ast_step1::TypeId>> {
+    pub fn runtime_arg_type_restriction(self) -> Vec<Option<ir1::TypeId>> {
         use IntrinsicVariable::*;
         const I64: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::I64));
         const U8: Option<TypeId> = Some(TypeId::Intrinsic(IntrinsicTypeTag::U8));

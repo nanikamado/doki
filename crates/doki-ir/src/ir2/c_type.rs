@@ -1,6 +1,6 @@
 use super::CType;
-use crate::ast_step1::TypePointer;
-use crate::ast_step2::StructId;
+use crate::ir1::TypePointer;
+use crate::ir2::StructId;
 use crate::util::dfa_minimization::Dfa;
 use rustc_hash::FxHashMap;
 

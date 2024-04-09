@@ -1,15 +1,15 @@
-mod ast_step1;
-mod ast_step2;
 mod codegen;
 pub mod intrinsics;
+mod ir1;
+mod ir2;
 mod tail_recursion_elimination;
 mod util;
 
-pub use crate::ast_step1::{
+pub use crate::ir1::{
     Block, CodegenOptions, ConstructorId, ConstructorNames, Env, GlobalVariable, Lambda,
     LocalVariable, TypeId, VariableDecl,
 };
-pub use crate::ast_step2::{
+pub use crate::ir2::{
     DisplayTypeWithEnvStruct as DisplayTypeWithEnv, LocalVariable as LocalVariable2, Type,
 };
 use codegen::Codegen;
@@ -30,8 +30,8 @@ impl<'a> Env<'a> {
         self,
         entry_point: GlobalVariable,
         span_of_main: S,
-    ) -> ast_step2::Ast<'a> {
+    ) -> ir2::Ast<'a> {
         let ast = self.build(entry_point, span_of_main);
-        ast_step2::Ast::from(ast)
+        ir2::Ast::from(ast)
     }
 }

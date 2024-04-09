@@ -1,8 +1,8 @@
 use super::Env;
-use crate::ast_step1::TypePointer;
-use crate::ast_step2::{CType, PrinterCollector};
 use crate::codegen::Dis;
 use crate::intrinsics::IntrinsicTypeTag;
+use crate::ir1::TypePointer;
+use crate::ir2::{CType, PrinterCollector};
 use crate::TypeId;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;

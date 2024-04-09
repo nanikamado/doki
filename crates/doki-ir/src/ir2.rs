@@ -13,12 +13,12 @@ pub use self::type_converter::{ConvertOp, ConvertOpRef, UnionOp};
 use self::type_memo::TypeMemo;
 pub use self::type_memo::{DisplayTypeWithEnvStruct, DisplayTypeWithEnvStructOption, Type};
 use self::union_find::UnionFind;
-use crate::ast_step1::{
+use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
+use crate::ir1::{
     self, ConstructorNames, GlobalVariable, LambdaId, LocalVariableTypes, PaddedTypeMap,
     ReplaceMap, TypeId, TypePointer,
 };
-use crate::ast_step2::c_type::PointerModifier;
-use crate::intrinsics::{IntrinsicTypeTag, IntrinsicVariable};
+use crate::ir2::c_type::PointerModifier;
 use crate::util::collector::Collector;
 use crate::util::dfa_minimization::Dfa;
 use crate::util::id_generator;
@@ -43,7 +43,7 @@ pub struct Ast<'a> {
     pub functions: Vec<Function>,
     pub variable_types: LocalVariableCollector<Types>,
     pub constructor_names: ConstructorNames,
-    pub local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
+    pub local_variable_replace_map: FxHashMap<(ir1::LocalVariable, Root), LocalVariable>,
     pub used_intrinsic_variables: Collector<(IntrinsicVariable, Vec<CType>, CType)>,
     pub printer_collector: PrinterCollector,
     pub printer_c_type: FxHashMap<TypePointer, CType>,
@@ -192,7 +192,7 @@ pub struct TypeConverter {
 }
 
 impl<'a> Ast<'a> {
-    pub fn from(ast: ast_step1::Ast<'a>) -> Self {
+    pub fn from(ast: ir1::Ast<'a>) -> Self {
         let variable_decls = ast.variable_decls.iter().map(|d| (d.decl_id, d)).collect();
         let mut memo = Env::new(
             variable_decls,
@@ -203,8 +203,7 @@ impl<'a> Ast<'a> {
         let original_variables_map = memo.collect_original_global_variables();
         let (entry_block, entry_block_ret_t) = {
             let mut replace_map = Default::default();
-            let ast_step1::Instruction::Assign(ret, _) =
-                ast.entry_block.instructions.last().unwrap()
+            let ir1::Instruction::Assign(ret, _) = ast.entry_block.instructions.last().unwrap()
             else {
                 panic!()
             };
@@ -300,8 +299,8 @@ struct FnId {
 }
 
 struct Env<'a, 'b> {
-    variable_decls: FxHashMap<GlobalVariable, &'b ast_step1::VariableDecl<'a>>,
-    monomorphized_variable_map: FxHashMap<(ast_step1::GlobalVariable, Root), GlobalVariableId>,
+    variable_decls: FxHashMap<GlobalVariable, &'b ir1::VariableDecl<'a>>,
+    monomorphized_variable_map: FxHashMap<(ir1::GlobalVariable, Root), GlobalVariableId>,
     original_variables: FxHashMap<GlobalVariableId, VariableDecl<'a>>,
     original_variable_usage: FxHashMap<GlobalVariableId, bool>,
     cloned_variables: FxHashMap<GlobalVariableId, ClonedVariable<'a>>,
@@ -309,7 +308,7 @@ struct Env<'a, 'b> {
     functions: FxHashMap<(LambdaId, Vec<Type>), FunctionEntry>,
     type_memo: TypeMemo,
     local_variable_types_old: LocalVariableTypes,
-    local_variable_replace_map: FxHashMap<(ast_step1::LocalVariable, Root), LocalVariable>,
+    local_variable_replace_map: FxHashMap<(ir1::LocalVariable, Root), LocalVariable>,
     local_variable_collector: LocalVariableCollector<Types>,
     global_variable_count: usize,
     constructor_names: ConstructorNames,
@@ -380,7 +379,7 @@ impl BasicBlockEnv {
 
 impl<'a, 'b> Env<'a, 'b> {
     fn new(
-        variable_decls: FxHashMap<GlobalVariable, &'b ast_step1::VariableDecl<'a>>,
+        variable_decls: FxHashMap<GlobalVariable, &'b ir1::VariableDecl<'a>>,
         local_variable_types: LocalVariableTypes,
         map: PaddedTypeMap,
         constructor_names: ConstructorNames,
@@ -553,7 +552,7 @@ impl<'a, 'b> Env<'a, 'b> {
 
     fn local_variable_def_replace(
         &mut self,
-        v: ast_step1::LocalVariable,
+        v: ir1::LocalVariable,
         root_t: Root,
         replace_map: &mut ReplaceMap,
     ) -> (LocalVariable, TypePointer) {
@@ -565,17 +564,13 @@ impl<'a, 'b> Env<'a, 'b> {
         (new_v, t)
     }
 
-    fn get_defined_local_variable(
-        &self,
-        v: ast_step1::LocalVariable,
-        root_t: Root,
-    ) -> LocalVariable {
+    fn get_defined_local_variable(&self, v: ir1::LocalVariable, root_t: Root) -> LocalVariable {
         *self.local_variable_replace_map.get(&(v, root_t)).unwrap()
     }
 
     fn block(
         &mut self,
-        block: &ast_step1::Block,
+        block: &ir1::Block,
         catch_label: Option<usize>,
         root_t: Root,
         replace_map: &mut ReplaceMap,
@@ -599,10 +594,10 @@ impl<'a, 'b> Env<'a, 'b> {
 impl<'a, 'b> Env<'a, 'b> {
     fn function_body(
         &mut self,
-        block: &ast_step1::Block,
+        block: &ir1::Block,
         root_t: Root,
         replace_map: &mut ReplaceMap,
-        ret: ast_step1::LocalVariable,
+        ret: ir1::LocalVariable,
         only_fn: bool,
     ) -> (Vec<BasicBlock>, LocalVariable) {
         let mut block_env = BasicBlockEnv {
@@ -647,18 +642,18 @@ impl<'a, 'b> Env<'a, 'b> {
 
     fn instruction(
         &mut self,
-        instruction: &ast_step1::Instruction,
+        instruction: &ir1::Instruction,
         catch_label: Option<usize>,
         root_t: Root,
         replace_map: &mut ReplaceMap,
         basic_block_env: &mut BasicBlockEnv,
         only_fn: bool,
     ) -> Result<(), EndInstruction> {
-        if only_fn && matches!(instruction, ast_step1::Instruction::Test(_, _)) {
+        if only_fn && matches!(instruction, ir1::Instruction::Test(_, _)) {
             return Ok(());
         }
         match instruction {
-            ast_step1::Instruction::Assign(v, e) => {
+            ir1::Instruction::Assign(v, e) => {
                 let p = self.local_variable_types_old.get(*v);
                 let p = self.map.clone_pointer(p, replace_map);
                 let i = self.c_type(PointerForCType::from(p)).i.0;
@@ -680,7 +675,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     Ok(())
                 }
             }
-            ast_step1::Instruction::Test(ast_step1::Tester::I64 { value }, l) => {
+            ir1::Instruction::Test(ir1::Tester::I64 { value }, l) => {
                 let catch_label = catch_label.unwrap();
                 let type_id = TypeId::Intrinsic(IntrinsicTypeTag::I64);
                 let p = self
@@ -706,7 +701,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     Err(_) => Err(EndInstruction::Goto { label: catch_label }),
                 }
             }
-            ast_step1::Instruction::Test(ast_step1::Tester::Constructor { id }, a) => {
+            ir1::Instruction::Test(ir1::Tester::Constructor { id }, a) => {
                 let catch_label = catch_label.unwrap();
                 let p = self
                     .map
@@ -727,7 +722,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     }
                 }
             }
-            ast_step1::Instruction::TryCatch(a, b) => {
+            ir1::Instruction::TryCatch(a, b) => {
                 let catch = basic_block_env.new_label();
                 let mut next = None;
                 let end_instruction = if let Err(end) = self.block(
@@ -768,19 +763,17 @@ impl<'a, 'b> Env<'a, 'b> {
                     Err(end_instruction)
                 }
             }
-            ast_step1::Instruction::FailTest => Err(EndInstruction::Goto {
+            ir1::Instruction::FailTest => Err(EndInstruction::Goto {
                 label: catch_label.unwrap(),
             }),
-            ast_step1::Instruction::Panic { msg } => {
-                Err(EndInstruction::Panic { msg: msg.clone() })
-            }
+            ir1::Instruction::Panic { msg } => Err(EndInstruction::Panic { msg: msg.clone() }),
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn downcast(
         &mut self,
-        a: ast_step1::LocalVariable,
+        a: ir1::LocalVariable,
         p: TypePointer,
         root_t: Root,
         type_id: TypeId,
@@ -863,7 +856,7 @@ impl<'a, 'b> Env<'a, 'b> {
     /// Returns `Err` if type error
     fn expr(
         &mut self,
-        e: &ast_step1::Expr,
+        e: &ir1::Expr,
         p: TypePointer,
         v: LocalVariable,
         root_t: Root,
@@ -872,16 +865,11 @@ impl<'a, 'b> Env<'a, 'b> {
         only_fn: bool,
     ) -> Result<(), String> {
         use Expr::*;
-        if only_fn
-            && !matches!(
-                e,
-                ast_step1::Expr::Lambda { .. } | ast_step1::Expr::GlobalIdent(..)
-            )
-        {
+        if only_fn && !matches!(e, ir1::Expr::Lambda { .. } | ir1::Expr::GlobalIdent(..)) {
             return Ok(());
         }
         match e {
-            ast_step1::Expr::Lambda {
+            ir1::Expr::Lambda {
                 lambda_id,
                 parameter,
                 body,
@@ -946,7 +934,7 @@ impl<'a, 'b> Env<'a, 'b> {
                     debug_assert!(matches!(o.unwrap(), FunctionEntry::Placeholder(_)));
                 };
             }
-            ast_step1::Expr::I64(s) => {
+            ir1::Expr::I64(s) => {
                 let e = self.add_tags_to_expr(
                     I64(*s),
                     p,
@@ -955,7 +943,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 );
                 basic_block_env.assign(v, e)
             }
-            ast_step1::Expr::U8(s) => {
+            ir1::Expr::U8(s) => {
                 let e = self.add_tags_to_expr(
                     U8(*s),
                     p,
@@ -964,7 +952,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 );
                 basic_block_env.assign(v, e)
             }
-            ast_step1::Expr::F64(s) => {
+            ir1::Expr::F64(s) => {
                 let e = self.add_tags_to_expr(
                     F64(*s),
                     p,
@@ -973,7 +961,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 );
                 basic_block_env.assign(v, e)
             }
-            ast_step1::Expr::Str(s) => {
+            ir1::Expr::Str(s) => {
                 let e = self.add_tags_to_expr(
                     Str(s.clone()),
                     p,
@@ -982,11 +970,11 @@ impl<'a, 'b> Env<'a, 'b> {
                 );
                 basic_block_env.assign(v, e)
             }
-            ast_step1::Expr::LocalIdent(d) => {
+            ir1::Expr::LocalIdent(d) => {
                 let l = self.get_defined_local_variable(*d, root_t);
                 basic_block_env.assign(v, LocalIdent(l));
             }
-            ast_step1::Expr::GlobalIdent(d, r, p) => {
+            ir1::Expr::GlobalIdent(d, r, p) => {
                 let p1 = self.map.clone_pointer(*p, replace_map);
                 let r = replace_map.clone().merge(r, &mut self.map);
                 #[cfg(debug_assertions)]
@@ -999,7 +987,7 @@ impl<'a, 'b> Env<'a, 'b> {
                 let l = self.monomorphize_decl(*d, p1, r);
                 basic_block_env.assign(v, GlobalIdent(l));
             }
-            ast_step1::Expr::Call { f, a, err_msg } => {
+            ir1::Expr::Call { f, a, err_msg } => {
                 let f_t = self.local_variable_types_old.get(*f);
                 let f_t_p = self.map.clone_pointer(f_t, replace_map);
                 let (possible_functions, tag_len) = self.get_possible_functions(f_t_p);
@@ -1046,9 +1034,9 @@ impl<'a, 'b> Env<'a, 'b> {
                     basic_block_env.current_basic_block = Some(skip);
                 }
             }
-            ast_step1::Expr::BasicCall {
+            ir1::Expr::BasicCall {
                 args,
-                id: ast_step1::BasicFunction::Construction(id),
+                id: ir1::BasicFunction::Construction(id),
             } => {
                 let type_id = TypeId::UserDefined(*id);
                 let args = args
@@ -1062,9 +1050,9 @@ impl<'a, 'b> Env<'a, 'b> {
                 let e = self.add_tags_to_expr(l, p, type_id, &mut basic_block_env.instructions);
                 basic_block_env.assign(v, e);
             }
-            ast_step1::Expr::BasicCall {
+            ir1::Expr::BasicCall {
                 args,
-                id: ast_step1::BasicFunction::IntrinsicConstruction(id),
+                id: ir1::BasicFunction::IntrinsicConstruction(id),
             } => {
                 debug_assert!(args.is_empty());
                 let e = self.add_tags_to_expr(
@@ -1078,9 +1066,9 @@ impl<'a, 'b> Env<'a, 'b> {
                 );
                 basic_block_env.assign(v, e)
             }
-            ast_step1::Expr::BasicCall {
+            ir1::Expr::BasicCall {
                 args,
-                id: ast_step1::BasicFunction::FieldAccessor { constructor, field },
+                id: ir1::BasicFunction::FieldAccessor { constructor, field },
             } => {
                 debug_assert_eq!(args.len(), 1);
                 let a = args.iter().next().unwrap();
@@ -1105,9 +1093,9 @@ impl<'a, 'b> Env<'a, 'b> {
                     },
                 )
             }
-            ast_step1::Expr::BasicCall {
+            ir1::Expr::BasicCall {
                 args,
-                id: ast_step1::BasicFunction::Intrinsic(IntrinsicVariable::Debug),
+                id: ir1::BasicFunction::Intrinsic(IntrinsicVariable::Debug),
             } => {
                 let args = args
                     .iter()
@@ -1126,9 +1114,9 @@ impl<'a, 'b> Env<'a, 'b> {
                 };
                 basic_block_env.assign(v, e);
             }
-            ast_step1::Expr::BasicCall {
+            ir1::Expr::BasicCall {
                 args,
-                id: ast_step1::BasicFunction::Intrinsic(id),
+                id: ir1::BasicFunction::Intrinsic(id),
             } => {
                 let arg_restrictions = id.runtime_arg_type_restriction();
                 let mut args_new = Vec::with_capacity(args.len());

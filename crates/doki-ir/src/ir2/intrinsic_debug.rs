@@ -1,4 +1,4 @@
-use crate::ast_step1::{self, PaddedTypeMap, TypePointer};
+use crate::ir1::{self, PaddedTypeMap, TypePointer};
 use crate::TypeId;
 use rustc_hash::FxHashMap;
 
@@ -33,8 +33,7 @@ impl PrinterCollector {
             Some(false) => {
                 let mut union_members = Vec::new();
                 for (tag, args) in t.type_map.clone() {
-                    if tag == ast_step1::TypeId::Intrinsic(crate::intrinsics::IntrinsicTypeTag::Fn)
-                    {
+                    if tag == ir1::TypeId::Intrinsic(crate::intrinsics::IntrinsicTypeTag::Fn) {
                         continue;
                     }
                     for a in &args.0 {

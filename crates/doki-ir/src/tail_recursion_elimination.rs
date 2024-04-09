@@ -1,4 +1,4 @@
-use crate::ast_step2::{Ast, BasicBlock, EndInstruction, Expr, Function, FxLambdaId, Instruction};
+use crate::ir2::{Ast, BasicBlock, EndInstruction, Expr, Function, FxLambdaId, Instruction};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;

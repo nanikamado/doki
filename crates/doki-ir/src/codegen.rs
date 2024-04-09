@@ -1,12 +1,12 @@
 mod intrinsic_debug;
 
-use crate::ast_step1::{ConstructorId, ConstructorNames};
-use crate::ast_step2::c_type::CTypeScheme;
-use crate::ast_step2::{
+use crate::intrinsics::IntrinsicVariable;
+use crate::ir1::{ConstructorId, ConstructorNames};
+use crate::ir2::c_type::CTypeScheme;
+use crate::ir2::{
     self, Ast, CType, ConvertOpRef, EndInstruction, Expr, Function, FunctionBody, GlobalVariableId,
     Instruction, LocalVariable, LocalVariableCollector, StructId, Tester, Types, UnionOp,
 };
-use crate::intrinsics::IntrinsicVariable;
 use crate::util::collector::Collector;
 use crate::CodegenOptions;
 use itertools::Itertools;
@@ -290,15 +290,15 @@ static void snprintf_f64_array(array_t a, int64_t len, double l, const char* for
                 Dis(&c.c_type_from, env),
             )?;
             match &c.op {
-                ast_step2::ConvertOp::Unknown => panic!(),
-                ast_step2::ConvertOp::Id => write!(f, "return _0;"),
-                ast_step2::ConvertOp::Unexpected => write!(f, r#"panic("unexpected");"#),
-                ast_step2::ConvertOp::Struct(ops, ref_op) => {
+                ir2::ConvertOp::Unknown => panic!(),
+                ir2::ConvertOp::Id => write!(f, "return _0;"),
+                ir2::ConvertOp::Unexpected => write!(f, r#"panic("unexpected");"#),
+                ir2::ConvertOp::Struct(ops, ref_op) => {
                     write!(f, "return ")?;
                     struct_converter(f, "_0", ops, ref_op, c.c_type_to, env)?;
                     write!(f, ";")
                 }
-                ast_step2::ConvertOp::ReTag(ts) => {
+                ir2::ConvertOp::ReTag(ts) => {
                     write!(f, "switch(_0.tag){{")?;
                     for (i, t) in ts.iter().enumerate() {
                         write!(f, "case {i}:")?;
@@ -322,7 +322,7 @@ static void snprintf_f64_array(array_t a, int64_t len, double l, const char* for
                     write!(f, r#"default:panic("unexpected");"#)?;
                     write!(f, "}}")
                 }
-                ast_step2::ConvertOp::AddTag(UnionOp {
+                ir2::ConvertOp::AddTag(UnionOp {
                     new_tag,
                     convert_op,
                     ref_op,
@@ -403,13 +403,7 @@ static {0} init_{1}(void){{\
                 }
                 write!(f, ")")?;
             } else if ref_op.from_boxed {
-                struct_converter_without_ref_op(
-                    f,
-                    format_args!("(*{param})"),
-                    ops,
-                    c_type,
-                    env,
-                )?;
+                struct_converter_without_ref_op(f, format_args!("(*{param})"), ops, c_type, env)?;
             } else {
                 struct_converter_without_ref_op(f, param, ops, c_type, env)?;
             }
@@ -550,7 +544,7 @@ fn sort_aggregates_rec<'a>(
     }
     done.insert(i.i);
     let a = &h[i.i.0];
-    use ast_step2::c_type::CTypeScheme::*;
+    use ir2::c_type::CTypeScheme::*;
     match a {
         Aggregate(is) => {
             for i in is {
@@ -639,8 +633,8 @@ fn write_fns(
 #[derive(Debug, Clone, Copy)]
 struct Env<'a> {
     local_variable_types: &'a LocalVariableCollector<Types>,
-    global_variables: &'a FxHashMap<GlobalVariableId, ast_step2::VariableDecl<'a>>,
-    cloned_variables: &'a FxHashMap<GlobalVariableId, ast_step2::ClonedVariable<'a>>,
+    global_variables: &'a FxHashMap<GlobalVariableId, ir2::VariableDecl<'a>>,
+    cloned_variables: &'a FxHashMap<GlobalVariableId, ir2::ClonedVariable<'a>>,
     constructor_names: &'a ConstructorNames,
     c_type_definitions: &'a [CTypeScheme<CType>],
     refed_types: &'a FxHashMap<StructId, usize>,
@@ -746,7 +740,7 @@ impl DisplayWithEnv for TypeComment<'_> {
             write!(
                 f,
                 "/*{}*/",
-                ast_step2::DisplayTypeWithEnvStructOption(self.0, env.constructor_names)
+                ir2::DisplayTypeWithEnvStructOption(self.0, env.constructor_names)
             )?;
         }
         Ok(())
@@ -833,7 +827,7 @@ impl DisplayWithEnv for (&Expr, &CType) {
                 args.iter().format_with(",", |a, f| f(&Dis(a, env)))
             ),
             Expr::BasicCall { args, id } => {
-                use crate::ast_step2::BasicFunction::*;
+                use crate::ir2::BasicFunction::*;
                 match id {
                     Intrinsic { v, id } => write!(
                         fmt,

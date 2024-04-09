@@ -1,6 +1,6 @@
 use super::{TypeIdTag, TypeUnique};
-use crate::ast_step1::{ConstructorNames, PaddedTypeMap, TypeId, TypePointer};
 use crate::intrinsics::IntrinsicTypeTag;
+use crate::ir1::{ConstructorNames, PaddedTypeMap, TypeId, TypePointer};
 use crate::util::id_generator::IdGenerator;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;

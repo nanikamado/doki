@@ -1,8 +1,8 @@
 use super::c_type::PointerForCType;
 use super::type_memo::TypeMemo;
 use super::{CType, Env};
-use crate::ast_step1::{self, PaddedTypeMap, TypePointer};
-use crate::ast_step2::c_type::PointerModifier;
+use crate::ir1::{self, PaddedTypeMap, TypePointer};
+use crate::ir2::c_type::PointerModifier;
 use crate::TypeId;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
@@ -46,8 +46,7 @@ pub struct TypeConverter {
 #[derive(Debug)]
 pub struct ConverterCollector(FxHashMap<(TypePointer, TypePointer), TypeConverter>);
 
-const FN_TAG: ast_step1::TypeId =
-    ast_step1::TypeId::Intrinsic(crate::intrinsics::IntrinsicTypeTag::Fn);
+const FN_TAG: ir1::TypeId = ir1::TypeId::Intrinsic(crate::intrinsics::IntrinsicTypeTag::Fn);
 
 enum SingleOrUnion {
     Never,
@@ -185,9 +184,7 @@ impl ConverterCollector {
                         .clone()
                         .into_iter()
                         .filter(|(id, _)| {
-                            *id != ast_step1::TypeId::Intrinsic(
-                                crate::intrinsics::IntrinsicTypeTag::Fn,
-                            )
+                            *id != ir1::TypeId::Intrinsic(crate::intrinsics::IntrinsicTypeTag::Fn)
                         })
                         .map(|(type_id, (a_args, a_boxed))| {
                             let (b_tag, (b_args, b_boxed)) = &b_t[&type_id];
