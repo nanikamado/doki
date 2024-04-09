@@ -100,8 +100,11 @@ pub fn print_debug_printers(
                 }
                 write!(f, "default:")?;
                 let (tag, (fields, boxed)) = &ts.union_members[0];
-                let boxed = if *boxed { "*" } else { "" };
-                print_tag_args(f, *tag, format_args!("({boxed}_0.value._0)"), fields, env)?;
+                if *boxed {
+                    print_tag_args(f, *tag, format_args!("(*_0.value._0)"), fields, env)?;
+                } else {
+                    print_tag_args(f, *tag, "_0.value._0", fields, env)?;
+                }
                 write!(f, "}}")?;
             }
         }
