@@ -1833,9 +1833,3 @@ impl Display for GlobalVariableId {
         write!(f, "{}", self.0)
     }
 }
-
-// impl From<LocalVariable> for VariableId {
-//     fn from(value: LocalVariable) -> Self {
-//         Self::Local(value)
-//     }
-// }
