@@ -335,7 +335,7 @@ impl<'a> Env<'a> {
     ) {
         self.find_field_less_constructor(&mut p.0);
         let mut shadowed_variables = FxHashMap::default();
-        self.binds_in_pattern(&p, &mut shadowed_variables);
+        self.binds_in_pattern(&p, &mut shadowed_variables, false);
         self.pattern(&p, v, block);
         self.expr(e, ret, block);
         for (name, v) in shadowed_variables {
@@ -380,10 +380,14 @@ impl<'a> Env<'a> {
         &mut self,
         (p, span): &PatternWithSpan<'a>,
         shadowed_variables: &mut FxHashMap<&'a str, Option<LocalVariable>>,
+        reuse_bindings: bool,
     ) {
         match p {
             Pattern::Bind(name) => {
-                let l = if shadowed_variables.contains_key(name) {
+                let l = if reuse_bindings {
+                    shadowed_variables.insert(name, None);
+                    self.local_variable_map[name]
+                } else if shadowed_variables.contains_key(name) {
                     self.local_variable_map[name]
                 } else {
                     shadowed_variables.insert(name, self.local_variable_map.get(name).copied());
@@ -402,11 +406,11 @@ impl<'a> Env<'a> {
                 if !fields.is_empty() {
                     let f = &fields[0];
                     let mut binds_in_f = FxHashMap::default();
-                    self.binds_in_pattern(f, &mut binds_in_f);
+                    self.binds_in_pattern(f, &mut binds_in_f, reuse_bindings);
                     shadowed_variables.extend(&binds_in_f);
                     for g in &fields[1..] {
                         let mut binds_in_g = FxHashMap::default();
-                        self.binds_in_pattern(g, &mut binds_in_g);
+                        self.binds_in_pattern(g, &mut binds_in_g, reuse_bindings);
                         shadowed_variables.extend(&binds_in_g);
                         for f in binds_in_f.keys() {
                             if binds_in_g.contains_key(f) {
@@ -418,9 +422,9 @@ impl<'a> Env<'a> {
             }
             Pattern::Or(a, b) => {
                 let mut binds_in_a = FxHashMap::default();
-                self.binds_in_pattern(a, &mut binds_in_a);
+                self.binds_in_pattern(a, &mut binds_in_a, reuse_bindings);
                 let mut binds_in_b = FxHashMap::default();
-                self.binds_in_pattern(b, &mut binds_in_b);
+                self.binds_in_pattern(b, &mut binds_in_b, true);
                 for a in binds_in_a.keys() {
                     if !binds_in_b.contains_key(a) {
                         panic!("`{a}` is not in some branch");
