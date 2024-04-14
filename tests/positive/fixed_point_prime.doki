@@ -1,7 +1,5 @@
 import "../../library/prelude.doki"
 
-fix = f: a: f (fix f) a
-
 main = _:
     let is_prime_aux = fix (is_prime_aux: i: n: match eq i n with
             True => True,
