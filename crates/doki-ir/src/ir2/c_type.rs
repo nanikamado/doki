@@ -39,10 +39,6 @@ impl PointerForCType {
     }
 }
 
-pub trait PointerReplacer {
-    fn replace(&mut self, v: PointerForCType) -> u32;
-}
-
 impl Dfa for CTypeEnv<'_> {
     type Transition<'a> = CTypeScheme<CType> where Self: 'a;
     type Node = PointerForCType;
@@ -55,12 +51,6 @@ impl Dfa for CTypeEnv<'_> {
         self.0[&node].replace_ref(|a| CType {
             i: StructId(points[a] as usize),
         })
-    }
-}
-
-impl PointerReplacer for FxHashMap<PointerForCType, u32> {
-    fn replace(&mut self, v: PointerForCType) -> u32 {
-        self[&v]
     }
 }
 

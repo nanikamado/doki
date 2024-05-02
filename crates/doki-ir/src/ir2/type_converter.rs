@@ -63,8 +63,8 @@ fn c_type_tag_count(
     match terminal.type_map.len()
         - terminal
             .type_map
-            .get(&TypeId::Intrinsic(crate::intrinsics::IntrinsicTypeTag::Fn))
-            .is_some() as usize
+            .contains_key(&TypeId::Intrinsic(crate::intrinsics::IntrinsicTypeTag::Fn))
+            as usize
     {
         0 => SingleOrUnion::Never,
         1 => {

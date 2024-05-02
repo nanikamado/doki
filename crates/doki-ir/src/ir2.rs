@@ -291,13 +291,6 @@ impl<'a> Ast<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-struct FnId {
-    arg_t: Type,
-    ret_t: Type,
-    lambda_id: LambdaId,
-}
-
 struct Env<'a, 'b> {
     variable_decls: FxHashMap<GlobalVariable, &'b ir1::VariableDecl<'a>>,
     monomorphized_variable_map: FxHashMap<(ir1::GlobalVariable, Root), GlobalVariableId>,

@@ -13,7 +13,7 @@ fn run_cc(
     boehm: bool,
 ) -> Result<(), std::io::Error> {
     let mut c = process::Command::new(cc);
-    c.args(["-std=c17", "-x", "c", "-O2", "-lm", "-o", &tmp_path, "-"]);
+    c.args(["-std=c17", "-x", "c", "-O2", "-lm", "-o", tmp_path, "-"]);
     if boehm {
         c.arg("-lgc");
     }
